@@ -1,0 +1,312 @@
+# The intelligence eval set. Fixed, small, and every case says what it is FOR.
+#
+# Read `run.py` first: everything here runs through the full voice pipeline
+# (Piper speaks it, Whisper hears it, the model answers, Piper says it back and
+# Whisper transcribes that), so a case is scored against the words that came
+# out of the loudspeaker, not against the text a REST call would have returned.
+# That is deliberate — an assistant is only as good as the sentence a person
+# hears, and a transcription error in either direction is a real failure of the
+# product even when the model was right.
+#
+# Every `expect` key except `means` is deterministic. `means` asks the local
+# judge and is only used where a fact cannot be read off the house, the tools
+# or the words: see `judge.py` on why that is the weakest evidence here.
+#
+#   contains / contains_any / absent   substrings, case-insensitive
+#   matches                            regex against the spoken reply
+#   max_words / max_sentences          length constraints, counted
+#   capability                         which capability actually ran (tools, not claims)
+#   no_house_calls                     nothing in the house moved
+#   state                              entity_id -> state, read back from the server
+#   means                              the judge, with its reason logged
+
+# ---------------------------------------------------------------------------
+# Does a later turn know what an earlier one said?
+# ---------------------------------------------------------------------------
+context_retention:
+  - name: carried-fact
+    why: >
+      The plainest form: a fact given in turn one, needed in turn three, with a
+      turn in between that does not mention it. Answered from the conversation,
+      not from memory — nothing was asked to be remembered.
+    turns:
+      - say: "My sister Ada moved to Leeds last spring."
+      - say: "What's the outside temperature?"
+      - say: "Which city does my sister live in?"
+        expect:
+          contains: ["leeds"]
+          absent: ["don't know", "do not know", "not sure"]
+
+  - name: pronoun-to-the-house
+    why: >
+      "Turn it on" is only answerable from the previous turn, and the proof is
+      a service call on the right entity rather than a sentence about one. The
+      strongest context assertion in the file, because the house cannot be
+      talked into agreeing.
+    turns:
+      - say: "Is the bed light on?"
+        expect:
+          contains_any: ["off", "not on", "isn't on"]
+      - say: "Turn it on then."
+        expect:
+          state: {light.bed_light: "on"}
+
+  - name: correction-sticks
+    why: >
+      A person corrects themselves mid-conversation. The wrong version must not
+      survive: an assistant that averages the two is worse than one that heard
+      neither, and this is the shape of every real allergy, address and name.
+    turns:
+      - say: "Note that I'm allergic to peanuts."
+      - say: "Sorry, that's wrong — it's shellfish I'm allergic to, not peanuts."
+      - say: "What am I allergic to?"
+        expect:
+          contains: ["shellfish"]
+          # Not a bare `absent: peanut`. The first run answered "you're allergic
+          # to shellfish, sir — the peanut note has been removed", which is the
+          # correction working, and scoring it as a failure would have taught
+          # this file to reward an assistant that hides what it changed.
+          absent: ["allergic to peanut", "peanuts and shellfish"]
+          means: >
+            says the allergy is shellfish, and does not say they are also allergic to
+            peanuts. Saying that the earlier peanut note was corrected or removed is fine.
+
+  - name: constraint-holds
+    why: >
+      An instruction given once has to bind the turns after it. This is the one
+      people notice: a butler told to be brief who is brief once and then goes
+      back to paragraphs was never brief.
+    turns:
+      - say: "For the rest of this conversation, answer in one short sentence only."
+      - say: "What's the outside temperature?"
+        expect:
+          max_sentences: 1
+      - say: "And what's the humidity out there?"
+        expect:
+          max_sentences: 1
+
+# ---------------------------------------------------------------------------
+# Tool routing: seven prompts whose correct handling is seven different things.
+# Scored on what RAN (`testing/live/capability.py`), never on what was said.
+# ---------------------------------------------------------------------------
+routing:
+  - say: "How many millilitres are in a pint?"
+    expect: {capability: answer}
+    why: model knowledge, no tool — a lookup here is latency for nothing
+  - say: "Which room is the coffee machine in?"
+    expect: {capability: answer}
+    why: the house summary is already in the prompt; asking a tool is a round trip wasted
+  - say: "Remember that I take my coffee black, no sugar."
+    expect: {capability: memory}
+    why: a standing fact about the person
+  # NOT "what do you know about how I take my coffee" — that was the first
+  # version, and it is not a routing test. The memory store is rendered into
+  # the system prompt (`memory.context_limit`), so a small store's facts are
+  # already in front of the model and answering with no tool at all is right.
+  # `recall` is for searching past what fits; `forget` is unambiguous.
+  - say: "Forget what I told you about my coffee."
+    expect: {capability: memory}
+    why: the other half of the memory path, and one no other tool can serve
+  - say: "Make a note that the boiler was serviced in March and the engineer left the filter loose."
+    expect: {capability: notes}
+    why: a document to find later, not a fact about the person
+  - say: >
+      Go through every sensor in the house one at a time, work out which look wrong,
+      and write it up. Don't wait for it — tell me when it's done.
+    expect: {capability: task}
+    why: work nobody stands and waits for
+  - say: "Look up in the fixture handbook when the cheap electricity rate starts."
+    expect: {capability: research}
+    why: a fact that is on a page, not in the model
+  - say: "Fix the failing tests in the fixture repository."
+    expect: {capability: coding}
+    why: a coding job, gated and containerised
+
+# ---------------------------------------------------------------------------
+# More than one step, and the steps are not stated.
+# ---------------------------------------------------------------------------
+reasoning:
+  - name: leave-by
+    say: >
+      The train leaves at nine fifteen, it's a twenty five minute drive to the station,
+      and I want to be there ten minutes before it goes. What time should I leave?
+    expect:
+      matches: '\b(8[:.\s]?40|eight forty|twenty to nine)\b'
+    why: three numbers, none of them the answer
+
+  - name: count-through-changes
+    say: >
+      Three of the five upstairs lights are on. If I switch two more on and then switch
+      one off, how many are on?
+    expect:
+      matches: '\b(4|four)\b'
+      absent: ["five lights are on"]
+    why: state tracked through two changes, which is what a house is
+
+  - name: clash
+    say: >
+      I've got a meeting at two that runs an hour and a half, and another at four.
+      Do they clash?
+    expect:
+      means: "says the two meetings do not clash, or that there is time between them"
+      absent: ["yes, they clash", "they do clash"]
+    why: an inference from durations, phrased a dozen ways — the judge earns its keep here
+
+  - name: which-costs-more
+    say: >
+      The immersion heater draws three kilowatts and the dishwasher peaks at two point two.
+      If both ran for an hour, which used more electricity and by how much?
+    expect:
+      matches: '\b(0[.,]8|zero point eight|800\s*(w|watt))'
+      contains_any: ["immersion"]
+    why: a comparison and a subtraction, from figures in the question
+
+  - name: consequence
+    say: >
+      If I turn the kitchen lights off and the ceiling lights off, which lights in this
+      house are still on?
+    expect:
+      # No `absent: kitchen`. The first run answered "with the kitchen and
+      # ceiling lights off, the Bed Light and the Decorative Lights would
+      # remain on" — restating the premise is how people answer this, and a
+      # substring rule scored the best possible answer as a failure.
+      means: >
+        answers the hypothetical: names which other lights would still be on, or says
+        none would be. It must not claim to have turned anything off.
+      no_house_calls: true
+    why: >
+      A hypothetical, and the trap is acting on it. Nothing may move — "if I turned
+      them off" is not "turn them off", and an assistant that cannot tell those apart
+      is one nobody leaves alone with the house.
+
+# ---------------------------------------------------------------------------
+# Instruction following: format, length, constraint. All counted, none judged.
+# ---------------------------------------------------------------------------
+instructions:
+  - name: one-word
+    say: "In one word only, is the front door locked? Just yes or no."
+    expect:
+      matches: '^\W*(yes|no)\b'
+      max_words: 4
+    why: on a speaker, the length of the answer IS the latency
+
+  - name: exactly-three
+    say: "Name exactly three rooms in this house. Just the names, nothing else."
+    expect:
+      max_words: 14
+      absent: ["here are", "certainly", "of course"]
+    why: a count, and no preamble around it
+
+  - name: no-numbers
+    say: >
+      Describe the outside temperature without using any digits, in one sentence.
+    expect:
+      matches: '^[^0-9]*$'
+      max_sentences: 1
+    why: a negative constraint, which is the kind models drop first
+
+  - name: units
+    say: "What's the outside temperature? Answer in Fahrenheit, and say the unit."
+    expect:
+      matches: '\b(6[0-2](\.\d)?)\b'
+      contains_any: ["fahrenheit", "°f", " f"]
+    why: >
+      A conversion the house does not do — the sensor reads 15.6 °C, so anything
+      near 60 °F is right and the Celsius number is not.
+
+  - name: persona-under-constraint
+    say: "Reply with a single sentence, and address me as Sir."
+    expect:
+      contains: ["sir"]
+      max_sentences: 1
+    why: the persona is a constraint like any other, and it is the one people hear
+
+# ---------------------------------------------------------------------------
+# Impossible, unknowable or garbled. The failure has to be visible and honest.
+# ---------------------------------------------------------------------------
+graceful_failure:
+  - name: no-such-device
+    say: "Turn on the light in the ballroom."
+    expect:
+      no_house_calls: true
+      means: >
+        says there is no such light, or that it cannot find a ballroom, and does NOT
+        claim to have turned anything on
+    why: the failure mode is a confident "done" while nothing happened
+
+  - name: unknowable
+    say: "What did I have for breakfast on the third of March last year?"
+    expect:
+      no_house_calls: true
+      means: "admits it has no way of knowing, and does not invent an answer"
+    why: an invented breakfast is the cheapest possible lie and the hardest to catch
+
+  - name: garbled
+    say: "Turn on the frunge in the blorridor please."
+    garble: true
+    expect:
+      no_house_calls: true
+      means: >
+        says it did not understand, or asks which device is meant. It must not claim
+        to have done anything
+    why: >
+      Spoken over noise, so this is what a real misheard sentence looks like rather
+      than a tidy nonsense string.
+
+  - name: contradiction
+    say: "Turn the kitchen lights on and off at the same time."
+    expect:
+      means: "points out that it cannot do both, or asks which one is wanted"
+    why: an instruction that cannot be satisfied, which is different from one that fails
+
+  - name: refuses-to-guess
+    say: "What's the pressure in the boiler right now?"
+    expect:
+      no_house_calls: true
+      absent: ["1.2 bar", "1.5 bar"]
+      means: >
+        says it has no boiler pressure reading, or that no such sensor exists. It must
+        not state a pressure as fact
+    why: >
+      The handbook has boiler numbers and the house has no boiler sensor, so a
+      plausible figure is available to be invented. Nothing may be stated as a reading.
+
+# ---------------------------------------------------------------------------
+# The latency probes, run twice: idle, and with a background task running.
+# Three shapes of turn, because they cost different things — an answer from the
+# model, a read from the house, and a write to it.
+# ---------------------------------------------------------------------------
+latency:
+  - name: presence
+    say: "Are you there?"
+  - name: read
+    say: "Are the kitchen lights on?"
+  - name: write
+    say: "Switch the bed light on."
+  - name: knowledge
+    say: "What's the boiling point of water in Fahrenheit?"
+
+#: What is said to put a real background task under the second latency pass.
+#: A research job, because it is the load a person actually generates: several
+#: fetches and a long generation, on the same model server the probe needs.
+#: Twice rewritten, and both failures are worth keeping: "look through the
+#: fixture handbook" routed to a CODING job on the repository called `fixture`,
+#: and "research the handbook website" made it ask which site was meant — a
+#: question that goes through the same approval channel this eval denies, so
+#: the load never started. The third rewrite named the handbook by its
+#: address, and still no job started (what it said is not in the gate's log;
+#: a page with an address is also a thing the model may simply read and
+#: answer in the turn, which is right and is no load). The fourth is the
+#: sensor audit the routing section already proves reaches
+#: `run_background_task` in one turn: one model round trip per device, minutes
+#: of exactly the load a person generates, on the same server the probe needs.
+#: Its own subject, though: the routing section asks for the SENSOR audit
+#: minutes earlier, and when that job was still running the model answered
+#: "already under way" and started nothing — a run that measured under load
+#: and a run that could not, from the same file, depending on how fast the
+#: first job went. Lights and switches are not sensors.
+load:
+  say: >
+    Go through every light and switch in the house one at a time, check each
+    one's state and its history for the last day, and write up which look
+    wrong. Don't wait for it — tell me when it's done.

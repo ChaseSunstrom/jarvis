@@ -10,7 +10,34 @@
 // The transport is injected as a `send` function and incoming frames are fed to
 // `handleMessage()`, so the whole class is unit-testable in plain Node.
 
+import type { Trace } from './trace';
 import * as conversations from './conversations';
+import { toTaskList, toTaskRow, type TaskRow } from './tasks';
+import { type LogEntry, toLog } from './taskEvents';
+import { type Dashboard, toDashboard, toDashboards, wireWidget } from './dashboards/layout';
+import { type SeriesData, toSeries } from './dashboards/series';
+import {
+	type CameraStill,
+	type MomentRow,
+	type ReadingsPayload,
+	type SkySummary,
+	toMoments,
+	toReadings,
+	toSky,
+	toStill
+} from './dashboards/widgets';
+
+/** One data source, as `jarvis/metrics/sources` describes it. */
+export interface MetricSource {
+	name: string;
+	description: string;
+	healthy: boolean;
+	detail: string;
+	series: { key: string; label: string; unit: string; group: string; default_aggregate: string }[];
+}
+import type { McpServer } from './mcpDraft';
+import type { ScheduledJob } from './schedule';
+import type { CodeListing, CodeResult } from './code';
 
 export type SendFn = (data: string) => void;
 
@@ -64,6 +91,10 @@ export interface CompanionDevice {
 	app_version?: string | null;
 	action_count?: number;
 	actions?: { name: string; description?: string; tier?: number }[];
+	/** The device registry entry the companion is filed under (M99); its room lives there. */
+	registry_id?: string | null;
+	area_id?: string | null;
+	area?: string;
 }
 
 /** A tier-3 action held until a human says yes. */
@@ -98,9 +129,79 @@ export interface PendingApproval {
 	 * write that sentence.
 	 */
 	tainted?: boolean;
+	/**
+	 * One sentence for the card, composed by jarvis-core from the PINNED
+	 * arguments — "Change Temperature (llm.options.temperature) from 0.7 to
+	 * 0.2" — for a tool that has one (`Tool.summarise`, M67). Empty or absent
+	 * for every other tool, and the card then shows the name and the
+	 * arguments as it always did. Read through `$lib/approvals`, which binds
+	 * the field's name to the tier contract.
+	 */
+	summary?: string;
+	/**
+	 * The clock this request is on, in seconds: `llm.question_ttl` for a
+	 * question, `llm.approval_ttl` for an action (M66). Count THIS down, so the
+	 * bar and the voice — which says "expired after 30 minutes" — agree.
+	 */
+	ttl?: number;
+	/** Which conversation raised it; the next thing said there can answer it. */
+	conversation_id?: string | null;
+	/** Its reply is read aloud, so a phone shows the question and does not say it. */
+	spoken?: boolean;
 }
 
 /** A row in the chat sidebar: enough to list a conversation, not to read it. */
+/** A panel Jarvis put up on the voice screen (M83): a spec the screen draws live. */
+export interface SurfacePanel {
+	id: string;
+	kind: 'entity' | 'camera' | 'readings' | 'sky' | 'moments' | 'note' | 'page' | 'chart' | 'task';
+	title: string;
+	entity: string;
+	camera: string;
+	area: string;
+	note: string;
+	url: string;
+	text: string;
+	limit: number;
+	/** M88: the job a `task` panel follows. */
+	task: string;
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	placed_at: number;
+}
+
+export function toSurfacePanels(rows: unknown): SurfacePanel[] {
+	if (!Array.isArray(rows)) return [];
+	const out: SurfacePanel[] = [];
+	for (const raw of rows) {
+		if (!raw || typeof raw !== 'object') continue;
+		const r = raw as Record<string, unknown>;
+		const kind = String(r.kind ?? '');
+		if (!['entity', 'camera', 'readings', 'sky', 'moments', 'note', 'page', 'chart', 'task'].includes(kind)) continue;
+		out.push({
+			id: String(r.id ?? ''),
+			kind: kind as SurfacePanel['kind'],
+			title: String(r.title ?? ''),
+			entity: String(r.entity ?? ''),
+			camera: String(r.camera ?? ''),
+			area: String(r.area ?? ''),
+			note: String(r.note ?? ''),
+			url: String(r.url ?? ''),
+			text: String(r.text ?? ''),
+			limit: Number(r.limit ?? 6) || 6,
+			task: String(r.task ?? ''),
+			x: Number(r.x ?? 0) || 0,
+			y: Number(r.y ?? 0) || 0,
+			w: Number(r.w ?? 4) || 4,
+			h: Number(r.h ?? 2) || 2,
+			placed_at: Number(r.placed_at ?? 0) || 0
+		});
+	}
+	return out;
+}
+
 export interface ConversationSummary {
 	id: string;
 	title: string;
@@ -184,6 +285,76 @@ export interface SettingResult {
 	settings: SettingRow[];
 }
 
+/** What a model is for, as `jarvis/llm/models` classifies it. */
+export type ModelRole = 'chat' | 'fast' | 'vision' | 'embeddings' | 'rerank' | 'unknown';
+
+/**
+ * One model as a server actually serves it (M54).
+ *
+ * `id` is the string a request names — `qwen3.8-27b`, never the gateway's
+ * `house`; the alias is in `aliases`. `loaded` is null when the server cannot
+ * say. `choice` is what `llm.model` takes to use it (the alias behind a
+ * gateway, the id otherwise), null when `LLM_URL` cannot reach it at all.
+ */
+export interface ModelRow {
+	id: string;
+	name: string;
+	family: string;
+	parameters: string;
+	quant: string;
+	role: ModelRole;
+	loaded: boolean | null;
+	aliases: string[];
+	in_use_for: string[];
+	server: string;
+	kind: string;
+	choice: string | null;
+	/** Whether family/size/quant came from the server or were read off the id. */
+	described_by: 'server' | 'id';
+	context: number | null;
+	size_bytes: number | null;
+	description: string;
+	/** Configured, and listed by no server. */
+	missing: boolean;
+	note: string;
+}
+
+export interface ModelRoleState {
+	/** The setting that chooses this role. */
+	setting: string;
+	/** The setting's current value, as LLM_URL names it. */
+	value: string;
+	/** The served id that value stands for, or null. */
+	model: string | null;
+	/** Fast only: 'setting' | 'gateway' | null. */
+	source?: string | null;
+	/** Vision only: whether `vision:` is configured at all. */
+	configured?: boolean;
+	/** Vision only: the configured model is listed by a server. */
+	served?: boolean;
+	/** Vision only: vision-capable models a server lists, by id. */
+	served_vision?: string[];
+	/** Vision only: cameras named under `vision: cameras:`. */
+	cameras?: number;
+}
+
+export interface ModelServer {
+	url: string;
+	kind: string;
+	role: string;
+	ok: boolean;
+	error: string;
+	models: number;
+}
+
+export interface ModelsPayload {
+	models: ModelRow[];
+	roles: { chat: ModelRoleState; fast: ModelRoleState; vision: ModelRoleState };
+	servers: ModelServer[];
+	gateway: { url: string; aliases: Record<string, string> } | null;
+	fast_available: boolean;
+}
+
 /** One automation as jarvis-core reports it, YAML-authored or console-authored. */
 export interface AutomationRow {
 	id: string;
@@ -246,6 +417,70 @@ export interface DeviceRegistryEntry {
 	disabled?: boolean;
 }
 
+/** One skill: a folder of instructions the operator wrote. */
+export interface Skill {
+	name: string;
+	description: string;
+	allowed_tools: string[];
+	metadata: Record<string, unknown>;
+	version: string;
+	resources: string[];
+	path: string;
+	body_chars: number;
+	/** Only `jarvis/skills/get` fills this in — the list is names and summaries. */
+	body?: string;
+}
+
+/** What `jarvis/skills/list` answers with. */
+export interface SkillListing {
+	skills: Skill[];
+	/**
+	 * Skills that could not be read, with the reason. Shown rather than
+	 * swallowed: a mistyped frontmatter is otherwise simply absent, and
+	 * "it does not appear" is the least diagnosable failure a folder-based
+	 * feature can have.
+	 */
+	errors: { path: string; error: string }[];
+	enabled: boolean;
+	path?: string;
+}
+
+/** What `jarvis/mcp/inspect` answers with: one server, in full. */
+export interface McpServerDetail {
+	name: string;
+	transport: string;
+	url: string;
+	command: string;
+	enabled: boolean;
+	editable: boolean;
+	tier: number;
+	connected: boolean;
+	server_info: Record<string, unknown>;
+	protocol_version: string;
+	/** Why it is not up. Empty when it is. */
+	last_error: string;
+	attempts: number;
+	next_attempt_in: number;
+	tools: {
+		name: string;
+		remote_name: string;
+		description: string;
+		parameters: Record<string, unknown>;
+		tier: number;
+	}[];
+}
+
+/** What `jarvis/mcp/list` and the three write commands all answer with. */
+export interface McpListing {
+	servers: McpServer[];
+	/**
+	 * Whether jarvis-core will start a program for a stdio server. Read-only
+	 * here by design — see the methods below.
+	 */
+	allow_stdio: boolean;
+	default_tier: number;
+}
+
 export interface BusEvent {
 	event_type: string;
 	data: Record<string, any>;
@@ -266,6 +501,19 @@ export interface ToolDescription {
 	description?: string;
 	parameters?: Record<string, any>;
 	domain?: string | null;
+	/** 1 direct · 2 background · 3 approval. Absent on the fallback path. */
+	tier?: number;
+	/**
+	 * Whether running this ALWAYS asks a human first.
+	 *
+	 * Computed by jarvis-core, never re-derived here from `tier`. The tier is
+	 * not the whole rule — a tool in a gated domain is held at any tier — and
+	 * a console that reimplemented the rule would be a second copy of a
+	 * security decision that is deliberately made in one place.
+	 */
+	needs_approval?: boolean;
+	/** Held depending on its arguments, so the listing cannot say in advance. */
+	may_escalate?: boolean;
 	/** Set by the client when the entry was synthesised from a service. */
 	source?: 'tools' | 'services';
 }
@@ -576,6 +824,15 @@ export class JarvisClient {
 	 * Update a registry entry. jarvis-core ignores null-valued fields, so pass
 	 * `''` (not null) to clear an area assignment.
 	 */
+	/**
+	 * Update one entity's registry entry.
+	 *
+	 * `new_entity_id` changes the id itself, which is a key and not a label:
+	 * jarvis-core moves the state with it and rewrites the authored automations
+	 * that named the old one. It is spelled out here rather than left to the
+	 * spread, because a field the type does not mention is one the next reader
+	 * assumes is not sent.
+	 */
 	updateEntity(
 		entityId: string,
 		changes: Partial<
@@ -583,13 +840,28 @@ export class JarvisClient {
 				EntityRegistryEntry,
 				'name' | 'icon' | 'area_id' | 'device_id' | 'aliases' | 'disabled' | 'hidden' | 'exposed'
 			>
-		>
+		> & { new_entity_id?: string }
 	): Promise<any> {
 		return this.command({
 			type: 'config/entity_registry/update',
 			entity_id: entityId,
 			...changes
 		});
+	}
+
+	/**
+	 * Take an entity out of the house for good (M69): its registry entry, its
+	 * state and its live object, through the same path the assistant's
+	 * `remove_entities` runs after its approval. The row disappears on the
+	 * `state_changed` that follows, not on this reply.
+	 */
+	removeEntity(entityId: string): Promise<{
+		entity_id: string;
+		removed: boolean;
+		had_state: boolean;
+		had_registry_entry: boolean;
+	}> {
+		return this.command({ type: 'config/entity_registry/remove', entity_id: entityId });
 	}
 
 	/** The manageable view of tools, with `editable` and the service block. */
@@ -661,9 +933,14 @@ export class JarvisClient {
 		const result = await this.callService('llm', 'pending_requests', {}, {
 			returnResponse: true
 		});
-		const list = Array.isArray(result)
-			? result
-			: (result?.response ?? result?.result ?? result?.requests ?? []);
+		// The server answers `{response: {pending: [...]}}` (llm.pending_requests
+		// returns `{pending}`, and the websocket keys a service response `response`).
+		// Reading `response` as the list itself found an object, not an array, and
+		// the banner never seeded from a real server (the console audit, 27 Aug 2026).
+		const payload = Array.isArray(result) ? result : (result?.response ?? result?.result ?? result);
+		const list = Array.isArray(payload)
+			? payload
+			: (payload?.pending ?? payload?.requests ?? []);
 		return Array.isArray(list) ? list : [];
 	}
 
@@ -697,6 +974,347 @@ export class JarvisClient {
 		return conversations.renameConversation(this.send_, conversationId, title);
 	}
 
+	// --- scheduled jobs --------------------------------------------------------
+	//
+	// The console may schedule a service call; the model's own tool cannot. A
+	// request here carried a bearer token, whereas a tool call may have been
+	// shaped by a page the model read — so the two doors are different widths,
+	// and jarvis-core enforces that, not this file.
+
+	async listScheduled(): Promise<ScheduledJob[]> {
+		const result = await this.command<{ jobs?: ScheduledJob[] }>({
+			type: 'jarvis/schedule/list'
+		});
+		return result?.jobs ?? [];
+	}
+
+	addScheduled(payload: Record<string, unknown>): Promise<{ job: ScheduledJob }> {
+		return this.command({ type: 'jarvis/schedule/add', ...payload });
+	}
+
+	removeScheduled(jobId: string): Promise<{ removed: string }> {
+		return this.command({ type: 'jarvis/schedule/remove', job_id: jobId });
+	}
+
+	setScheduledEnabled(jobId: string, enabled: boolean): Promise<{ job: ScheduledJob }> {
+		return this.command({ type: 'jarvis/schedule/enabled', job_id: jobId, enabled });
+	}
+
+	// --- MCP servers ---------------------------------------------------------
+	//
+	// Read, add, remove, reconnect. There is deliberately no way to turn
+	// `allow_stdio` on from here: that is the line between jarvis-core fetching
+	// a URL and jarvis-core starting a program, and it lives in
+	// configuration.yaml so that no request can cross it. `listMcpServers`
+	// reports the flag so this console can explain the closed fields rather
+	// than submitting a form the server will refuse.
+
+	/** Every loaded skill — names and descriptions, not bodies. */
+	listSkills(): Promise<SkillListing> {
+		return this.command<SkillListing>({ type: 'jarvis/skills/list' });
+	}
+
+	/** One skill, body included. */
+	getSkill(name: string): Promise<{ skill: Skill }> {
+		return this.command<{ skill: Skill }>({ type: 'jarvis/skills/get', name });
+	}
+
+	/** Re-read the folder. The only write: a skill is created on disk. */
+	reloadSkills(): Promise<{ loaded: number; errors: { path: string; error: string }[] }> {
+		return this.command({ type: 'jarvis/skills/reload' });
+	}
+
+	/**
+	 * One server in full: schemas, protocol version, and — the field that
+	 * matters — `last_error`. A server that is simply missing from the tool
+	 * list tells nobody why.
+	 */
+	inspectMcpServer(name: string): Promise<{ server: McpServerDetail }> {
+		return this.command<{ server: McpServerDetail }>({ type: 'jarvis/mcp/inspect', name });
+	}
+
+	listMcpServers(): Promise<McpListing> {
+		return this.command<McpListing>({ type: 'jarvis/mcp/list' });
+	}
+
+	addMcpServer(payload: Record<string, unknown>): Promise<McpListing> {
+		return this.command<McpListing>({ type: 'jarvis/mcp/add', ...payload });
+	}
+
+	removeMcpServer(name: string): Promise<McpListing> {
+		return this.command<McpListing>({ type: 'jarvis/mcp/remove', name });
+	}
+
+	/** One server, or all of them. Re-reads the tool list, which is the point. */
+	reconnectMcp(name = ''): Promise<McpListing> {
+		const payload: Record<string, any> = { type: 'jarvis/mcp/reconnect' };
+		if (name) payload.name = name;
+		return this.command<McpListing>(payload);
+	}
+
+	// --- Jarvis Code -----------------------------------------------------------
+	//
+	// Unlike a bare task, a coding job IS startable from here: there is a worker
+	// behind it, so the record it creates is one something is driving. The
+	// asymmetry that remains is with the MODEL — `code_task` is Tier 3 and asks
+	// a human first, because a tool call may have been shaped by a page the
+	// model read, whereas this request carried a bearer token.
+
+	listCode(): Promise<CodeListing> {
+		return this.command<CodeListing>({ type: 'jarvis/code/list' });
+	}
+
+	startCodeJob(repo: string, instruction: string): Promise<{ task_id: string; title: string }> {
+		return this.command({ type: 'jarvis/code/start', repo, instruction });
+	}
+
+	createCodeRepo(payload: {
+		name: string;
+		description?: string;
+		environment?: string;
+	}): Promise<CodeListing & { repository: unknown }> {
+		return this.command({ type: 'jarvis/code/create_repo', ...payload });
+	}
+
+	/**
+	 * Clone one of the forge's PERMITTED repositories into the workspace.
+	 *
+	 * The allow-list is jarvis-core's; the console mirrors it only so the form
+	 * can say no without a round trip. A token is never sent either way — it
+	 * lives in the server's configuration and reaches git through `GIT_ASKPASS`.
+	 */
+	cloneCodeRepo(payload: {
+		forge: string;
+		project: string;
+		name?: string;
+		environment?: string;
+	}): Promise<CodeListing & { repository: unknown }> {
+		return this.command({ type: 'jarvis/code/clone_repo', ...payload });
+	}
+
+	/** Drop it from the listing. jarvis-core does NOT delete the files. */
+	forgetCodeRepo(name: string): Promise<CodeListing & { note: string }> {
+		return this.command({ type: 'jarvis/code/forget_repo', name });
+	}
+
+	/** The branch, diff, checks and trail of a finished job. Null while it runs. */
+	async getCodeResult(taskId: string): Promise<CodeResult | null> {
+		try {
+			return await this.command<CodeResult>({ type: 'jarvis/code/result', task_id: taskId });
+		} catch (err) {
+			if (err instanceof JarvisCommandError && err.code === 'not_found') return null;
+			throw err;
+		}
+	}
+
+	/**
+	 * The trace covering a task: every tool call, model call and approval under
+	 * it, with what each one cost.
+	 *
+	 * Asked for by TASK id rather than trace id, because a task knows its own
+	 * id and nothing about the context tree the trace is keyed on. Returns null
+	 * when tracing is off (`observability:` unset), which is a configuration
+	 * choice and not an error to shout about.
+	 */
+	async getTrace(taskId: string): Promise<Trace | null> {
+		const answer = await this.command<{ trace: Trace | null; recording: boolean }>({
+			type: 'jarvis/traces/get',
+			task_id: taskId
+		});
+		return answer?.trace ?? null;
+	}
+
+	// --- tasks ---------------------------------------------------------------
+	//
+	// Read plus two destructive verbs, and no create: jarvis-core mints a task
+	// from whatever is about to do the work, because a task nothing is driving
+	// is the empty seam the registry exists to close.
+	//
+	// The console keeps its list live from `jarvis_task_added/updated/removed`
+	// over `subscribeEvents`, so these are for the first paint and for acting on
+	// a row — not for polling.
+
+	/** Every tracked job, newest first. Whole tasks, steps included. */
+	async listTasks(opts: { kind?: string; active?: boolean } = {}): Promise<TaskRow[]> {
+		const payload: Record<string, any> = { type: 'jarvis/tasks/list' };
+		if (opts.kind) payload.kind = opts.kind;
+		if (opts.active) payload.active = true;
+		return toTaskList(await this.command(payload));
+	}
+
+	// --- dashboards + metrics ---------------------------------------------
+
+	/** Every dashboard this token may see: its own, plus the shared ones. */
+	async listDashboards(): Promise<Dashboard[]> {
+		return toDashboards(await this.command({ type: 'jarvis/dashboards/list' }));
+	}
+
+	/**
+	 * Create or replace one. The server stamps the owner from this socket's
+	 * token — a client cannot save a board as somebody else.
+	 */
+	async saveDashboard(dashboard: Dashboard): Promise<Dashboard | null> {
+		const result = await this.command<{ dashboard?: unknown }>({
+			type: 'jarvis/dashboards/save',
+			// Only the fields each widget's kind needs go over the wire; the
+			// server drops the rest, and a graph's empty `series` on an entity
+			// tile would only make the frame lie about what the tile is.
+			dashboard: { ...dashboard, widgets: dashboard.widgets.map(wireWidget) }
+		});
+		return toDashboard(result?.dashboard);
+	}
+
+	// --- what the house widgets read (M63) -----------------------------------
+	//
+	// Three reads and the notifications list. Each answers rather than throws
+	// when the integration behind it is not set up (`configured: false`), so a
+	// widget can say how the thing is added instead of the page erroring.
+
+	/** Every sensor's newest reading, with its room and age; `area` filters. */
+	async sensorReadings(area = '', limit = 0): Promise<ReadingsPayload> {
+		const payload: Record<string, any> = { type: 'jarvis/sensors/readings' };
+		if (area) payload.area = area;
+		if (limit) payload.limit = limit;
+		return toReadings(await this.command(payload));
+	}
+
+	/** The next pass of the first tracked satellite and the moon tonight. */
+	async skySummary(): Promise<SkySummary> {
+		return toSky(await this.command({ type: 'jarvis/sky/summary' }));
+	}
+
+	/**
+	 * One frame from a camera as a data URL — through the camera's consent,
+	 * rate limit and audit, exactly as a look. A refusal comes back as a
+	 * `denied` still with its decision, not as an error.
+	 */
+	async visionStill(camera = ''): Promise<CameraStill> {
+		const payload: Record<string, any> = { type: 'jarvis/vision/still' };
+		if (camera) payload.camera = camera;
+		return toStill(await this.command(payload));
+	}
+
+	/** The newest moments, newest first. */
+	async listMoments(limit = 6): Promise<MomentRow[]> {
+		return toMoments(await this.command({ type: 'jarvis/notifications/list', limit }), limit);
+	}
+
+	// --- the surface (M83): what Jarvis has put up on the voice screen --------
+	/** The panels on the voice screen, in order of placement. */
+	async surfaceList(): Promise<SurfacePanel[]> {
+		const payload = (await this.command({ type: 'jarvis/surface/list' })) as { panels?: unknown[] };
+		return toSurfacePanels(payload?.panels);
+	}
+
+	/** Where a drag or a resize left a panel; the server clamps and keeps it. */
+	async surfaceMove(id: string, where: Partial<Pick<SurfacePanel, 'x' | 'y' | 'w' | 'h'>>): Promise<void> {
+		await this.command({ type: 'jarvis/surface/move', panel: id, ...where });
+	}
+
+	/** An entity's recent numeric history, as a chart's series (M83). */
+	async sensorHistory(entityId: string, hours = 24): Promise<SeriesData[]> {
+		return toSeries(await this.command({ type: 'jarvis/sensors/history', entity_id: entityId, hours }));
+	}
+
+	async surfaceRemove(id: string): Promise<void> {
+		await this.command({ type: 'jarvis/surface/remove', panel: id });
+	}
+
+	async surfaceClear(): Promise<void> {
+		await this.command({ type: 'jarvis/surface/clear' });
+	}
+
+	async deleteDashboard(id: string): Promise<boolean> {
+		try {
+			await this.command({ type: 'jarvis/dashboards/delete', id });
+			return true;
+		} catch (err) {
+			if (err instanceof JarvisCommandError && err.code === 'not_found') return false;
+			throw err;
+		}
+	}
+
+	/** What can be graphed, per source, with each source's health. */
+	async metricsSources(): Promise<MetricSource[]> {
+		const result = await this.command<{ sources?: unknown }>({ type: 'jarvis/metrics/sources' });
+		return Array.isArray(result?.sources) ? (result.sources as MetricSource[]) : [];
+	}
+
+	/** One widget's numbers. */
+	async metricsQuery(request: {
+		source: string;
+		series: string[];
+		range?: string;
+		aggregate?: string;
+	}): Promise<SeriesData[]> {
+		return toSeries(await this.command({ type: 'jarvis/metrics/query', ...request }));
+	}
+
+	/**
+	 * One task's replayable history.
+	 *
+	 * The activity events are fire-and-forget, so a page opened two minutes into
+	 * a job has missed every one of them. This is how it catches up.
+	 */
+	async taskLog(taskId: string, limit = 200): Promise<LogEntry[]> {
+		return toLog(await this.command({ type: 'jarvis/tasks/log', task_id: taskId, limit }));
+	}
+
+	/** One task in full, or null if it has been forgotten. */
+	async getTask(taskId: string): Promise<TaskRow | null> {
+		try {
+			const result = await this.command<{ task?: unknown }>({
+				type: 'jarvis/tasks/get',
+				task_id: taskId
+			});
+			return toTaskRow(result?.task);
+		} catch (err) {
+			if (err instanceof JarvisCommandError && err.code === 'not_found') return null;
+			throw err;
+		}
+	}
+
+	/**
+	 * Ask a task to stop — and it is an ASK.
+	 *
+	 * jarvis-core's registry is a record, not a scheduler: it cannot reach into
+	 * the coroutine doing the work. The reply carries `cancelled` and, when a
+	 * worker might not be checking, a `note` saying so. Both are passed straight
+	 * through, because a UI that shows "cancelled" over work that is still
+	 * running is the same lie one layer up.
+	 */
+	cancelTask(taskId: string): Promise<{ task?: unknown; cancelled: boolean; note?: string; reason?: string }> {
+		return this.command({ type: 'jarvis/tasks/cancel', task_id: taskId });
+	}
+
+	/**
+	 * Put a finished task back on the queue (M99). The server refuses one that
+	 * has not finished, and one whose kind nothing on that server can rebuild —
+	 * both as errors with a sentence, which the caller should show.
+	 */
+	retryTask(taskId: string): Promise<{ task?: unknown; queued: boolean }> {
+		return this.command({ type: 'jarvis/tasks/retry', task_id: taskId });
+	}
+
+	/** Forget one task. Does not stop it — see `cancelTask`. */
+	async deleteTask(taskId: string): Promise<boolean> {
+		try {
+			await this.command({ type: 'jarvis/tasks/delete', task_id: taskId });
+			return true;
+		} catch (err) {
+			if (err instanceof JarvisCommandError && err.code === 'not_found') return false;
+			throw err;
+		}
+	}
+
+	/** Forget every finished task, leaving the live ones. Returns how many went. */
+	async clearFinishedTasks(): Promise<number> {
+		const result = await this.command<{ removed?: number }>({
+			type: 'jarvis/tasks/clear_finished'
+		});
+		return Number(result?.removed ?? 0) || 0;
+	}
+
 	// --- settings ----------------------------------------------------------
 	listSettings(): Promise<{ settings: SettingRow[]; unapplied: UnappliedSetting[] }> {
 		return this.command({ type: 'config/settings/list' });
@@ -709,6 +1327,11 @@ export class JarvisClient {
 	/** Drop an override so the value in configuration.yaml shows through again. */
 	resetSetting(key: string): Promise<SettingResult> {
 		return this.command({ type: 'config/settings/reset', key });
+	}
+
+	/** What the model servers actually serve, resolved through the gateway (M54). */
+	listModels(): Promise<ModelsPayload> {
+		return this.command<ModelsPayload>({ type: 'jarvis/llm/models' });
 	}
 
 	// --- automations -------------------------------------------------------
@@ -747,6 +1370,16 @@ export class JarvisClient {
 
 	updateDevice(deviceId: string, changes: Record<string, any>): Promise<any> {
 		return this.command({ type: 'config/device_registry/update', device_id: deviceId, ...changes });
+	}
+
+	/** Forget a device and every entity on it (M69); answers with the entity ids that went. */
+	removeDevice(deviceId: string): Promise<{
+		device_id: string;
+		name?: string;
+		removed: boolean;
+		entities: string[];
+	}> {
+		return this.command({ type: 'config/device_registry/remove', device_id: deviceId });
 	}
 
 	// --- voice / llm -------------------------------------------------------
@@ -845,6 +1478,9 @@ export function normalizeTools(result: any): ToolDescription[] {
 		description: tool?.description ?? tool?.function?.description ?? '',
 		parameters: tool?.parameters ?? tool?.function?.parameters ?? {},
 		domain: tool?.domain ?? null,
+		tier: typeof tool?.tier === 'number' ? tool.tier : undefined,
+		needs_approval: tool?.needs_approval === true,
+		may_escalate: tool?.may_escalate === true,
 		source: 'tools' as const
 	}));
 }

@@ -137,8 +137,14 @@ def render_bool(
 
 # --- small conversions ------------------------------------------------------
 def as_list(value: Any) -> list[Any]:
-    """Normalise scalar-or-list config values to a list."""
-    if value is None:
+    """Normalise scalar-or-list config values to a list.
+
+    An empty mapping is nothing, not one empty item: an included
+    `automations.yaml` holding `[]` came back as `{}` and this made it
+    `[{}]` — one phantom `automation.automation_0`, on, exposed to the model,
+    on every house (the server audit, 27 Aug 2026).
+    """
+    if value is None or (isinstance(value, dict) and not value):
         return []
     if isinstance(value, (list, tuple, set, frozenset)):
         return list(value)

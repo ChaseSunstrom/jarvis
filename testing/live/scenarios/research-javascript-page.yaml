@@ -1,0 +1,34 @@
+name: research-javascript-page
+capability: research
+# Not the stack: the page is one this repository serves, and the answer is only
+# in it after a script has run.
+ground: fixture
+gated-on: M31
+intent: >
+  The one thing a headless browser is for. `/appliances.html` says "Loading the
+  appliance register…" in its HTML and writes the register itself, from data, a
+  tick later — the shape of every dashboard, every status page and half the
+  documentation on the web. A fetcher that reads the markup and stops answers
+  this question wrong while looking exactly as confident as one that read the
+  page.
+
+  It is also the scenario that proves which browser the rig is talking to. The
+  fixture stand-in (`testing/live/fixture_browser.py`) cannot run JavaScript,
+  so if a run falls back to it this fails — which is the point: a suite that
+  silently used the fake is a suite whose browser claims mean nothing.
+variants: [text]
+turns:
+  # Phrased like `research-quick-lookup`, which is known to reach the web in
+  # one turn. "Look up IN the fixture handbook how many…" sent a run to the
+  # notes instead: there is a coding repository called `fixture` in this
+  # harness, and "the fixture …" is genuinely ambiguous with one of those
+  # about.
+  - say: >
+      Look up what the fixture handbook says about the appliance register — how
+      many fixed appliances it lists, and which one is the largest single load.
+    expect:
+      capability: research
+      reply_contains: ["three", "immersion"]
+      reply_means: >
+        says the register lists three fixed appliances and that the immersion
+        heater is the largest load, at 3 kW

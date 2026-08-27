@@ -53,6 +53,36 @@ object Builtins {
         // Media
         addAll(MediaActions.all)
 
+        // The house's way into PHONE TASKS (M98): a task definition shipped as
+        // a device command, screened by the store like any import.
+        add(ImportPhoneTasks)
+        add(ListPhoneTasks)
+
+        // The Tasker rows closed by M61 (ParityActions.kt), one add each so the
+        // table mirror can see every registration.
+        add(ShowToast)
+        add(SetAutoBrightness)
+        add(SetRotationLock)
+        add(SetScreenTimeout)
+        add(GetNetworkInfo)
+        add(SendIntent)
+        add(LaunchShortcut)
+        add(MediaControl)
+        add(MediaNowPlaying)
+        add(PlayMedia)
+        add(SetWallpaper)
+        add(RecordAudio)
+        add(SetBluetooth)
+        // The last six rows (CameraActions.kt, TelephonyLogActions.kt,
+        // NfcActions.kt): a permission the app now asks for, or a camera.
+        add(TakePhoto)
+        add(ScanCode)
+        add(ReadSms)
+        add(ReadCallLog)
+        add(EndCall)
+        add(NfcRead)
+        add(NfcWrite)
+
         // Comms
         add(SendSms)
         add(PlaceCall)

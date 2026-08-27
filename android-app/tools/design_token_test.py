@@ -13,10 +13,10 @@ also the moment two palettes stop being harmless: they were never on screen
 together before, so nobody could see that three of `JarvisUi`'s eight colours
 matched a `--jv-*` token and five were near misses.
 
-So the Kotlin names a token per colour and this checks it. What is pinned is
-that the two SURFACES agree, not that either file is right — which is why the
-expected values are read out of `tokens.ts` rather than written down twice
-here.
+So the Kotlin names a token per colour and this checks it. The values now come
+from one source, `design/tokens.json`, through the generated `JarvisTokens.kt`
+(`python3 design/build.py`); what this pins is that `JarvisUi`'s aliases point
+at the right tokens and that the generated constants still equal the source.
 
 ## What is deliberately not pinned
 
@@ -45,7 +45,8 @@ ANDROID = Path(__file__).resolve().parents[1]
 REPO = ANDROID.parent
 
 JARVIS_UI = ANDROID / "app/src/main/kotlin/ai/jarvis/app/ui/JarvisUi.kt"
-TOKENS = REPO / "jarvis-web/src/lib/tokens.ts"
+JARVIS_TOKENS = ANDROID / "app/src/main/kotlin/ai/jarvis/app/ui/theme/JarvisTokens.kt"
+TOKENS = REPO / "design/tokens.json"
 
 #: WCAG AA for body text. The chrome here is small and mostly monospace, so the
 #: large-text allowance (3:1) is not the one that applies.
@@ -53,54 +54,68 @@ AA = 4.5
 
 
 def web_tokens() -> dict[str, str]:
-    """`'--jv-accent': '#3fd8ff'` -> {'--jv-accent': '3fd8ff'}. Hex only.
+    """`design/tokens.json` colour leaves -> {'--jv-accent': '4fe3ff'}. Hex only.
 
-    `rgba(...)` tokens are skipped rather than parsed: nothing on the phone
-    names one, because Android carries its alpha in the colour int itself.
+    The source of truth is the JSON now; `tokens.ts` and `JarvisTokens.kt` are
+    both generated from it by `design/build.py`, so comparing the phone against
+    the JSON is comparing it against the console too. `rgba(...)` tokens are
+    skipped rather than parsed: nothing on the phone names one.
     """
-    text = TOKENS.read_text(encoding="utf-8")
-    return {
-        name: value.lstrip("#").lower()
-        for name, value in re.findall(r"'(--jv-[a-z-]+)':\s*'#([0-9A-Fa-f]{6})'", text)
-    }
+    import json
+
+    data = json.loads(TOKENS.read_text(encoding="utf-8"))
+    out: dict[str, str] = {}
+
+    def walk(node: dict, path: list[str]) -> None:
+        if "$value" in node:
+            value = str(node["$value"])
+            if re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+                out["--jv-" + "-".join(path)] = value.lstrip("#").lower()
+            return
+        for key, child in node.items():
+            if not key.startswith("$") and isinstance(child, dict):
+                walk(child, path + [key])
+
+    walk(data["color"], [])
+    return out
+
+
+def generated_colours() -> dict[str, tuple[str, str]]:
+    """`const val NAME = 0xAARRGGBB.toInt() // --jv-token` in JarvisTokens.kt."""
+    out: dict[str, tuple[str, str]] = {}
+    for line in JARVIS_TOKENS.read_text(encoding="utf-8").splitlines():
+        m = re.search(
+            r"const val ([A-Z_0-9]+) = 0x([0-9A-Fa-f]{8})\.toInt\(\)\s*//\s*(--jv-[a-z0-9-]+)", line
+        )
+        if m:
+            out[m.group(1)] = (m.group(2).lower()[2:], m.group(3))
+    return out
 
 
 def kotlin_colours(src: str) -> dict[str, tuple[str, str]]:
-    """`const val NAME = 0xAARRGGBB.toInt() // --jv-token` -> {NAME: (rgb, token)}.
+    """`const val NAME = JarvisTokens.Color.X // --jv-token` -> {NAME: (rgb, token)}.
 
-    The token comes from the trailing comment or the KDoc line above, because a
-    colour with no stated token is the thing this spec exists to prevent — a
-    second palette growing back one constant at a time.
+    JarvisUi no longer holds a hex of its own: every colour is an alias of a
+    generated constant, and the alias line still names its token so that a
+    colour with no stated token — the thing this spec exists to prevent — is
+    still a failure rather than a private palette growing back one constant at
+    a time. The rgb comes from the generated file the alias points at.
     """
+    generated = generated_colours()
     out: dict[str, tuple[str, str]] = {}
-    lines = src.splitlines()
-    for i, line in enumerate(lines):
+    for line in src.splitlines():
         m = re.search(
-            r"const val ([A-Z_]+) = 0x([0-9A-Fa-f]{8})\.toInt\(\)(?:\s*//\s*(--jv-[a-z-]+))?",
+            r"const val ([A-Z_]+) = JarvisTokens\.Color\.([A-Z_0-9]+)(?:\s*//\s*(--jv-[a-z-]+))?",
             line,
         )
         if not m:
             continue
-        name, argb, token = m.group(1), m.group(2).lower(), m.group(3)
-        if token is None:
-            # The KDoc immediately above, for the ones that need a sentence.
-            #
-            # Only a CONTIGUOUS run of comment lines, stopping at the first line
-            # that is not one. Walking back a fixed number of lines instead let
-            # a colour with no token of its own quietly adopt the token from the
-            # KDoc of the colour above it — so deleting a token was reported as
-            # a mismatch against somebody else's colour rather than as the
-            # missing token it was. Verified by deleting one.
-            for back in range(i - 1, -1, -1):
-                above = lines[back].strip()
-                if not (above.startswith("*") or above.startswith("//") or
-                        above.startswith("/**")):
-                    break
-                found = re.search(r"`(--jv-[a-z-]+)`", above)
-                if found:
-                    token = found.group(1)
-                    break
-        out[name] = (argb[2:], token or "")
+        name, target, token = m.group(1), m.group(2), m.group(3)
+        rgb = generated.get(target, ("", ""))[0]
+        out[name] = (rgb, token or "")
+    literal = re.search(r"const val [A-Z_]+ = 0x[0-9A-Fa-f]{8}\.toInt\(\)", src)
+    if literal:
+        out["__LITERAL__"] = ("", "")
     return out
 
 
@@ -121,6 +136,12 @@ def check_every_colour_names_a_token() -> list[str]:
     if not colours:
         return ["JarvisUi declares no colours, or they are no longer const val ARGB ints"]
     for name, (_rgb, token) in sorted(colours.items()):
+        if name == "__LITERAL__":
+            failures.append(
+                "JarvisUi declares a colour as a hex literal; every colour is an alias of "
+                "the generated JarvisTokens (python3 design/build.py)"
+            )
+            continue
         if not token:
             failures.append(
                 f"JarvisUi.{name} names no --jv-* token, so it is a private colour the "
@@ -137,7 +158,7 @@ def check_the_two_palettes_agree() -> list[str]:
         return [f"no --jv-* hex tokens found in {TOKENS.relative_to(REPO)}"]
 
     for name, (rgb, token) in sorted(colours.items()):
-        if not token:
+        if not token or name == "__LITERAL__":
             continue  # already reported
         want = tokens.get(token)
         if want is None:
@@ -192,7 +213,7 @@ def check_the_text_colours_are_legible() -> list[str]:
 
 
 def main() -> int:
-    for path in (JARVIS_UI, TOKENS):
+    for path in (JARVIS_UI, JARVIS_TOKENS, TOKENS):
         if not path.is_file():
             print(f"FAIL  {path} is missing", file=sys.stderr)
             return 1
@@ -210,8 +231,8 @@ def main() -> int:
 
     colours = kotlin_colours(JARVIS_UI.read_text(encoding="utf-8"))
     print(
-        f"design tokens: {len(colours)} phone colours, each one a --jv-* token the "
-        f"console declares, all legible on the ground they are drawn on"
+        f"design tokens: {len(colours)} phone colours, each an alias of a generated token "
+        f"design/tokens.json declares, all legible on the ground they are drawn on"
     )
     return 0
 

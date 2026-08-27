@@ -1,0 +1,75 @@
+# A worked example, and the answer to "what would I even put on one".
+#
+# Read-only: this ships with Jarvis, is owned by nobody, and appears for every
+# token. Copy it in the console (EDIT LAYOUT → duplicate) to get one you own and
+# can change. The series named here all come from the `internal` source, so it
+# draws something on a fresh install with no InfluxDB and no sensors.
+id: homelab
+title: Homelab
+range: 6h
+widgets:
+  - id: throughput
+    title: Model throughput
+    type: area
+    source: internal
+    series: [jarvis.first_token_ms]
+    aggregate: mean
+    x: 0
+    y: 0
+    w: 6
+    h: 3
+
+  - id: load
+    title: Load average
+    type: line
+    source: internal
+    series: [host.load1, host.load5, host.load15]
+    aggregate: mean
+    x: 6
+    y: 0
+    w: 6
+    h: 3
+
+  - id: disk
+    title: Disk free
+    type: stat
+    source: internal
+    series: [host.disk_free]
+    aggregate: last
+    x: 0
+    y: 3
+    w: 3
+    h: 2
+
+  - id: memory
+    title: Memory used
+    type: gauge
+    source: internal
+    series: [host.memory_percent]
+    aggregate: last
+    x: 3
+    y: 3
+    w: 3
+    h: 2
+
+  - id: tools
+    title: Tool calls
+    type: bar
+    source: internal
+    series: [jarvis.tool_calls]
+    aggregate: sum
+    x: 6
+    y: 3
+    w: 6
+    h: 2
+
+  - id: tasks
+    title: Tasks
+    type: table
+    source: internal
+    series: [jarvis.tasks_started, jarvis.tasks_failed, jarvis.turns]
+    aggregate: sum
+    x: 0
+    y: 5
+    w: 12
+    h: 2

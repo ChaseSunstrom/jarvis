@@ -9,6 +9,9 @@ action back, it can explain itself, and it remembers what you told it.
 |---|---|
 | [`briefing`](#briefing) | The summary Jarvis volunteers, morning and night |
 | [`undo`](#undo) | "Undo that" — and a clear refusal when that is not safe |
+| [`timer`](#timer) | A kitchen timer as an entity: counts down, answers "how long is left?", chimes where it was asked for |
+| [`review`](#review) | What went wrong today, read once a night, with the lessons — and "what did you get wrong?" answered from the record |
+| [`routines`](#routines) | The same thing at the same time on enough days becomes a proposed routine; a yes makes it |
 | [`trace`](#trace) | Why an automation did what it did, or did nothing |
 | [`memory`](#memory) | Durable notes, on disk, that you can read and delete |
 
@@ -111,6 +114,60 @@ plus the sections keyed by name, or `{"empty": true}` with an instruction to
 say so in one sentence rather than padding.
 
 ---
+
+## routines
+
+The house does the same things at the same times and nobody writes the
+routine. Once a morning (and on `routines.propose`) Jarvis reads the
+recorder's history for an entity put in the same state at the same time of day
+on enough distinct days — not by an automation it already has — and proposes
+it: a card and a question, "you turn off the kitchen lights at about 22:30
+most days — shall I make that a routine?". A yes creates the automation the
+same way `create_automation` does, so it reads back like any routine; a no is
+remembered for thirty days. Never an unlock.
+
+```yaml
+routines:
+  at: "07:05"
+  days: 14
+  min_days: 3
+```
+
+## review
+
+The nightly reflection learns facts about the person; this learns from the
+day's failures. Tools that errored, things Jarvis said were done with no tool
+called (the guard's catches are on the trace now), runs stopped mid-answer, a
+model server that could not be reached: read once a night, asked about once,
+left as a note and a card. "What did you get wrong today?" is answered from
+the record by `what_went_wrong`.
+
+```yaml
+review:
+  at: "03:45"
+```
+
+A lesson is a sentence for the person to read; no rule changes by itself.
+
+## timer
+
+"Set a fifteen-minute timer for the pasta" makes `timer.pasta`: an entity that
+counts down on the house's clock, so "how long is left?" is read from its
+`remaining` attribute rather than worked out by a model, and "cancel the pasta
+timer" is a service call by name. When it finishes it leaves a reminder card
+and says so on the device that asked — the kitchen phone, the console that
+typed it — or wherever the person is when no device is known.
+
+```yaml
+timer: {}
+```
+
+Services `timer.start` / `pause` / `resume` / `cancel` / `snooze`; one model
+tool, `timer`. Durations arrive as seconds, `10m`, `1h30m` or `10:00`; a
+running timer restarted by label is replaced, not doubled; twenty at once is
+the ceiling. A timer that was counting when Jarvis restarted comes back
+`finished` with a card that says it was interrupted, because a late chime
+that pretends it was on time is worse than none.
 
 ## undo
 
@@ -298,6 +355,14 @@ memory:
   context_entries: 8    # at most this many notes in the prompt
 ```
 
+Every entry carries `person` — who the voice gate recognised when it was said
+(M100), or `""` for a typed or unverified turn and for facts about the house.
+`remember`, extraction and the nightly reflection file under that name; recall
+puts the speaker's own facts first and labels another person's ("Chase: …") so
+Ted is never answered with Chase's tea; the reflection folds one person's
+near-duplicates into one entry when the embedding index says they are one
+fact, and never merges across people. `jarvis/memory/list` filters by `person`.
+
 Entries are structured and dull on purpose:
 
 ```json
@@ -416,6 +481,95 @@ rather than merely left undocumented.
 
 `forget` from a model deletes one named note or nothing. Clearing the store is
 `memory.forget` with `all: true`, which is the user's call to make.
+
+---
+
+## notices — Jarvis notices (M86)
+
+The `narrate:` block in `configuration.yaml` is a list of rules over state
+changes — a way in opened, a lock left unlocked, smoke or gas, a device gone
+unavailable — with quiet hours, a per-entity debounce (`min_interval`) and an
+hourly budget (`max_per_hour`, `max_burst`) so a flapping sensor cannot become
+a storm. What a rule matches is composed into one sentence ("The Garage Door
+has opened") and delivered through `companion.notify`: spoken where somebody
+is, a card where nobody is.
+
+A rule may **offer** what Jarvis could do about it: `offer: {service:
+cover.close_cover, question: "Shall I close it?"}`. An offer is a *held
+question*, raised through the same approvals machinery a Tier-3 tool uses
+(the hidden `narrate_offer` tool — never offered to the model): it shows on
+the console's held bar, reaches a paired phone through the bridge every held
+question uses, and is answered by a spoken "yes" to any surface (M66's
+`spoken_answers`) — when that conversation has nothing of its own waiting: a
+conversation's own question comes first, and the house's question is said
+once, where it was raised, never repeated into other conversations — by the
+phone, or by the console's Approve. A yes runs the
+offered service on that entity and nothing else; "no", or no answer before
+the question expires, leaves the house as it was. A house with no toolbox at
+all (the `llm` integration absent) falls back to `companion.ask`.
+
+Delivered narrations — and an offer, once when asked and once more when it
+acted — land on the notifications record as kind `notice`, which is what
+"what did you tell me while I was out?" (M95) reads. A narration the limiter
+or the quiet hours held back is kept in `narrate.history` and the
+`recent_events` tool, but is not on the record as something that was said.
+
+What this does not do: narrate a change the house made because *you* asked
+for it in the same breath (the confirmation is the reply), or bypass the
+hourly budget for anything but `importance: critical`.
+
+## plan → act → verify
+
+Not an integration — the loop that runs work nobody is sitting in front of.
+`jarvis/llm/plan.py` and `Agent.plan_and_run`.
+
+An interactive turn stays what it always was: somebody waiting for an answer
+wants the answer, not a plan. But "look into X and tell me later" is different.
+Nobody sees it happen, so a step that quietly did not happen is discovered by
+the user, days later, as a thing Jarvis said it had done.
+
+So a background task with more than one thing in it runs as three separate
+model calls per step, each in its own context:
+
+| phase | what it sees | what it produces |
+|---|---|---|
+| **plan** | the request and the names of the available tools, nothing else | `{"steps": [...]}`, at most `MAX_STEPS` (8) |
+| **act** | one step title, as an ordinary tool-using turn | whatever the step produced |
+| **verify** | the step and its outcome — *not* the plan, not the argument for it | `{"done": true}` or `{"done": false, "reason": "..."}` |
+
+The contexts are separate on purpose. A planner that can see the conversation
+writes steps about the conversation; a verifier that can see the case for an
+action agrees with it. `Agent.ask_once` is the call with no persona, no history
+and no tools that both of them use.
+
+A `done: false` verdict re-plans the remaining steps — once, then again, and
+then it stops: `MAX_REPLANS` is 2, because a loop that re-plans until it
+succeeds is a loop that never reports failure.
+
+The plan becomes the **task's** steps before any of them is attempted
+(`add_steps`, `open_ended: false`), which is the visible half of all this: the
+console's task view shows what Jarvis intends, which step it is on, and — via
+`jarvis/tasks/log` — what each one actually produced. A plan nobody can see is
+indistinguishable from guessing.
+
+`needs_a_plan()` decides whether any of this happens, and is deliberately cheap
+and conservative: sequence words ("then", "after that", "finally"), work verbs
+in a long enough sentence, or two clauses joined by "and". Planning a request
+that did not need it costs one model call and shows a one-step plan; not
+planning one that did is the behaviour that was there before, which is the
+safer of the two failures.
+
+```bash
+cd jarvis-core && python3 -m pytest tests/test_agent_loop.py -q   # the pieces
+python3 -m pytest testing/e2e/test_agent_loop.py -q               # the whole loop
+```
+
+The end-to-end test is the one that matters, because the loop's correctness is
+*which prompt gets which answer* — it drives a real core with a scripted model
+that answers planning, acting and verifying differently, and asserts a failed
+verification changes what happens next. It is also what caught `plan_and_run`
+looking up the agent under a key nothing sets, which every unit test had
+mocked past.
 
 ---
 

@@ -1,0 +1,38 @@
+name: memory-reflection
+capability: memory
+gated-on: M87
+ground: stack
+intent: >
+  Extraction keeps a fact the moment it is said and never looks back over a
+  day, so the same fact lands twice in two wordings and nothing consolidates.
+  Once a night Jarvis reads the day's conversations, asks once for the few
+  durable facts that are not already known, keeps them as "learned", and says
+  what it learned in a note and a card. Here the day is two turns and the
+  night is the rig calling memory.reflect; then Jarvis is asked what it
+  learned, and answers from the record.
+variants: [text]
+turns:
+  # Said in a shape the per-turn extractor does not pick up (no "my daughter",
+  # no "remember that"): extraction keeps facts the moment they are said, and a
+  # day whose one fact was already kept leaves the reflection nothing to learn
+  # and no card to leave — which is right, and which this scenario is not about.
+  - say: "Mira, the youngest in this house, reacts badly to peanuts — a fact for you."
+    expect:
+      # The judge sees the reply and this line, not the user's words — so the
+      # words are here, or "the youngest in the house" reads as invented (the
+      # seventeenth house, 27 Aug 2026).
+      reply_means: >
+        acknowledges the fact the user gave — that Mira, the youngest in the
+        house, reacts badly to peanuts — as something kept; it must not add
+        facts the user did not say (a different name, a different food)
+  - say: "What did you learn about me today?"
+    reflect: true
+    expect:
+      memory: {recalls: "Mira"}
+      # No card is the DESIGN when the day's one fact was kept the moment it
+      # was said (reflect.py: "nothing when there is nothing new — no 'I
+      # learned nothing today' cards"); the twentieth house was right to send
+      # none. The card with new facts is proved by the unit tests.
+      reply_means: >
+        says it learned that the user's daughter Mira is allergic to peanuts
+        (or names Mira and peanuts) — from what it remembers, not a guess

@@ -1,0 +1,18 @@
+name: house-light-on
+capability: house
+intent: >
+  The simplest thing anybody says to a voice assistant, and the one that has to
+  work when nothing else does. It asserts on the HOUSE, not on the reply: an
+  assistant that says "the bed light is on" while the bed light is off passes
+  every wording check ever written.
+variants: [voice, text]
+setup:
+  states:
+    light.bed_light: "off"
+turns:
+  - say: "Turn on the bed light."
+    expect:
+      service: {domain: light, service: turn_on, entity_id: light.bed_light}
+      state: {light.bed_light: "on"}
+      reply_means: "confirms the bed light is now on"
+      capability: house

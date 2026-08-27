@@ -5,6 +5,12 @@
 
 SHELL := /bin/bash
 COMPOSE := docker compose
+# The profiles the deployed configuration.yaml needs: `mqtt:` and `sensors:`
+# are switched on (M57) and `web:` searches through SearXNG, and neither
+# mosquitto nor searxng starts without its profile — the core then logs a
+# broker it cannot reach at every boot and the live rig's sensor scenario is
+# refused before it starts (26 Aug). `?=` so an operator's .env or shell wins.
+export COMPOSE_PROFILES ?= mqtt,search
 
 .DEFAULT_GOAL := help
 
@@ -34,8 +40,12 @@ test-services: ## orchestrator + sandbox
 test-contract: ## the workflow files, checked against how GitHub runs them
 	python3 -m pytest testing/e2e/test_ci_workflow_contract.py -q --timeout=120
 
+.PHONY: test-tools
+test-tools: ## the repository's own tooling (scorecard arithmetic, the toolbelt tape measure)
+	python3 -m pytest testing/tools evals/intelligence -q --timeout=120
+
 .PHONY: test-python
-test-python: test-core test-desktop test-browser test-services test-contract eval-routing eval-resolution ## every python suite
+test-python: test-core test-desktop test-browser test-services test-contract test-tools eval-routing eval-resolution ## every python suite
 
 .PHONY: lint
 lint: ## ruff, defect-only ruleset (see ruff.toml)
@@ -48,7 +58,7 @@ lint-fix: ## the same, applying what it can fix
 .PHONY: test-web
 test-web: ## build + unit + smoke + e2e for the HUD
 	cd jarvis-web && npm run build && npm test && node ../tests/web/smoke.test.mjs
-	cd jarvis-web && npm run test:e2e || echo "(playwright skipped/failed — see jarvis-web/README.md)"
+	cd jarvis-web && npm run test:e2e
 
 .PHONY: test-android
 test-android: ## the Kotlin logic mirrors (pure python, no SDK)
@@ -57,6 +67,19 @@ test-android: ## the Kotlin logic mirrors (pure python, no SDK)
 .PHONY: test
 test: lint test-python ## everything runnable without hardware or models
 	@echo "OFFLINE TEST SUITE PASSED"
+
+# --- design system ------------------------------------------------------------
+.PHONY: tokens
+tokens: ## regenerate every surface's tokens from design/tokens.json
+	python3 design/build.py
+
+.PHONY: tokens-check
+tokens-check: ## fail if a generated token file is stale or the orb palette drifted
+	python3 design/build.py --check
+
+.PHONY: token-lint
+token-lint: ## fail on a hard-coded colour/spacing/type/motion value in app code (ratchet: design/token-lint.baseline.json)
+	python3 scripts/verify/token_lint.py
 
 # --- evals ------------------------------------------------------------------
 .PHONY: eval-routing
@@ -82,6 +105,7 @@ eval-decomp: ## task-decomposition ship/no-ship gate (BACKEND=ollama|orchestrato
 # --- running things ---------------------------------------------------------
 .PHONY: up
 up: ## start jarvis-core, then the companion stack (HUD/orchestrator/sandbox)
+	@if [ -f .git ] && [ -z "$$JARVIS_ALLOW_WORKTREE_COMPOSE" ]; then echo "make up: refusing from a git worktree — it would re-create the production containers from this checkout" >&2; exit 3; fi
 	cd jarvis-core && $(COMPOSE) up -d --build
 	$(COMPOSE) up -d --build
 
@@ -113,3 +137,7 @@ verify: ## the full gate: offline suite, then the hardware-backed checks
 	-$(MAKE) egress-audit
 	-$(MAKE) eval-persona
 	@echo "See docs/verification.md for the on-device (Pixel, head unit) gates."
+
+.PHONY: verify-all
+verify-all: ## the whole target state, one script per milestone (scripts/verify/); fails on any error
+	bash scripts/verify/all.sh

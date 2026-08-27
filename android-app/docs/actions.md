@@ -353,8 +353,9 @@ registry.producesUntrustedOutput("http_request")   // true
 
 and the same flag appears in the manifest as `untrusted_output`. It is true for
 `http_request`, `read_file`, `read_clipboard`, `read_contacts`, `read_calendar`,
-`run_shell`, `list_installed_apps`, `ui_read_screen`, `ui_wait_for` and
-`take_screenshot`; an id the registry has never heard of answers `true`.
+`run_shell`, `list_installed_apps`, `ui_read_screen`, `ui_wait_for`,
+`take_screenshot`, and since M61 `read_sms`, `read_call_log`, `scan_code` and
+`nfc_read`; an id the registry has never heard of answers `true`.
 
 **The task runner must taint a `store_as` variable when the action that filled
 it has this flag**, so a later step interpolating that variable dispatches
@@ -494,3 +495,41 @@ report it rather than pretending to have opened something.
 The Kotlin tests need JUnit 4 on the unit-test classpath
 (`testImplementation("junit:junit:4.13.2")`) and nothing else — every class they
 touch is free of Android imports.
+
+### Closed with M61 (Tasker parity)
+
+| id | tier | params | permission | notes |
+|---|---|---|---|---|
+| `show_toast` | 1 | `text` (≤ 200 chars), `long` | — | a line on the screen for a moment; nothing changes |
+| `import_tasks` | 3 | `bundle` (`{version: 1, tasks: […]}` in the task format) or `task` (one) | — | M98: the house's way into PHONE TASKS. Tier 3 because it installs behaviour that runs later, unattended — the consent screen names the tasks once. The store screens each task like any imported document: one with a CONFIRM-tier step arrives switched off and the person turns it on in PHONE TASKS; `enabled_by_user` is never read from the wire. Returns per task `held_for_consent` and the screening reason. The format the model sends is the `phone-tasks` skill in jarvis-core |
+| `list_tasks` | 1 | — | — | what is on this phone: id, name, on/off, source, trigger types, step count |
+| `set_auto_brightness` | 1 | `on` | WRITE_SETTINGS (Modify system settings) | a clear error names the grant when it is missing |
+| `set_rotation_lock` | 1 | `locked` | WRITE_SETTINGS | as above |
+| `set_screen_timeout` | 1 | `seconds` 15–1800 | WRITE_SETTINGS | as above; outside the range is refused before the grant is checked |
+| `get_network_info` | 1 | — | ACCESS_FINE_LOCATION for the SSID | transport, whether it reaches the internet, SSID and RSSI when known; an SSID Android hides is `null` with a note, never guessed |
+| `send_intent` | 3 | `action` (fully qualified), `data`, `package`, `extras` | — | starts an activity; the user sees the action, data and package |
+| `launch_shortcut` | 1 | `package`, `shortcut_id` | default launcher | only the default launcher may start another app's shortcuts; says so |
+| `media_control` | 1 | `command` play/pause/toggle/stop/next/previous | — | the media keys, dispatched like a headset button, to whatever is playing |
+| `lock_screen` | 2 | via `ui_global_action` `{action: lock_screen}` | accessibility | the accessibility agent's global action |
+| `screenshot` | 2 | as `take_screenshot` | accessibility | the accessibility agent's global action |
+| `media_now_playing` | 1 | — | notification access | title, artist, album, app, playing/paused, and a `spoken` sentence; never invents a title |
+| `play_media` | 1 | `source` (https URL or a file under jarvis_files), `stop` | — | one player; a new source stops the last |
+| `set_wallpaper` | 2 | `path` (under jarvis_files), `which` home/lock/both | SET_WALLPAPER (normal) | — |
+| `record_audio` | 3 | `seconds` 1–300, `path` | RECORD_AUDIO | asks every time; writes m4a under jarvis_files |
+| `set_bluetooth` | 2 | `on` | BLUETOOTH_CONNECT | direct on Android ≤ 12L; the system's own panel on 13+ |
+| `take_photo` | 3 | `facing` back/front, `path` (under jarvis_files), `max_edge` 320–4096 | CAMERA | a headless Camera2 still (`CameraActions.kt`): the exposure settles on a few small frames, one JPEG, no preview, no CameraX. Asks every time. `read_file` with `base64` reads it back |
+| `scan_code` | 1 | `format` any/qr/product/1d, `timeout_s` 5–120 | — (the scanner app's camera) | Jarvis bundles no decoder: the scanner app that answers `com.google.zxing.client.android.SCAN` (Binary Eye, QR Scanner) is opened through a one-frame Activity and its answer returned. No such app ⇒ `unsupported`, naming one to install. The text is marked `untrusted` |
+| `read_sms` | 3 | `limit` 1–50, `box` inbox/sent/all, `from`, `since` | READ_SMS | newest first; a message body is anyone's words, so the result is marked `untrusted` and asked about every time |
+| `read_call_log` | 3 | `limit` 1–50, `type` all/incoming/outgoing/missed/rejected/blocked/voicemail, `since` | READ_CALL_LOG | newest first; the cached name is whatever the contact or carrier supplied — marked `untrusted` |
+| `end_call` | 3 | — | ANSWER_PHONE_CALLS | `TelecomManager.endCall`; hanging up is done to a person, so it confirms like `dial`. "there is no call to end" when there is none |
+| `nfc_read` | 2 | `timeout_s` 5–120 | NFC (normal) | reader mode on a one-frame Activity (`NfcTagActivity`), one tag or the clock; id, technologies, NDEF text and URI records — marked `untrusted` |
+| `nfc_write` | 2 | `text` or `uri`, `timeout_s` 5–120 | NFC (normal) | one NDEF record, replacing the tag's content; formats a blank tag; refuses a read-only or too-small one by name |
+
+`scan_code`, `nfc_read` and `nfc_write` end in an Activity rather than a
+system service, and every command arrives in a Service — so each runs through
+`ui/ForegroundResultBridge`, the `PermissionBridge` shape a third time: a
+one-frame Activity is started, the action suspends until it reports, and a
+start the platform drops (Android refuses background activity starts, and
+refuses them silently) is an error in four seconds naming the cause rather
+than a hang. There is deliberately no notification fallback: "scan this now"
+tapped an hour later would open a camera nobody is pointing at anything.

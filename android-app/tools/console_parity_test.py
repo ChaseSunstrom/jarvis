@@ -55,21 +55,33 @@ MAIN = ANDROID / "app/src/main/kotlin/ai/jarvis/app/MainActivity.kt"
 SETTINGS = ANDROID / "app/src/main/kotlin/ai/jarvis/app/SettingsActivity.kt"
 FRAME = ANDROID / "app/src/main/kotlin/ai/jarvis/app/ui/ConsoleFrame.kt"
 LAYOUT = REPO / "jarvis-web/src/routes/+layout.svelte"
+SCREENS = REPO / "jarvis-web/src/lib/screens.ts"
 ROUTES = REPO / "jarvis-web/src/routes"
 
 
 def console_nav() -> list[tuple[str, str]]:
-    """The console's own nav, in order: [(LABEL, /path), ...]."""
-    src = LAYOUT.read_text(encoding="utf-8")
-    block = re.search(r"const NAV = \[(.*?)\];", src, re.S)
-    if not block:
-        return []
-    return [
-        (label, href)
-        for href, label in re.findall(
-            r"\{\s*href:\s*'([^']+)',\s*label:\s*'([^']+)'", block.group(1)
-        )
-    ]
+    """The console's own nav, in order: [(LABEL, /path), ...].
+
+    Read from `screens.ts`, which is where a route is declared. It used to be
+    read from a `const NAV = [...]` literal in `+layout.svelte`, and that was a
+    SECOND copy of the same list: eleven entries there against nine here, with
+    `/notes` and `/desktop` reachable and undeclared. The layout builds its tab
+    strip from this file now, so this reads what the console actually renders
+    rather than a list that happened to agree with it.
+    """
+    src = SCREENS.read_text(encoding="utf-8")
+    out: list[tuple[str, str]] = []
+    for block in re.findall(r"\{\s*\n(.*?)\n\t\}", src, re.S):
+        path = re.search(r"path: '([^']+)'", block)
+        name = re.search(r"name: '([^']+)'", block)
+        nav = re.search(r"nav: (true|false)", block)
+        # The voice screen is in the browser's bar (M49) and is NOT a console
+        # front door: on the phone it is the native HUD, and a WebView tab for
+        # it would open the browser's copy of the reactor behind the phone's own.
+        hud = re.search(r"hud: true", block)
+        if path and name and nav and nav.group(1) == "true" and not hud:
+            out.append((name.group(1).upper(), path.group(1)))
+    return out
 
 
 def phone_tabs() -> list[tuple[str, str]]:
@@ -114,14 +126,32 @@ def check_the_two_navs_are_one() -> list[str]:
 
 
 def check_every_tab_is_a_real_route() -> list[str]:
-    """A label with no page behind it is a button that opens a 404."""
+    """A label with no page behind it is a button that opens a 404.
+
+    Three shapes count as a page, because the console has three:
+
+    * `+page.svelte` — a page that draws itself;
+    * `+page.ts` — a page that redirects. Every destination's own path is a
+      307 to its first section (M48), because `/house` and `/house/devices`
+      rendering the same thing would be two pages that drift;
+    * `+layout.svelte` with sections under it — the destination itself.
+
+    Requiring `+page.svelte` alone reported all four destinations as 404s the
+    moment the consolidation landed, which is a check describing last month's
+    console.
+    """
     failures = []
     for label, path in phone_tabs():
-        page = ROUTES / path.lstrip("/") / "+page.svelte"
-        if not page.is_file():
+        folder = ROUTES / path.lstrip("/")
+        served = (
+            (folder / "+page.svelte").is_file()
+            or (folder / "+page.ts").is_file()
+            or (folder / "+layout.svelte").is_file()
+        )
+        if not served:
             failures.append(
-                f"the phone's {label} tab points at {path}, and there is no "
-                f"{page.relative_to(REPO)}"
+                f"the phone's {label} tab points at {path}, and nothing under "
+                f"{folder.relative_to(REPO)} serves it"
             )
     return failures
 
@@ -159,7 +189,10 @@ def check_the_mobile_half_is_named_for_itself() -> list[str]:
             "lives in the console frame (see ConsoleFrame); a second copy of it on "
             "the home screen is the thing that has to be kept in step by hand."
         )
-    if not re.search(r'JarvisUi\.ghost\([^,]+, "MANAGE"\)', main):
+    # `button` or `primary`: the pill and the ghost went with the previous
+    # look (M51). What is pinned is that the home screen reaches the console
+    # through ONE control, whatever its shape.
+    if not re.search(r'JarvisUi\.(?:button|primary)\([^,]+, "MANAGE"\)', main):
         failures.append(
             "the home screen has no MANAGE button, so the console is unreachable "
             "from the first screen of the app"
@@ -343,8 +376,10 @@ def check_the_phones_own_half_is_reachable() -> list[str]:
                 "how it came to be reported missing twice."
             )
         # PHONE has to be added somewhere other than `strip`, and the outer row
-        # is the only other container in this function.
-        if "addView(\n                phone," not in frame:
+        # is the only other container in this function. Since M51 each tab is
+        # wrapped in its underline before it is added, so the wrapper carrying
+        # `phone` into that addView is accepted too; the property is the same.
+        if not re.search(r"addView\(\n\s+(?:withUnderline\(activity, )?phone,", frame):
             failures.append("ConsoleFrame no longer adds a PHONE button to the outer row")
 
     # 2. On the home screen, one tap from opening the app.

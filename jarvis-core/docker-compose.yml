@@ -54,6 +54,21 @@
 #
 # Every bind mount here is a relative path, so its host side lands inside the
 # Docker build context. Anything added must also be listed in .dockerignore.
+#
+# --- why these version numbers ---------------------------------------------
+#
+# Every image is pinned, and the three Wyoming ones are pinned to EXACTLY the
+# images this repository's numbers were measured against — whisper 3.5.0, piper
+# 2.3.1, openwakeword 2.1.0 are the ids that were running when
+# `docs/LIVE_TEST_REPORT.md`'s word error rate and latency table were produced
+# (`docker images` agreed digest for digest). `:latest` meant "whatever was
+# pushed since", so "the version we tested" was not a thing that existed, and a
+# recogniser that changed under a WER threshold would look like a regression in
+# Jarvis.
+#
+# Upgrading one is a deliberate act with a cost attached: bump the tag, run
+# `bash scripts/verify/live_interaction.sh --implemented-only`, and compare the
+# WER and latency rows before committing it.
 
 services:
   # --- Jarvis Core --------------------------------------------------------
@@ -75,13 +90,30 @@ services:
     container_name: jarvis-config-init
     user: "0:0"
     command: >
-      sh -c "mkdir -p /config/.storage && chown -R 10003:10003 /config &&
-             echo 'config dir ready for uid 10003'"
+      sh -c "mkdir -p /config/.storage /workspace &&
+             chown -R ${JARVIS_UID:-10003}:${JARVIS_GID:-10003} /config /workspace &&
+             echo 'config and workspace ready for uid ${JARVIS_UID:-10003}'"
     volumes:
       - ./config:/config
+      # The coding workspace, chowned here for the same reason /config is: the
+      # bind mount masks the image's ownership, and uid 10003 could not make
+      # a repository ("Permission denied: '/jarvis'", 26 Aug).
+      - ../jarvis-workspace:/workspace
     restart: "no"
 
   jarvis-core:
+    # Who Jarvis is on the host's filesystem.
+    #
+    # The image bakes uid 10003, and `./config` is a bind mount of a directory
+    # that is also in this repository — `configuration.yaml`, `automations.yaml`
+    # and `scenes.yaml` are tracked files. With the baked uid, the init
+    # container below chowned all of them to 10003 and the person who edits
+    # this checkout could no longer write their own config: `git checkout` on
+    # those paths failed, and so did opening one in an editor.
+    #
+    # So it is a variable, and `.env.example` says to set it to your own uid.
+    # The default keeps the documented behaviour for anyone who does not.
+    user: "${JARVIS_UID:-10003}:${JARVIS_GID:-10003}"
     # Built here, never published: without this compose tries a registry
     # pull first and prints a scary "access denied" warning before falling
     # back to building anyway.
@@ -109,8 +141,12 @@ services:
       # Set `backend: openai` in the `llm:` block of configuration.yaml as
       # well; the url alone only switches wires when it ends in `/v1`. See
       # docs/openai-compat.md.
-      - OLLAMA_URL=${LLM_URL:-${OLLAMA_URL:-http://127.0.0.1:11434}}
-      - OLLAMA_MODEL=${LLM_MODEL:-${OLLAMA_MODEL:-qwen3:8b}}
+      # `configuration.yaml` reads these two. Compatibility with an install
+      # that only ever set OLLAMA_URL/OLLAMA_MODEL lives in the defaults here,
+      # rather than in a second pair of variables inside the container that
+      # nothing would read.
+      - LLM_URL=${LLM_URL:-${OLLAMA_URL:-http://127.0.0.1:11434}}
+      - LLM_MODEL=${LLM_MODEL:-${OLLAMA_MODEL:-qwen3:8b}}
       # The proxy's key, if it has one. Ignored on the Ollama wire, so it is
       # safe to leave set.
       - LLM_API_KEY=${LLM_API_KEY:-}
@@ -139,10 +175,29 @@ services:
       # up and healthy. tests/test_packaging.py fails the build if the two
       # files drift apart again.
       - SEARXNG_URL=${SEARXNG_URL:-http://127.0.0.1:8888}
+      # Piper's pace, the same default the wyoming-piper service gets below.
+      # Jarvis cannot change it (Piper takes it at start) — it reads it so
+      # Settings › Voice can say what the house speaks at and where the knob
+      # is, instead of a pace the screen cannot name.
+      - PIPER_LENGTH_SCALE=${PIPER_LENGTH_SCALE:-0.9}
+      # n8n (M77): the workflow server and its key, read by configuration.yaml.
+      - N8N_URL=${N8N_URL:-}
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - N8N_ASSISTANT_URL=${N8N_ASSISTANT_URL:-}
       # The same pair jarvis-browser gets, and for the same reason: Jarvis is
       # the client. Keep them DIFFERENT values — holding the API token must
       # not be enough to approve a click on "Pay".
       - JARVIS_BROWSER_TOKEN=${JARVIS_BROWSER_TOKEN:-}
+      # Retrieval, M33. The URLs are what jarvis-core dials; the model names
+      # are here too so that changing one in `.env` changes it in both places
+      # — the container that serves it and the config that asks for it.
+      - EMBEDDINGS_URL=${EMBEDDINGS_URL:-}
+      - EMBEDDINGS_MODEL=${EMBEDDINGS_MODEL:-}
+      - RERANK_URL=${RERANK_URL:-}
+      - RERANK_MODEL=${RERANK_MODEL:-}
+      # The operator's own n8n, if they have one and switched the bridge on
+      # (M37). Empty by default, like the bridge itself.
+      - N8N_URL=${N8N_URL:-}
       - BROWSER_APPROVAL_SECRET=${BROWSER_APPROVAL_SECRET:-}
       # The orchestrator pair. Its services are commented out below, so these
       # are normally empty and the tools answer "not configured" — but the
@@ -158,6 +213,13 @@ services:
       # (entity/device/area registries, access tokens) plus the recorder
       # database back out. Back this directory up; nothing else here is state.
       - ./config:/config
+      # Where coding jobs make repositories (`code: workspace: /workspace` in
+      # configuration.yaml): the one directory the sandbox and the
+      # orchestrator share (the root compose mounts the same ../jarvis-workspace
+      # as /workspace on both). Inside the image `~` is `/`, so the old default
+      # of `~/jarvis/workspaces` was `/jarvis/workspaces` and nothing could
+      # write it — the first coding job the operator asked for failed there.
+      - ../jarvis-workspace:/workspace
       # Lets glibc resolve the named zone even when the image's best-effort
       # tzdata install was skipped (blocked apt mirror at build time).
       - /etc/localtime:/etc/localtime:ro
@@ -178,8 +240,22 @@ services:
   # Streams audio in, says "the wake word fired" out. `hey_jarvis` ships with
   # the image; custom models trained per docs/wake-word-training.md go in
   # ./openwakeword and are picked up by --custom-model-dir.
+    # The whole platform: the event loop, the recorder, the agent's own process. Given the most of anything here, and still bounded — an unbounded core on an 8 GB box takes the voice services down with it.
+    mem_limit: 3g
+    cpus: 3.0
+    # `docker compose watch`: a source change lands in the running container
+    # rather than in the next person's rebuild. Sync-and-restart rather than
+    # sync alone, because jarvis-core reads its integrations at start-up and a
+    # hot-swapped module would be half of the old process.
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./jarvis
+          target: /srv/jarvis
+        - action: rebuild
+          path: ./requirements.txt
   wyoming-openwakeword:
-    image: rhasspy/wyoming-openwakeword:latest
+    image: rhasspy/wyoming-openwakeword:2.1.0
     container_name: wyoming-openwakeword
     restart: unless-stopped
     network_mode: host
@@ -191,6 +267,20 @@ services:
       - ./wyoming/openwakeword:/custom
     environment:
       - TZ=${TZ:-Europe/London}
+    # A TCP connect, because Wyoming is a socket protocol and there is no HTTP
+    # endpoint to ask. These three had no healthcheck at all, which meant the
+    # three services the whole voice path depends on were the only ones
+    # `up --wait` could not wait for — and a wake word that never fired looked
+    # like a Jarvis bug rather than a container that had not finished loading
+    # its model.
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket;socket.create_connection(('127.0.0.1',10400),2)\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    mem_limit: 1g
+    cpus: 1.5
 
   # --- Wyoming: speech to text -------------------------------------------
   # This image IS faster-whisper, so WHISPER_MODEL must be one of ITS names:
@@ -205,7 +295,7 @@ services:
   # 10300, only that something speaks Wyoming there, so a different STT server
   # is fine; its model names are then that server's business, not this list.
   wyoming-whisper:
-    image: rhasspy/wyoming-whisper:latest
+    image: rhasspy/wyoming-whisper:3.5.0
     container_name: wyoming-whisper
     restart: unless-stopped
     network_mode: host
@@ -215,10 +305,26 @@ services:
       --language ${VOICE_LANGUAGE:-en}
       --data-dir /data
       --download-dir /data
+      --vad-filter
+      --compute-type int8
     volumes:
       - ./wyoming/whisper:/data
     environment:
       - TZ=${TZ:-Europe/London}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket;socket.create_connection(('127.0.0.1',10300),2)\""]
+      interval: 30s
+      timeout: 5s
+      # A cold start downloads the model. base.en is small; large-v3 is not,
+      # and a start period that assumed the small one would report unhealthy
+      # for ten minutes of perfectly normal downloading.
+      start_period: 300s
+      retries: 3
+    # Whisper is the CPU-hungriest thing in the stack on a box with no GPU:
+    # transcribing a three-second utterance with base.en takes about a second
+    # of four-core time. Capped so it cannot starve jarvis-core's event loop.
+    mem_limit: 2g
+    cpus: 3.0
 
   # --- Wyoming: text to speech -------------------------------------------
   # Piper. `--voice` is the voice this container LOADS, and it is the one the
@@ -229,36 +335,73 @@ services:
   # en_US-lessac-medium) makes Piper fetch it on first use into ./wyoming/piper;
   # that request is slow the first time and fails outright with no internet.
   wyoming-piper:
-    image: rhasspy/wyoming-piper:latest
+    image: rhasspy/wyoming-piper:2.3.1
     container_name: wyoming-piper
     restart: unless-stopped
     network_mode: host
     command: >
       --uri tcp://0.0.0.0:10200
       --voice ${PIPER_VOICE:-en_GB-alan-medium}
+      --length-scale ${PIPER_LENGTH_SCALE:-0.9}
       --data-dir /data
       --download-dir /data
     volumes:
       - ./wyoming/piper:/data
     environment:
       - TZ=${TZ:-Europe/London}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket;socket.create_connection(('127.0.0.1',10200),2)\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+    mem_limit: 1g
+    cpus: 2.0
 
   # --- Offline geocoder ---------------------------------------------------
   # Place lookups ("how long to the hardware shop?") without calling Google.
   # First start downloads a sizeable planet/country index into ./photon —
   # expect it to sit there a while before it answers.
+  # `--profile geocode`, and it is opt-in for a reason this host discovered the
+  # hard way: with no REGION set, the image downloads the WHOLE PLANET index —
+  # 58 GB, needing 152 GB of temp space — checks the disk, refuses, and exits.
+  # `restart: unless-stopped` turns that into a loop, and it had run **2,699
+  # times** over two days while every test suite in this repository was green.
+  # Nothing was watching the runtime.
+  #
+  # To use it, set a country extract and bring it up deliberately:
+  #
+  #     PHOTON_REGION=gb docker compose --profile geocode up -d photon
+  #
+  # A country is one to two GB and answers the same "how far to the hardware
+  # shop" question; the planet is for somebody with a spare 200 GB.
   photon:
-    image: rtuszik/photon-docker:latest
+    image: rtuszik/photon-docker:2.4.0
     container_name: photon
     restart: unless-stopped
     network_mode: host
+    profiles: [geocode]
     environment:
       - TZ=${TZ:-Europe/London}
-      # Country extract instead of the full planet index. Unset = planet.
+      # Country extract instead of the full planet index. Unset = planet, and
+      # the planet is 58 GB of download needing 152 GB of temp space.
       - REGION=${PHOTON_REGION:-}
       - UPDATE_STRATEGY=${PHOTON_UPDATE_STRATEGY:-PARALLEL}
     volumes:
       - ./photon:/photon/photon_data
+    healthcheck:
+      # Photon answers HTTP once its index is built, and building it is the
+      # slow part — hence the hour of start period. Before that it is
+      # legitimately starting; after it, a failure is a real one.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2322/status || exit 1"]
+      interval: 60s
+      timeout: 10s
+      start_period: 3600s
+      retries: 3
+    # A Java service with an index in memory. A country extract is small; the
+    # planet is not, and this is the ceiling that says so.
+    mem_limit: 2g
+    cpus: 2.0
 
   # --- The web: fetching, crawling, gated browser automation --------------
   # Everything Jarvis reads off the internet goes through here, and every byte
@@ -327,7 +470,25 @@ services:
     shm_size: 512m
     tmpfs:
       - /tmp:size=512m
-    security_opt: [no-new-privileges:true]
+    # `seccomp:unconfined` buys back ONE syscall and it is the important one.
+    #
+    # Chromium's own sandbox is the layer that contains a renderer exploit —
+    # the layer that exists for exactly this service's job, which is opening
+    # pages nobody here wrote. It needs an unprivileged user namespace, and
+    # Docker's default seccomp profile blocks `clone(CLONE_NEWUSER)`. On this
+    # host that meant chromium died with "No usable sandbox!" and every /fetch
+    # failed; the alternative on offer, BROWSER_CHROMIUM_NO_SANDBOX=1, keeps
+    # the syscall filter and throws away the renderer sandbox instead.
+    #
+    # So: the syscall filter goes, and everything else stays — non-root (uid
+    # 10003), every capability dropped, no-new-privileges, /tmp on tmpfs, and
+    # chromium's sandbox ON. The better answer is a chromium-specific seccomp
+    # profile (Docker's default plus `clone`/`unshare`); this repository does
+    # not carry one because it would be a thousand lines that drift with every
+    # Docker release. `DEVIATIONS.md` records the trade.
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined
     cap_drop: [ALL]
     healthcheck:
       test: ["CMD", "python", "-c", "import os,urllib.request as u; r=u.Request('http://127.0.0.1:8210/healthz', headers={'Authorization':'Bearer '+os.environ.get('JARVIS_BROWSER_TOKEN','')}); exit(0 if u.urlopen(r,timeout=4).status==200 else 1)"]
@@ -366,6 +527,235 @@ services:
   #
   # Loopback-only and anonymous, which are the same decision: see the header of
   # mosquitto/mosquitto.conf before widening either.
+    # Chromium. The one service whose memory is somebody else's HTML.
+    mem_limit: 2g
+    cpus: 2.0
+    develop:
+      watch:
+        - action: sync+restart
+          path: ../jarvis-browser/jarvis_browser
+          target: /srv/jarvis_browser
+        - action: rebuild
+          path: ../jarvis-browser/requirements.txt
+  # --- an alternative voice, off by default -------------------------------
+  #
+  # Piper is the default and the measurement says it should be. Both engines
+  # came back through Whisper word-perfect on five real replies, and both
+  # synthesise faster than real time:
+  #
+  #     piper    median 1.76 s   0.40x real time   WER 0.000    33 MB of model
+  #     kokoro   median 1.48 s   0.47x real time   WER 0.000    3.2 GB image, 1 GB resident
+  #
+  # So latency and intelligibility do not decide it — the voice does, and that
+  # is the operator's ear. `docs/tts-review/` holds the same five sentences in
+  # both. To switch:
+  #
+  #     docker compose --profile kokoro up -d jarvis-tts
+  #     # configuration.yaml, under voice:
+  #     #   tts: {engine: openai, url: http://127.0.0.1:8880/v1, voice: bm_george}
+  jarvis-tts:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu@sha256:28d6f0b6e4df369559012578299d201b855a08fac466f616653edd1f08c5370a
+    container_name: jarvis-tts
+    restart: unless-stopped
+    profiles: [kokoro]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8880/v1/audio/voices', timeout=4)\""]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 120s
+    mem_limit: 2g
+    cpus: 2.0
+
+  # --- fixtures for the calendar and mail integrations ---------------------
+  #
+  # Behind `--profile fixtures` and off by default: these exist so M39's tests
+  # can prove that a created event appears on a real CalDAV server and a sent
+  # mail lands in a real inbox, without anybody's account being involved.
+  #
+  #     docker compose --profile fixtures up -d
+  #     python3 testing/fixtures/integrations_probe.py
+  jarvis-radicale:
+    image: tomsquest/docker-radicale@sha256:e2ef8624b2156ada47489223df12575406d625c96725f03cfc4dc890e3eda400
+    container_name: jarvis-radicale
+    restart: unless-stopped
+    profiles: [fixtures]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # No authentication: it is a fixture on loopback with nothing real in it,
+      # and a password here would be a password in the repository.
+      - RADICALE_CONFIG=/config/config
+    volumes:
+      - ./fixtures/radicale:/config:ro
+      - radicale-data:/data
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5232/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    mem_limit: 256m
+    cpus: 0.5
+
+  # smtp4dev rather than MailDev, and the reason is IMAP: `mail_read` speaks
+  # IMAP, so a sink that only accepts SMTP would leave half the integration
+  # untested. This one accepts mail on 1025 and serves the same mailbox over
+  # IMAP on 1043, so both directions are exercised against a real server.
+  jarvis-mailsink:
+    image: rnwood/smtp4dev:v3
+    container_name: jarvis-mailsink
+    restart: unless-stopped
+    profiles: [fixtures]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+      - ServerOptions__Port=1025
+      - ServerOptions__ImapPort=1043
+      - ServerOptions__HostName=localhost
+      # No TLS and no auth: a fixture on loopback with nothing real in it.
+      - ServerOptions__TlsMode=None
+      - ServerOptions__AuthenticationRequired=false
+      - ServerOptions__Urls=http://127.0.0.1:1080
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -m 3 http://127.0.0.1:1080/api/Messages > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 30s
+    mem_limit: 512m
+    cpus: 1.0
+
+  # --- the model gateway ---------------------------------------------------
+  #
+  # One endpoint everything in Jarvis talks to, so a model can be swapped
+  # without touching Jarvis, a failing provider falls back instead of failing a
+  # turn, and there is ONE place the privacy guard can refuse.
+  #
+  # No database, no virtual keys, no spend tracking: LiteLLM's full control
+  # plane is Postgres and Redis to bill one household. The config file does
+  # routing, fallbacks and rate limits, which is what M40 actually needs.
+  #
+  # The guard is mounted in and runs in-process (`gateway/privacy_guard.py`):
+  # a request tagged `local-only` — because its prompt carries memory, notes or
+  # anything read from a private integration — is refused if it has been routed
+  # at a cloud model. In the proxy rather than only in Jarvis, so anything that
+  # can reach this endpoint is bound by it.
+  jarvis-gateway:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: jarvis-gateway
+    restart: unless-stopped
+    network_mode: host
+    command: ["--config", "/app/config.yaml", "--port", "${GATEWAY_PORT:-4000}"]
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # Where the local model actually lives. The gateway is a router, not a
+      # server: this is still llama-swap.
+      #
+      # A SEPARATE name from `LLM_URL`, which is what Jarvis dials — once that
+      # points at this container, reusing it here would point the gateway at
+      # itself. Unset, it falls back, so an install that has not switched over
+      # keeps working.
+      - LLM_URL=${GATEWAY_UPSTREAM_URL:-${LLM_URL:-http://127.0.0.1:11434/v1}}
+      # With the wire prefix baked in: see gateway/config.yaml on why.
+      - GATEWAY_LOCAL_MODEL=openai/${GATEWAY_UPSTREAM_MODEL:-${LLM_MODEL:-qwen3:8b}}
+      - GATEWAY_FAST_MODEL=openai/${GATEWAY_FAST_UPSTREAM_MODEL:-${GATEWAY_UPSTREAM_MODEL:-${LLM_MODEL:-qwen3:8b}}}
+      - LLM_API_KEY=${LLM_API_KEY:-none}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-jarvis-local}
+      # Cloud keys are absent on purpose. Uncomment a provider in
+      # gateway/config.yaml and put its key in .env to turn one on; the guard
+      # still refuses to send it anything private.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - PYTHONPATH=/app
+    volumes:
+      - ./gateway/config.yaml:/app/config.yaml:ro
+      - ./gateway/privacy_guard.py:/app/privacy_guard.py:ro
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:${GATEWAY_PORT:-4000}/health/liveliness', timeout=4)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 60s
+    mem_limit: 1g
+    cpus: 1.0
+
+  # --- retrieval: embeddings and reranking ---------------------------------
+  #
+  # Two containers of one image, because that is what the measurement said.
+  # Infinity serves both models from a single process, which is why
+  # `docs/TOOLING_DECISIONS.md` originally chose it — and on this host it needed
+  # **4 GB** (it OOMed at 3) for a 33M embedder and a 22M cross-encoder. TEI is
+  # Rust, one model per instance, and the same pair costs **329 MB + 218 MB**
+  # from one 686 MB image. Two containers is the cheaper shape here by a factor
+  # of seven, and the numbers are in the decision doc.
+  #
+  # Neither of these ever touches the GPU. That is the whole point: an embedding
+  # request routed through llama-swap evicts KV cache the voice path is using,
+  # so a note being indexed made the next spoken sentence slower. On CPU it
+  # costs 9 ms and nobody's cache.
+  jarvis-embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: jarvis-embeddings
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      --model-id ${EMBEDDINGS_MODEL:-BAAI/bge-small-en-v1.5}
+      --port ${EMBEDDINGS_PORT:-7997}
+      --auto-truncate
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # Weights land here and are reused on restart. Same shape as the Wyoming
+      # models: fetched once, gitignored, never in the image.
+      - HUGGINGFACE_HUB_CACHE=/data
+    volumes:
+      - ./models/embeddings:/data
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:${EMBEDDINGS_PORT:-7997}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # First start downloads the weights (~130 MB); after that it is seconds.
+      start_period: 180s
+    mem_limit: 1g
+    cpus: 1.5
+
+  jarvis-reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: jarvis-reranker
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      --model-id ${RERANK_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      --port ${RERANK_PORT:-7998}
+      --auto-truncate
+    environment:
+      - TZ=${TZ:-Europe/London}
+      - HUGGINGFACE_HUB_CACHE=/data
+    volumes:
+      - ./models/embeddings:/data
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:${RERANK_PORT:-7998}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+    mem_limit: 1g
+    cpus: 1.5
+
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: mosquitto
@@ -399,11 +789,60 @@ services:
       retries: 3
       start_period: 5s
 
+    # A broker with a handful of devices on it.
+    mem_limit: 256m
+    cpus: 0.5
+
+  # --- Camera ingest, behind `--profile cameras` (M56) -----------------------
+  # go2rtc turns any RTSP / ONVIF / USB / HTTP camera into a snapshot URL the
+  # `vision` integration reads (`platform: go2rtc`, `stream: <name>`); the
+  # streams are declared in ./go2rtc/go2rtc.yaml. Behind a profile because a
+  # camera restreamer is a thing a household chooses, not something `up -d`
+  # should start on a box with no cameras.
+  #
+  # LAN-only, enforced: go2rtc's API skips authentication for localhost
+  # requests, so go2rtc.yaml binds it to 127.0.0.1 and the container is on
+  # host networking so that loopback is this box's loopback (and so ONVIF
+  # discovery can see the LAN). ufw is the authority for everything else, as
+  # for 11434 — see docs/security.md.
+  go2rtc:
+    image: alexxit/go2rtc:1.9.14
+    container_name: go2rtc
+    restart: unless-stopped
+    profiles: [cameras]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # Camera credentials, expanded by go2rtc inside go2rtc.yaml. Empty by
+      # default; put the real ones in .env, never in the YAML.
+      - CAMERA_USER=${CAMERA_USER:-}
+      - CAMERA_PASS=${CAMERA_PASS:-}
+    volumes:
+      - ./go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
+    # devices:                    # only for a USB camera (the `workshop` example)
+    #   - /dev/video0:/dev/video0
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      # The stream list answers only once the API is up and the config parsed.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1984/api/streams > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # A few hundred ms of one core per snapshot of an H.264 camera; nothing
+    # while idle. The ceiling is for a webcam that has to be transcoded.
+    mem_limit: 512m
+    cpus: 1.5
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:2026.8.22-9fea41204
     container_name: searxng
     restart: unless-stopped
     profiles: [search]
+    # Bounded like every other service (M28's rule): an engine that leaks
+    # under a burst of scrapes must not take the box with it.
+    mem_limit: 1g
+    cpus: 1.0
     network_mode: host
     environment:
       - TZ=${TZ:-Europe/London}
@@ -415,6 +854,11 @@ services:
       # can reach SearXNG at all; widen it only if another machine needs it,
       # and then let ufw say which machine.
       - SEARXNG_BIND_ADDRESS=${SEARXNG_BIND_ADDRESS:-127.0.0.1}
+      # The 2026.8 image serves through granian, which reads GRANIAN_HOST and
+      # ships with `::` — every interface — while SEARXNG_BIND_ADDRESS is only
+      # what the old uwsgi entrypoint read. Without this the engine answered
+      # on the LAN address (the services audit, 27 Aug 2026).
+      - GRANIAN_HOST=${SEARXNG_BIND_ADDRESS:-127.0.0.1}
       - SEARXNG_PORT=${SEARXNG_PORT:-8888}
       # Deliberately NOT derived from SEARXNG_URL: that variable says where
       # Jarvis looks for search, which is a different question from where this
@@ -524,5 +968,26 @@ services:
   #   volumes:
   #     - ../jarvis-workspace:/workspace   # the only writable crossover
 
+# --- where state lives, and why most of it is not a named volume -----------
+#
+# One named volume, and that is deliberate. Everything else this stack keeps —
+# `./config` (the house, the notes, the memory, the tokens), `./wyoming/*` (the
+# STT and TTS models), `./photon` (the geocoder index) — is a BIND MOUNT, and
+# it stays one because the operator has to be able to read and edit it:
+# `config/configuration.yaml` is a file people edit, `config/notes/*.md` are
+# documents they own, and `config/.storage/*.json` is what "it is your data"
+# means when somebody wants to grep it.
+#
+# A named volume would hide all of that behind `docker run --rm -v …`, which is
+# the wrong trade for state whose whole promise is that it is inspectable.
+#
+# What that costs, and how it is paid: backup and restore are a `tar` per
+# directory rather than a volume driver's job, and `docs/RUNBOOK.md` gives the
+# exact commands — including the snapshot/restore the live suite uses around
+# any scenario that wipes memory or clears history.
+#
+# `mosquitto-data` IS a named volume because nobody edits a broker's
+# persistence file by hand, and losing it costs a retained topic.
 volumes:
+  radicale-data:
   mosquitto-data:

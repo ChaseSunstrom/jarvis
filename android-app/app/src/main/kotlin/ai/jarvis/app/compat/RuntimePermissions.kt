@@ -146,6 +146,27 @@ object RuntimePermissions {
             group = ID_PEOPLE,
             why = "Placing a call. Tier 3, every time.",
         ),
+        // The three below arrived with the last Tasker rows (M61). Each is
+        // asked for at the moment its action runs, after the Tier-3 prompt,
+        // like the ones above; none is needed for anything else Jarvis does.
+        Entry(
+            permission = Manifest.permission.READ_SMS,
+            group = ID_PEOPLE,
+            why = "Reading your messages when you ask (\"what did Sam text?\"). " +
+                "Tier 3, every time, and what it reads is treated as untrusted text.",
+        ),
+        Entry(
+            permission = Manifest.permission.READ_CALL_LOG,
+            group = ID_PEOPLE,
+            why = "Reading the call log when you ask (\"who rang while I was out?\"). " +
+                "Tier 3, every time.",
+        ),
+        Entry(
+            permission = Manifest.permission.ANSWER_PHONE_CALLS,
+            group = ID_PEOPLE,
+            why = "Hanging up a call when you ask. Tier 3, every time.",
+            minSdk = 26,
+        ),
         Entry(
             permission = Manifest.permission.READ_CALENDAR,
             group = ID_CALENDAR,

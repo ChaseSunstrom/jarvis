@@ -429,6 +429,18 @@ class _Handler(BaseHTTPRequestHandler):
         if generate:
             prompt = str(payload.get("prompt") or "")
             payload = {**payload, "messages": [{"role": "user", "content": prompt}]}
+        # The gateway's rule, kept here so the self-test fails the way the
+        # house does: a system message anywhere but first is a 400 (LiteLLM's
+        # own wording). On 27 Aug 2026 a system note after a spoken yes passed
+        # this fake and failed every such turn on the live house.
+        roles = [str((m or {}).get("role") or "") for m in (payload.get("messages") or []) if isinstance(m, dict)]
+        if "system" in roles[1:]:
+            self.fake.record(payload, "system-not-first")
+            self._send_json(
+                {"error": {"message": "litellm.BadRequestError: OpenAIException - System message must be the first message"}},
+                400,
+            )
+            return
         name, spec = self.fake.script.response_for(payload)
         model = str(payload.get("model") or DEFAULT_MODEL)
         self.fake.record(payload, name)

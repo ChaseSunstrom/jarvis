@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · Ledger · Task</title>
+<style>
+@font-face{font-family:"IBM Plex Sans";font-weight:300;src:url(fonts/plex-sans-300.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:400;src:url(fonts/plex-sans-400.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:500;src:url(fonts/plex-sans-500.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:400;src:url(fonts/plex-mono-400.woff2) format("woff2")}
+:root{
+  --bg:#0a0c0f; --surface:#0d1013; --raised:#111519;
+  --line:#1f262c; --line-soft:#161b20; --line-hair:#121619;
+  --text:#d9dde2; --text-bright:#f2f4f6; --dim:#8a939c; --faint:#565e66;
+  --accent:#33c6e8; --accent-wash:rgba(51,198,232,.08);
+  --ok:#8fd3b1; --warn:#d9a441; --danger:#e06a5c;
+  --font-sans:"IBM Plex Sans",sans-serif; --font-mono:"IBM Plex Mono",monospace;
+  --fs-2xs:11px; --fs-xs:12px; --fs-sm:13px; --fs-md:14px; --fs-lg:16px; --fs-xl:22px; --fs-2xl:32px; --fs-display:44px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r:0; --dur:200ms; --ease:cubic-bezier(.3,.6,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:400 var(--fs-md)/1.55 var(--font-sans)}
+body{overflow:hidden}
+.app{display:grid;grid-template-rows:auto auto 1fr;height:100vh;padding:0 var(--s7)}
+.mast{display:grid;grid-template-columns:1fr auto 1fr;align-items:baseline;padding:var(--s4) 0 var(--s3);border-bottom:1px solid var(--line);font-size:var(--fs-xs);color:var(--dim)}
+.mast .brand{font-weight:500;letter-spacing:.22em;color:var(--text-bright);font-size:var(--fs-sm)}
+.mast .date{text-align:center;font-family:var(--font-mono)}
+.mast .st{text-align:right}.mast .st i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin:0 6px 1px 0}
+nav{display:flex;gap:var(--s5);padding:var(--s3) 0;border-bottom:1px solid var(--line-hair);font-size:var(--fs-sm);color:var(--dim)}
+nav a{color:inherit;text-decoration:none;padding-bottom:2px;border-bottom:1px solid transparent}
+nav a.on{color:var(--text-bright);border-bottom-color:var(--accent)}
+.page{display:grid;grid-template-columns:minmax(0,1fr) 420px;column-gap:var(--s7);min-height:0;padding-top:var(--s5)}
+.label{font-size:var(--fs-2xs);letter-spacing:.18em;text-transform:uppercase;color:var(--faint);font-weight:500;margin-bottom:var(--s2)}
+.doc{min-height:0;display:grid;grid-template-rows:auto auto 1fr;row-gap:var(--s5)}
+.doc h1{font:300 var(--fs-2xl)/1.2 var(--font-sans);color:var(--text-bright);max-width:24ch}
+.meta{font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);margin-top:var(--s2);display:flex;gap:var(--s5)}
+.meta b{font-weight:400;color:var(--dim)}.meta .live{color:var(--accent)}
+.progress{display:grid;grid-template-columns:1fr auto;gap:var(--s4);align-items:baseline;margin-top:var(--s4)}
+.progress .rule{height:1px;background:var(--line);position:relative}
+.progress .rule i{position:absolute;left:0;top:-1px;height:3px;width:61%;background:var(--accent)}
+.progress .pct{font:300 var(--fs-xl)/1 var(--font-sans);color:var(--text-bright);font-variant-numeric:tabular-nums}
+.plan{list-style:none;counter-reset:s}
+.plan>li{display:grid;grid-template-columns:28px 1fr 64px;column-gap:var(--s3);padding:var(--s3) 0;border-top:1px solid var(--line-hair);color:var(--dim);align-items:baseline}
+.plan>li::before{counter-increment:s;content:counter(s,decimal-leading-zero);font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint)}
+.plan>li .d{font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);text-align:right;font-variant-numeric:tabular-nums}
+.plan>li.done{color:var(--text)}.plan>li.done .d{color:var(--dim)}
+.plan>li.run{color:var(--text-bright);position:relative}
+.plan>li.run::after{content:"";position:absolute;left:-16px;top:var(--s3);bottom:var(--s3);width:2px;background:var(--accent)}
+.plan>li.run .d{color:var(--accent)}
+.plan .calls{grid-column:2;margin-top:var(--s2);border-left:1px solid var(--line-soft);padding-left:var(--s3);font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);line-height:1.9}
+.plan .calls b{font-weight:400;color:var(--dim)}.plan .calls .ok{color:var(--ok)}.plan .calls .r{color:var(--accent)}
+.out{border-top:1px solid var(--line-hair);border-bottom:1px solid var(--line-hair);padding:var(--s3) 0;font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--dim);white-space:pre;line-height:1.8;overflow:hidden}
+.out .c{color:var(--faint)}.out .ok{color:var(--ok)}
+.out .cur::after{content:"";display:inline-block;width:2px;height:1em;background:var(--accent);vertical-align:-2px;margin-left:2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{to{opacity:0}}
+/* ledger column */
+.ledger{border-left:1px solid var(--line-hair);padding-left:var(--s6);display:flex;flex-direction:column;gap:var(--s6);min-height:0;font-size:var(--fs-xs);color:var(--dim)}
+.held{border-left:2px solid var(--accent);padding-left:var(--s4)}
+.held p{color:var(--text-bright);font-size:var(--fs-md)}
+.held .args{font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--dim);margin:var(--s2) 0 var(--s3);line-height:1.8}
+.held a{font-size:var(--fs-sm);margin-right:var(--s5);text-decoration:none;border-bottom:1px solid;padding-bottom:1px}
+.held a.yes{color:var(--accent)}.held a.no{color:var(--dim)}
+.held .ttl{float:right;font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint)}
+table{border-collapse:collapse;width:100%}
+td{padding:6px 0;border-bottom:1px solid var(--line-hair);vertical-align:baseline}
+td.t{font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);width:64px;white-space:nowrap;font-variant-numeric:tabular-nums}
+td b{font-weight:400;color:var(--text)}
+tr.live td b{color:var(--accent)}
+tr.err td b{color:var(--danger)}
+tr.warn td b{color:var(--warn)}
+.actions a{color:var(--dim);text-decoration:none;border-bottom:1px solid var(--line);margin-right:var(--s5);font-size:var(--fs-sm)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style></head>
+<body><div class="app">
+  <header class="mast"><span class="brand">JARVIS</span><span class="date">Sunday 24 August · 02:41</span><span class="st"><i></i>2 running · 1 held · 6 finished today</span></header>
+  <nav><a href="#">Voice</a><a href="#">Devices</a><a href="#">Areas</a><a href="#">Automations</a><a href="#">Tools</a><a class="on" href="#">Tasks</a><a href="#">Dashboards</a><a href="#">Code</a><a href="#">Settings</a></nav>
+
+  <main class="page">
+    <article class="doc">
+      <header>
+        <div class="label">Task 8f3a · code · running</div>
+        <h1>Add an OFFLINE state to the settings screen</h1>
+        <div class="meta"><span>repo <b>jarvis-web</b></span><span>branch <b>jarvis/2026-08-24-offline-state</b></span><span>model <b>qwen2.5-coder-7b</b></span><span>sandbox <b>network none</b></span><span>elapsed <b class="live">02:14</b></span></div>
+        <div class="progress"><div class="rule"><i></i></div><span class="pct">3 of 5 · 61 %</span></div>
+      </header>
+
+      <section>
+        <div class="label">Plan — written by the model, one call, 02:39:03</div>
+        <ol class="plan">
+          <li class="done"><span>Read the settings route and its socket wiring</span><span class="d">18 s</span></li>
+          <li class="done"><span>Wrap the page in ScreenState with loading, empty and error</span><span class="d">54 s</span></li>
+          <li class="run"><span>Wire socket status to the offline state</span><span class="d">01:02</span>
+            <div class="calls"><b>read_file</b> src/lib/connection.ts <span class="ok">ok</span> 3 ms<br><b>edit_file</b> src/routes/settings/+page.svelte · status → offline <span class="ok">+14 −2</span> 2 ms<br><b>run_check</b> npm run check <span class="r">running</span> 5.1 s</div></li>
+          <li><span>Run npm run check and the settings spec</span><span class="d">—</span></li>
+          <li><span>Write it up: branch, diff, what was not done</span><span class="d">—</span></li>
+        </ol>
+      </section>
+
+      <section style="min-height:0;display:grid;grid-template-rows:auto 1fr">
+        <div class="label">Output — run_check · npm run check</div>
+        <div class="out"><span class="c">$ npm run check</span>
+&gt; jarvis-web@0.1.0 check
+&gt; svelte-kit sync &amp;&amp; svelte-check --tsconfig ./tsconfig.json
+<span class="c">Loading svelte-check in workspace: /work</span>
+<span class="c">Getting Svelte diagnostics…</span>
+<span class="ok">✔</span> src/routes/settings/+page.svelte — 0 errors, 0 warnings
+<span class="ok">✔</span> src/lib/ui/ScreenState.svelte — 0 errors
+<span class="cur">Checking 446 files… 312</span></div>
+      </section>
+    </article>
+
+    <aside class="ledger">
+      <section class="held">
+        <div class="label" style="color:var(--accent)">Held · asks before it runs <span class="ttl">expires 04:12</span></div>
+        <p>Push the branch to origin?</p>
+        <div class="args">code.push_branch · tier 3<br>jarvis-web → origin/jarvis/2026-08-24-offline-state<br>force: never · rewrite of origin: refused</div>
+        <a class="yes" href="#">Approve</a><a class="no" href="#">Deny</a>
+      </section>
+
+      <section>
+        <div class="label">Ledger — every event, in order</div>
+        <table>
+          <tr><td class="t">02:39:02</td><td><b>queued</b> from voice, kitchen</td></tr>
+          <tr><td class="t">02:39:03</td><td><b>planned</b> 5 steps · 1 model call · 1.9 s</td></tr>
+          <tr><td class="t">02:39:06</td><td><b>branch</b> jarvis/2026-08-24-offline-state</td></tr>
+          <tr><td class="t">02:39:24</td><td><b>step 1</b> done · 2 calls · 18 s</td></tr>
+          <tr><td class="t">02:40:18</td><td><b>step 2</b> done · 3 calls · 54 s</td></tr>
+          <tr class="warn"><td class="t">02:40:51</td><td><b>held</b> code.push_branch — waiting for you</td></tr>
+          <tr class="live"><td class="t">02:41:20</td><td><b>step 3</b> run_check npm run check</td></tr>
+        </table>
+      </section>
+
+      <section>
+        <div class="label">Earlier today</div>
+        <table>
+          <tr><td class="t">14:02</td><td><b>Compare whisper models for the Pi</b> · research · done</td></tr>
+          <tr class="err"><td class="t">13:10</td><td><b>Fix pairing QR on Android 15</b> · code · error</td></tr>
+          <tr><td class="t">07:00</td><td><b>Morning briefing</b> · scheduled · done</td></tr>
+          <tr><td class="t">06:51</td><td><b>Rename light.lamp_3 → light.hall_lamp</b> · done</td></tr>
+        </table>
+      </section>
+
+      <section class="actions"><a href="#">Cancel task</a><a href="#">Open diff</a><a href="#">Forget</a></section>
+    </aside>
+  </main>
+</div></body></html>

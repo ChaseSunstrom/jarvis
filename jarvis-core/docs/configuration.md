@@ -137,6 +137,142 @@ trigger:
 
 For an offset, use a template condition on `next_setting`.
 
+## `routines:`
+
+```yaml
+routines:
+  at: "07:05"                   # once a morning, in the house's zone; leave out for on demand only
+  days: 14                      # how far back the miner reads the recorder
+  min_days: 3                   # on how many distinct days the same thing must have happened
+  slot_minutes: 15              # how close in time "the same time" is
+  max_proposals: 3              # how many are put to the person in one go
+```
+
+Jarvis proposes a routine. The miner reads the recorder's states: an entity
+put in the same state in the same quarter-hour on `min_days` distinct days —
+with at most one day that contradicts it, and not an entity an automation of
+the house already acts on — is a candidate. Each is put to the person once: a
+`proposal` card and a question ("You turn off the kitchen lights at about
+22:30 most days — shall I make that a routine?"); a yes creates the automation
+through the same door `create_automation` uses, a no is remembered for thirty
+days. Services `routines.propose` (`ask: false` lists and cards only),
+`routines.accept` (a key, or a draft `{entity_id, state, at}`), `routines.decline`;
+the `proposed_routines` tool for "is there a routine you'd suggest?" — which
+never creates one. An unlock is never proposed.
+
+## `review:`
+
+```yaml
+review:
+  at: "03:45"                   # the nightly hour, in the house's zone; leave out for on demand only
+```
+
+Jarvis learns from its own mistakes. The day's record — traces whose tools
+errored, turns the claimed-action guard caught saying something was done, runs
+stopped with `assist_pipeline/stop`, a model server that could not be reached
+— is read once a night (and on `review.run`), the model is asked once for at
+most three things to do differently, and a note ("What went wrong on <day>")
+and a `review` card are left. The `what_went_wrong` tool answers "what did you
+get wrong today?" from that record, never from a guess. A lesson changes no
+rule by itself: it is a sentence for the person.
+
+## `timer:`
+
+```yaml
+timer: {}                       # no options; absent means no timers
+```
+
+A countdown is an entity — `timer.pasta` after "set a ten-minute timer for the
+pasta" — with state `active`, `paused`, `finished` or `idle` and attributes
+`remaining` (seconds), `remaining_spoken`, `finishes_at`, `duration`, `label`,
+`device` (where it was asked for). It counts on the house's clock
+(`jarvis: time_zone:`). When it finishes it leaves a `reminder` card and says
+so on the device that asked (`companion.notify`). Services: `timer.start`
+(`duration` — seconds, `10m`, `1h30m`, `10:00` — and `label`), `timer.pause`,
+`timer.resume`, `timer.cancel`, `timer.snooze` (`minutes`, default 5). The model
+has one tool, `timer`, with `action` start | status | pause | resume | cancel |
+snooze. A timer that was running when Jarvis restarted comes back `finished`
+with a card saying it was interrupted — it does not chime late.
+
+## `sky:`
+
+```yaml
+sky:
+  tle_cache: sky/tle            # under the config dir; drop your own .csv/.tle here
+  ephemeris: sky/de421.bsp      # under the config dir; downloaded once when absent
+  refresh_hours: 24             # re-fetch elements older than this; never under 2
+  min_altitude: 10              # degrees; a pass begins and ends here
+  update_interval: 300          # seconds between entity recomputes
+  satellites: [ISS (ZARYA)]     # tracked: one `sky.<name>_next_pass` entity each
+  sources:
+    - https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=csv
+  download: true                # false: never touch the network
+```
+
+The next ISS pass for the house, what is overhead now, the moon's phase and
+the planets tonight, computed here with skyfield. Location comes from
+`jarvis:`, times are in its `time_zone`. Two downloads, both cached under the
+config directory: orbital elements from CelesTrak (a few KB, refreshed when
+older than `refresh_hours`; never fetched more often than every two hours,
+which is CelesTrak's own cycle) and the planetary ephemeris (17 MB, once).
+Neither happens on the way to start-up, and neither failing stops anything —
+the cached elements keep serving with their age in every answer, and without
+the ephemeris the satellite tools still work while the moon and the planets
+say the file is not there yet. `download: false` is for an air-gapped box:
+put a CSV (or a TLE) in `tle_cache` and the ephemeris in place by hand.
+
+Entities: `sky.iss_next_pass` (state: when the next pass above `min_altitude`
+rises, in the house zone; attributes `max_alt`, `direction`, `visible`,
+`rise_direction`, `culmination`, `set`, `set_direction`, `next_visible`,
+`tle_age_hours`, `elements_age_days`) and `sky.moon` (state: the phase name;
+attributes `illumination`, `phase_angle`, `waxing`, `next_full`, `next_new`).
+
+Tools, all tier 1 and read-only: `next_pass(satellite, hours)`,
+`overhead_now(min_altitude)`, `moon_phase()`, `planets_tonight()`. Each
+returns a short dict and a `spoken` sentence. "Visible" means the satellite
+is above the floor, lit by the sun, and the sun at the house is below −6°;
+"bright" is a visible pass that climbs past 40°.
+
+Worked example, with the notes: `examples/sky.yaml`.
+
+## `extensions:`
+
+```yaml
+extensions:
+  catalog:
+    sources: []                   # where things may be installed FROM
+      # - name: my-skills
+      #   url: file:///home/you/skills    # a folder on this machine
+      #   kind: skill
+      # - name: some-list
+      #   url: https://example.org/skills # https only; never http
+      #   kind: skill
+      # - name: bundled                   # the shipped skills; list it only
+      #   url: file:///srv/jarvis/integrations/skills/bundled
+      #   kind: skill                     # to turn them off:
+      #   enabled: false
+```
+
+One index over skills, MCP servers and tool plugins (`extensions.list`), and
+the catalogue things are installed from (`extensions.browse`, `.plan`,
+`.install` — two steps on purpose: nothing installs without the plan a person
+approved, and the payload's hash is re-checked before it lands). Only a skill
+(a document) or an http MCP server (a URL and a tier) can be installed; a
+plugin and a stdio MCP server are refused with the reason.
+
+`sources` is the operator's allowlist of origins, and there is no shipped
+list of remote ones. One source is always present without being listed:
+**`bundled`** (M65) — the four skills that ship inside the package
+(`jarvis/integrations/skills/bundled/index.json`; `/srv/jarvis/…` in the
+image), read as `file://` from this machine through the same path an
+operator's folder takes. It is not a URL and nothing is fetched for it; it
+exists so a fresh install has something to browse. A source you list with the
+same name replaces it; `enabled: false` on that line turns it off. Entries the
+registry already holds come back with `installed: true` — the shipped skills
+do, unless `skills: bundled: false` — and the console shows INSTALLED rather
+than offering to install them. `DEVIATIONS.md` §21 and
+`docs/THREAT_MODEL.md` carry the argument.
+
 ## `voice:`
 
 ```yaml
@@ -171,6 +307,7 @@ llm:
   persona_file: prompts/jarvis.txt
   max_tool_rounds: 5
   approval_ttl: 300
+  question_ttl: 1800
   timeout: 120
   keep_alive: 30m
   options: {temperature: 0.6, num_ctx: 8192}
@@ -188,6 +325,7 @@ llm:
 | `allow_think_escalation` | With `think: false`, lets the model raise reasoning for a single turn it judges needs working out, once per turn, via a `think_it_through` tool the agent serves itself. Default true; only meaningful when `think` is false. |
 | `max_tool_rounds` | Tool-call rounds per turn. Higher chains more steps and multiplies worst-case latency by the same factor. |
 | `approval_ttl` | Seconds a Tier-3 approval request stays valid. Requests are single-use, so a model cannot replay one. |
+| `question_ttl` | Seconds a **question** (`ask_user`) waits for its answer — default 1800, its own clock and never derived from `approval_ttl`. An action held for approval is about to happen and five minutes is long enough to say yes to it; a question is Jarvis waiting on a fact from somebody who has walked off, and it lives as long as the phone's conversation thread does. A late answer is told "that question expired after N minutes; ask again and I'll wait" (M66). |
 | `options` | Passed to Ollama verbatim. On the `openai` backend the keys with an equivalent are translated and the rest go through as `extra_body`; `num_ctx` is dropped, because on that wire the context length is a property of how the server was started. |
 | `conversation: {ttl, max_turns}` | How long the MODEL's context survives and how much of it is kept. |
 | `conversation: {history, history_limit}` | The durable half: every finished turn in `.storage/conversations.json`, which is what the console's chat mode lists and reopens. `history: false` turns it off. A tool's *result* is never written there — only whether it worked. |
@@ -261,6 +399,24 @@ These entity ids feed the `get_user_context` tool, which is what the persona's
 routing rules read: speak while driving, notify while away, stay silent while
 asleep. Omit the ones you do not have.
 
+## `watch:`
+
+```yaml
+watch:
+  interval: 900      # seconds between checks by default; a watch may ask for its own (floor 30)
+  max_watches: 50
+  notify: true       # a change lands as a moment (kind `watch`) as well as a bus event
+```
+
+Anything online, with time in it (M59). `watch_page` keeps a snapshot of a
+page and says when it changes, with what changed; `watch_feed` follows an RSS
+2.0 or Atom feed and says what is new; `watch_for` ("tell me when …") asks a
+question of the web every interval until the answer is yes. `read_page` reads a
+page as text — through jarvis-browser when it is configured, so a page that
+draws itself with JavaScript is read properly, and through jarvis-core when it
+is not; `feed_latest` lists a feed. Snapshots live under `config/watch/`. No
+watch checks faster than every 30 seconds, whatever it asked for.
+
 ## `mqtt:`
 
 ```yaml
@@ -275,10 +431,33 @@ mqtt:
   will_topic: jarvis/status
 ```
 
-`discovery: true` is the important line. Zigbee2MQTT, Tasmota, ESPHome, Shelly
-and Zwave-JS-UI all publish Home Assistant-format discovery messages under
-`homeassistant/#`, and Jarvis parses that format — so those devices appear on
-their own, with names, device grouping and areas intact.
+`discovery: true` is the important line. Zigbee2MQTT, ESPHome, Z-Wave JS UI,
+rtl_433 and Theengs publish Home Assistant-format discovery messages under
+`homeassistant/#`, and Jarvis parses that format — single configs and device
+bundles, every component Home Assistant has including `event` (a button press,
+a doorbell — also fired on the bus as `jarvis_mqtt_event`) and
+`device_tracker` — so those devices appear on their own, with names, device
+grouping and areas intact. Two devices speak their own dialect and are
+translated into the same entities: Tasmota (its own
+`tasmota/discovery/<mac>/{config,sensors}` — Tasmota dropped the HA format in
+2023) and Shelly Gen2 (`<id>/status/switch:<n>`, no discovery at all).
+`translators: false` switches that off.
+
+Four more keys, all optional (M57):
+
+```yaml
+mqtt:
+  canonical_units: true          # °F → °C, inHg → hPa, Wh → kWh at ingest; one unit per device class
+  discovery_birth: true          # also say "online" on <discovery_prefix>/status, so the bridges re-announce
+  discovery_allow_ids: []        # glob patterns on unique_id / device identifiers; empty = everything
+  discovery_deny_ids: ["Schrader-*", "*TPMS*"]   # deny wins — an RTL-SDR hears the whole street
+```
+
+The sensors integration (`sensors:`) gives the model four read-only tools over
+whatever these produce: `sensor_readings` (filter by area, device class or a
+word), `sensor_compare` (coldest / warmest / most power across rooms),
+`sensor_history` (min / max / mean over `24h`, `7d`, `30m` — needs `history:`)
+and `sensor_summary`.
 
 Devices that do not self-announce get declared by hand. Every component block
 takes a list:

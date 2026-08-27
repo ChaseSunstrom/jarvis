@@ -1,0 +1,26 @@
+name: voice-wake-word
+capability: voice
+intent: >
+  The whole point of a wake word: say it, then say the thing. The wake stage
+  and the recogniser read the same audio stream, so this also pins the handover
+  between them — the bug it was written against left STT transcribing the
+  silence after the command, because the wake stage had already eaten it.
+variants: [voice]
+tags: [wake-word]
+setup:
+  states:
+    light.ceiling_lights: "off"
+turns:
+  - say: "Turn on the ceiling lights."
+    audio: {wake: "Hey Jarvis."}
+    expect:
+      # Was relaxed to 1.0 for two milestones: through the wake→stt handover
+      # every utterance came back doubled ("Turn on the ceiling lights.  Turn
+      # on the ceiling lights."), and the two spaces were the fingerprint —
+      # faster-whisper returning the same sentence as two segments, which is
+      # the repeat hallucination long silences provoke. M35 fixed it with
+      # `--vad-filter` on the recogniser, and this is the default ceiling
+      # again: three runs, WER 0.00.
+      wake_word: hey_jarvis
+      service: {domain: light, service: turn_on, entity_id: light.ceiling_lights}
+      state: {light.ceiling_lights: "on"}

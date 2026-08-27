@@ -23,6 +23,7 @@ from ..policy import ActionTier, PolicyProvider
 from .apps import FocusWindow, LaunchApp, ListWindows, OpenUrl
 from .base import Action, ActionContext
 from .clipboard import ReadClipboard, WriteClipboard
+from .notes import FindNote, SaveNote
 from .files import DeleteFile, ListDir, ReadFile, WriteFile
 from .inputauto import Click, MoveMouse, Screenshot, TypeText
 from .net import HttpRequest
@@ -56,6 +57,9 @@ def all_actions() -> list[Action]:
         # Clipboard
         ReadClipboard(),
         WriteClipboard(),
+        # Notes, which live on the hub rather than on this machine
+        SaveNote(),
+        FindNote(),
         # Network
         HttpRequest(),
         # Shell
@@ -71,6 +75,10 @@ def all_actions() -> list[Action]:
 #: The table again, flat, as a review artefact and a test fixture. If this and
 #: :func:`all_actions` ever disagree, ``tests/test_actions.py`` fails.
 TIER_TABLE: dict[str, ActionTier] = {
+    # Notes are the user's own text on their own hub: writing one costs
+    # nothing and is visible, reading one returns what they already wrote.
+    "save_note": ActionTier.NOTIFY,
+    "find_note": ActionTier.NOTIFY,
     "get_system_state": ActionTier.AUTO,
     "set_volume": ActionTier.AUTO,
     "notify": ActionTier.AUTO,

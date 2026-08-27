@@ -7,6 +7,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /**
@@ -50,9 +51,54 @@ class VoiceIdentityClient(
         .followSslRedirects(false)
         .build()
 
-    /** What the enrolment screen draws itself from. */
-    data class Status(
+    /**
+     * One enrolled person (M71), as the server summarises them: counts and a
+     * threshold, never the vectors.
+     */
+    data class Person(
+        val label: String,
         val enrolled: Boolean,
+        val samples: Int,
+        val maxSamples: Int,
+        val threshold: Double,
+        val worstSelfScore: Double?,
+        val thresholdMeasured: Boolean,
+    ) {
+        companion object {
+            fun from(json: JSONObject): Person = Person(
+                label = json.optString("label").ifBlank { "owner" },
+                enrolled = json.optBoolean("enrolled", false),
+                samples = json.optInt("samples", 0),
+                maxSamples = json.optInt("max_samples", 20),
+                threshold = json.optDouble("threshold", 0.0),
+                worstSelfScore = json.optDouble("worst_self_score").takeIf { !it.isNaN() && !it.isInfinite() },
+                thresholdMeasured = json.optBoolean("threshold_measured", false),
+            )
+        }
+    }
+
+    /**
+     * What the enrolment screen draws itself from.
+     *
+     * The top level describes ONE person — the one asked for, else the first
+     * — under the keys this screen has always read; [people] is everyone. A
+     * server from before names existed sends no `people`, so the one person
+     * it does describe is listed as the household of one it is.
+     */
+    data class Status(
+        /** Whether ANYBODY is enrolled — what "does the gate do anything" means. */
+        val enrolled: Boolean,
+        /** Whether the person the top level describes is. */
+        val personEnrolled: Boolean,
+        /** Who the top level describes. */
+        val label: String,
+        val people: List<Person>,
+        /** The person a sample goes to when nobody is named. */
+        val defaultLabel: String,
+        val maxLabelChars: Int,
+        val maxPeople: Int,
+        /** `voice: speaker: threshold:` when the file names one; null when each profile keeps its own. */
+        val configuredThreshold: Double?,
         val samples: Int,
         val minSamples: Int,
         /** Samples needed before the owner's own score can be MEASURED. */
@@ -83,6 +129,9 @@ class VoiceIdentityClient(
         /** True once enrolment can say what the owner's own worst sample scores. */
         val measurable: Boolean get() = samples >= measureSamples
 
+        /** The enrolled person of that name, matched the way the server matches: case-insensitively. */
+        fun personNamed(label: String): Person? = people.firstOrNull { it.label.equals(label, ignoreCase = true) }
+
         companion object {
             fun from(json: JSONObject): Status {
                 val prompts = ArrayList<String>()
@@ -91,8 +140,24 @@ class VoiceIdentityClient(
                         array.optString(index).takeIf { it.isNotBlank() }?.let(prompts::add)
                     }
                 }
+                val people = ArrayList<Person>()
+                val listed = json.optJSONArray("people")
+                if (listed != null) {
+                    for (index in 0 until listed.length()) {
+                        listed.optJSONObject(index)?.let { people.add(Person.from(it)) }
+                    }
+                } else if (json.optBoolean("enrolled", false)) {
+                    people.add(Person.from(json))
+                }
                 return Status(
                     enrolled = json.optBoolean("enrolled", false),
+                    personEnrolled = json.optBoolean("person_enrolled", json.optBoolean("enrolled", false)),
+                    label = json.optString("label").ifBlank { "owner" },
+                    people = people,
+                    defaultLabel = json.optString("default_label").ifBlank { "owner" },
+                    maxLabelChars = json.optInt("max_label_chars", 40),
+                    maxPeople = json.optInt("max_people", 8),
+                    configuredThreshold = json.optDouble("configured_threshold").takeIf { !it.isNaN() && !it.isInfinite() },
                     samples = json.optInt("samples", 0),
                     minSamples = json.optInt("min_samples", 3),
                     // Defaults to one past the minimum for a server that predates
@@ -207,14 +272,16 @@ class VoiceIdentityClient(
     }
 
     /**
-     * Add one enrolment sample.
+     * Add one enrolment sample, to the person called [label] (M71) — or to the
+     * server's default person when null, which is who every sample went to
+     * before names existed.
      *
      * One per request rather than five in a batch, because the useful feedback
      * is per sample: "that one was too quiet, say it again" between phrases,
      * rather than a single failure for the whole set at the end.
      */
-    fun enrol(pcm: ByteArray): Result<Enrolment> =
-        post("/api/voice/speaker/enrol", pcm).map { json ->
+    fun enrol(pcm: ByteArray, label: String? = null): Result<Enrolment> =
+        post("/api/voice/speaker/enrol" + query(label), pcm).map { json ->
             val sample = json.optJSONObject("sample")
             Enrolment(
                 status = Status.from(json),
@@ -229,11 +296,34 @@ class VoiceIdentityClient(
     /**
      * Score a sample without enrolling it, and report whether it would have
      * been refused. This is how the owner checks the gate will let them in
-     * before they turn enforcement on.
+     * before they turn enforcement on. No name goes with it on purpose: the
+     * sample is compared with EVERYONE, and the verdict's `label` says who
+     * it was — which is what the screen then reads out.
      */
     fun verify(pcm: ByteArray): Result<JSONObject> = post("/api/voice/speaker/verify", pcm)
 
-    fun forget(): Result<Status> = delete("/api/voice/speaker").map(Status::from)
+    /**
+     * "Recording now" (M79). Told before the microphone opens for a phrase, so
+     * the house's listeners — this phone's wake word, the console's microphone —
+     * do not take the phrase as a command for the next twenty seconds; the
+     * sample refreshes the mark. A failure here is not one worth showing: the
+     * enrolment goes on, and a turn that slips through is what it was before.
+     */
+    fun enrolling(): Result<JSONObject> = post("/api/voice/speaker/enrolling", ByteArray(0))
+
+    /** Forget one person by name (M71), or everyone when [label] is null. */
+    fun forget(label: String? = null): Result<Status> =
+        delete("/api/voice/speaker" + query(label)).map(Status::from)
+
+    /**
+     * `?label=` for a named person, or nothing. Percent-encoded by hand rather
+     * than `Uri.encode`, so the JVM can read this file's logic without Android.
+     */
+    private fun query(label: String?): String {
+        val name = label?.trim().orEmpty()
+        if (name.isEmpty()) return ""
+        return "?label=" + URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+    }
 
     // --- transport ----------------------------------------------------------
     private fun <T> Result<JSONObject>.map(transform: (JSONObject) -> T): Result<T> =

@@ -564,6 +564,17 @@ class DesktopAgent:
         target.write_text(content, encoding="utf-8")
         return target
 
+    def workspace_path(self, name: str) -> Path:
+        """A path inside the agent's workspace, with nothing written to it.
+
+        The other half of `workspace_file`: a plan that is supposed to CREATE
+        something needs a place to create it, and "the file does not exist" is
+        the assertion that a refused step really did nothing.
+        """
+        target = self.workspace / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return target
+
     def write_config(self) -> None:
         self.config_path.write_text(
             json.dumps(

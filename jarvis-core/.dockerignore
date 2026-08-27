@@ -15,9 +15,19 @@
 config/
 photon/
 wyoming/
+# The embedding and reranker weights TEI downloads (M33), same reasoning
+# as wyoming/: fetched once, hundreds of megabytes, never in an image.
+models/
+# The gateway's config and its guard are bind-mounted into the LiteLLM
+# container, not built into any image here. Same for the M39 fixtures'
+# configuration, which is mounted into Radicale.
+gateway/
+fixtures/
 ollama/
 searxng/
 mosquitto/
+# go2rtc's stream list (M56), mounted read-only into the restreamer.
+go2rtc/
 tests/
 docs/
 *.md

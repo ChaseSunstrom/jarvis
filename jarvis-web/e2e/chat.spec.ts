@@ -12,11 +12,11 @@ import { test, expect } from "@playwright/test";
  * on every one of these.
  */
 
-test("the toggle switches between the orb and chat, and is remembered", async ({
+test("the toggle switches between the reactor and chat, and is remembered", async ({
   page,
 }) => {
   await page.goto("/");
-  // The orb is the default: nothing about chat mode changes what a fresh
+  // The reactor is the default: nothing about chat mode changes what a fresh
   // install shows.
   await expect(page.getByTestId("mic")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId("chat-panel")).toHaveCount(0);
@@ -130,8 +130,8 @@ test("the mode toggle does not sit on top of the corner controls", async ({
   page,
 }) => {
   // It used to be one `position: fixed` button in the top-right, which is
-  // where the HUD keeps its status readout and clock and where chat mode keeps
-  // the speak toggle — so it covered both, and being fixed it ate their clicks.
+  // where the bar keeps its status readout and where chat mode keeps the
+  // speak toggle — so it covered both, and being fixed it ate their clicks.
   await page.goto("/");
   const toggle = page.getByTestId("mode-toggle");
   const status = page.getByTestId("status");

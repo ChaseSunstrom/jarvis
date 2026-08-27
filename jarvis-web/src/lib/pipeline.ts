@@ -38,6 +38,14 @@ export interface PipelineCallbacks {
 	/** Full response text from intent-end. */
 	onResponse?: (text: string) => void;
 	/**
+	 * The remembered notes this turn was given, from `intent-end`.
+	 *
+	 * "Why did it say that?" answered with the entries the model READ. Asking
+	 * the model instead produces a plausible account of notes it may never
+	 * have seen.
+	 */
+	onMemoryUsed?: (notes: { id: string; text: string }[]) => void;
+	/**
 	 * A tool call starting. Fired BEFORE the call runs, so a tool that takes
 	 * nine seconds is visible for nine seconds rather than reported once it is
 	 * over.
@@ -54,8 +62,23 @@ export interface PipelineCallbacks {
 	 * rather than once per token.
 	 */
 	onThinking?: (delta: string) => void;
+
+	/**
+	 * The model wrote a tool call out as text instead of making one.
+	 *
+	 * jarvis-core noticed and is asking it to make the call properly, which
+	 * costs one extra round. Worth surfacing: without it the turn simply takes
+	 * longer for no visible reason, and the failure it corrects — a confident
+	 * "I've started that" over work that was never dispatched — is the kind a
+	 * user only discovers by asking for an update.
+	 *
+	 * Fires at most once per turn.
+	 */
+	onToolNarrated?: (tool: string) => void;
 	/** TTS media path from tts-end (data.tts_output.url). */
-	onTtsUrl?: (url: string) => void;
+	onTtsUrl?: (url: string, remainderUrl?: string | null, chunks?: number) => void;
+	/** A sentence of the reply, synthesised early (M60): play it now, in order; `tts-end` still follows with the whole reply. */
+	onTtsChunk?: (url: string, index: number, text: string) => void;
 	/** Pipeline error event (data.code, data.message). */
 	onError?: (code: string, message: string) => void;
 	/** run-start received: binary handler id is known, audio may be streamed. */
@@ -223,6 +246,20 @@ export class PipelineClient {
 	}
 
 	/**
+	 * Stop the run in progress AT THE SERVER (M96). Barge-in used to be this
+	 * client dropping playback while the model kept generating and the
+	 * synthesiser kept writing; the server now cancels the run, ends it with
+	 * `run-end {interrupted: true}`, and the trace says so. Returns false when
+	 * nothing is running.
+	 */
+	stopRun(): boolean {
+		if (this.runId === null) return false;
+		const id = this.nextId++;
+		this.send(JSON.stringify({ id, type: 'assist_pipeline/stop', run_id: this.runId }));
+		return true;
+	}
+
+	/**
 	 * Start a run from TYPED text: the same pipeline, entered one stage later.
 	 *
 	 * `start_stage: 'intent'` is how the backend is told there is no audio to
@@ -312,6 +349,11 @@ export class PipelineClient {
 				this.cb.onToolEnd?.(toolCall(ev.data));
 				break;
 			}
+			case 'intent-tool-narrated': {
+				const tool = ev.data?.tool;
+				if (typeof tool === 'string' && tool) this.cb.onToolNarrated?.(tool);
+				break;
+			}
 			case 'intent-thinking': {
 				const delta = ev.data?.delta;
 				if (typeof delta === 'string' && delta.length > 0) this.cb.onThinking?.(delta);
@@ -321,12 +363,24 @@ export class PipelineClient {
 				const output = ev.data?.intent_output;
 				const speech = output?.response?.speech?.plain?.speech ?? '';
 				if (output?.conversation_id) this.conversationId = output.conversation_id;
+				const used = output?.response?.data?.memory_used;
+				if (Array.isArray(used) && used.length) this.cb.onMemoryUsed?.(used);
 				this.cb.onResponse?.(speech);
+				break;
+			}
+			case 'tts-chunk': {
+				const url = ev.data?.tts_output?.url;
+				if (typeof url === 'string') {
+					this.cb.onTtsChunk?.(url, Number(ev.data?.index ?? 0), String(ev.data?.text ?? ''));
+					this.setState('speaking');
+				}
 				break;
 			}
 			case 'tts-end': {
 				const url = ev.data?.tts_output?.url;
-				if (typeof url === 'string') this.cb.onTtsUrl?.(url);
+				const remainder = ev.data?.tts_output?.remainder_url;
+				const chunks = Number(ev.data?.tts_output?.chunks ?? 0);
+				if (typeof url === 'string') this.cb.onTtsUrl?.(url, typeof remainder === 'string' ? remainder : null, chunks);
 				this.setState('speaking');
 				break;
 			}

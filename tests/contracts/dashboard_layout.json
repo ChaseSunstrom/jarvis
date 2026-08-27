@@ -1,0 +1,95 @@
+{
+  "$comment": [
+    "What a saved dashboard is, on the wire and on disk.",
+    "",
+    "jarvis-core's tests/test_dashboards.py and the console's",
+    "src/lib/dashboards/layout.test.ts both read this file. A layout written by",
+    "one and refused by the other is the failure it exists to prevent: the",
+    "console is not the only client (the phone loads the same console), and a",
+    "layout is the one piece of state a user builds by hand and would be angry",
+    "to lose.",
+    "",
+    "Coordinates are a 12-column grid. `w`/`h` are in columns and rows; a row is",
+    "whatever height the console draws it at, which is a display decision and",
+    "deliberately not stored.",
+    "",
+    "A widget has a `kind` (M63). `metric` is the graphs of M62 and the default",
+    "when the field is absent, so every layout saved before kinds existed still",
+    "loads. The other kinds show the house rather than a number: one entity's",
+    "state with its switch, the newest sensor readings by room, a still from a",
+    "camera, the sky tonight, the newest moments. Each kind names the fields it",
+    "needs under `kinds`; a widget missing one is refused, not drawn blank."
+  ],
+  "version": 2,
+  "columns": 12,
+  "dashboard": {
+    "required": ["id", "title", "widgets"],
+    "fields": {
+      "id": "slug, unique per owner",
+      "title": "what the user called it",
+      "owner": "the token id that saved it — see `owner` below",
+      "widgets": "array, in no particular order; `x`/`y` decide the layout",
+      "range": "the window the dashboard opens on: 1h | 6h | 24h | 7d",
+      "updated": "epoch seconds",
+      "order": "shipped only: which example opens first — lowest first, then file name"
+    }
+  },
+  "widget": {
+    "required": ["id", "kind", "x", "y", "w", "h"],
+    "fields": {
+      "id": "unique within the dashboard",
+      "title": "optional; the widget's own subject is used when absent",
+      "kind": "one of `kinds` below; absent means `metric`",
+      "type": "metric: one of `types` below; absent means line",
+      "source": "metric: a data source name: internal | influx | …; absent means internal",
+      "series": "metric: array of series keys, as that source lists them",
+      "aggregate": "metric: last | mean | min | max | sum | count",
+      "entity": "entity: the entity_id the tile shows and switches",
+      "camera": "camera: the camera's name; absent means the only camera, if there is one",
+      "area": "readings: only this room; absent means every room",
+      "limit": "moments: how many, newest first (1-20, default 6)",
+      "x": "0-11", "y": ">= 0", "w": "1-12", "h": ">= 1"
+    }
+  },
+  "kinds": {
+    "metric": { "what": "a graph of recorded numbers", "needs": ["series"] },
+    "entity": { "what": "one entity: name, state with unit, when it changed, and its switch when it has one", "needs": ["entity"] },
+    "readings": { "what": "the newest sensor readings, grouped by room", "needs": [] },
+    "camera": { "what": "a still from a camera, through the vision integration's consent and audit", "needs": [] },
+    "sky": { "what": "the next ISS pass and the moon tonight", "needs": [] },
+    "moments": { "what": "the newest moments — what Jarvis said while nobody was looking", "needs": [] }
+  },
+  "types": {
+    "line": "a value over time",
+    "area": "the same, filled — for a quantity rather than a level",
+    "bar": "counts per bucket",
+    "stat": "one number, large, with an optional sparkline",
+    "gauge": "one number against a maximum",
+    "table": "several series' latest values, side by side"
+  },
+  "owner": {
+    "$comment": [
+      "There are no user accounts (jarvis/auth.py:3). A token IS the identity:",
+      "one per device, minted by the operator. So a dashboard belongs to the",
+      "token that saved it, and 'per user' means 'per token id'. A layout with no",
+      "owner is shared — the shipped examples are."
+    ],
+    "field": "owner",
+    "shared_value": ""
+  },
+  "storage": {
+    "key": "dashboards",
+    "path": "<config>/.storage/dashboards.json",
+    "shipped": "<config>/dashboards/*.yaml, in `order` then file name"
+  },
+  "commands": {
+    "jarvis/dashboards/list": "every dashboard this token may see: its own, plus the shared ones",
+    "jarvis/dashboards/save": "create or replace one; the server stamps `owner` from the token",
+    "jarvis/dashboards/delete": "by id; refuses one this token does not own",
+    "jarvis/metrics/sources": "what can be graphed, per source",
+    "jarvis/metrics/query": "`source`, `series`, `start`, `end`, `step`, `aggregate`",
+    "jarvis/sensors/readings": "readings: every sensor's newest reading with its room and age; `area` filters",
+    "jarvis/sky/summary": "sky: the next pass of the first tracked satellite and the moon tonight, or why not yet",
+    "jarvis/vision/still": "camera: one frame as a JPEG data URL, through the same consent, rate limit and audit as a look; refused without consent"
+  }
+}

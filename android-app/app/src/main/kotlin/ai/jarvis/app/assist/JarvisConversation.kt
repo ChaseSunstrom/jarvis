@@ -1,5 +1,7 @@
 package ai.jarvis.app.assist
 
+import ai.jarvis.app.ui.ApprovalBridge
+import org.json.JSONObject
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -81,6 +83,21 @@ class JarvisConversation(
          * with nowhere to put this is a valid surface.
          */
         fun onTools(run: ToolRun) {}
+
+        /** The living activity around the reactor (M61): every row the console would draw. */
+        fun onActivity(rows: ActivityRows) {}
+
+        /** The knowledge graph (M61): what Jarvis has written down and remembers, as the console draws it. */
+        fun onKnowledge(nodes: List<KnowledgeGraph.Node>, edges: List<KnowledgeGraph.Edge>) {}
+
+        /** The graph's nodes a tool call touched, to light for a moment. */
+        fun onKnowledgePulse(ids: List<String>) {}
+
+        /** A tool call started: the reactor's blades sweep once (M53). */
+        fun onWork() {}
+
+        /** A camera is (or is no longer) being looked at: the iris gathers (M53). */
+        fun onLooking(looking: Boolean) {}
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -93,6 +110,14 @@ class JarvisConversation(
 
     /** What the current turn has called. Cleared when a new turn begins. */
     private val tools = ToolRun()
+    private val activity = ActivityRows()
+    private var graphNodes: List<KnowledgeGraph.Node> = emptyList()
+
+    /** Sentences spoken early (M60), in order; the whole-reply clip is then only waited for. */
+    private val chunkQueue = ArrayDeque<String>()
+    private var chunkPlaying = false
+    private var chunksHeard = 0
+    private var awaitingChunkEnd = false
 
     /** Wipes the tool rows a while after the last one finished. See [ToolRun.holdMs]. */
     private val clearTools = Runnable {
@@ -417,6 +442,19 @@ class JarvisConversation(
         return true
     }
 
+    /**
+     * A sentence TYPED on the voice screen (M98): the same pipeline a sentence
+     * the phone transcribed takes — entered at the intent stage, answered
+     * aloud — so a refused microphone, a quiet room or a noisy one is not a
+     * dead app. The console's typed form has done this since M60.
+     */
+    fun sendTyped(text: String) {
+        val typed = text.trim()
+        if (typed.isEmpty()) return
+        ui.onTranscript(typed)
+        speakToServer(typed)
+    }
+
     /** Hand the transcript to the assistant and play back what it says. */
     private fun speakToServer(text: String) {
         reachedListening = true  // there was never a listening stage to reach
@@ -595,6 +633,10 @@ class JarvisConversation(
     }
 
     private fun beginNextTurn() {
+        chunkQueue.clear()
+        chunkPlaying = false
+        chunksHeard = 0
+        awaitingChunkEnd = false
         // `held` as well as `running`: a question owns the microphone, and a
         // late TTS completion or run-end arriving from the turn that was in
         // flight when the question landed would otherwise re-open it underneath
@@ -689,7 +731,48 @@ class JarvisConversation(
         }
     }
 
-    override fun onTranscript(text: String) = ui.onTranscript(text)
+    override fun onTranscript(text: String) {
+        // A turn has begun on a live socket: the moment to read what Jarvis
+        // knows, so the graph is current before the tools that touch it run.
+        loadKnowledge()
+        ui.onTranscript(text)
+    }
+
+    /** Notes and memory, as the console lists them, into the graph the phone draws. */
+    private fun loadKnowledge() {
+        val link = client ?: return
+        link.request("jarvis/notes/list") { notesResult ->
+            val notes = ArrayList<KnowledgeGraph.NoteLike>()
+            val arr = notesResult?.optJSONArray("notes")
+            if (arr != null) for (i in 0 until arr.length()) {
+                val n = arr.optJSONObject(i) ?: continue
+                notes.add(
+                    KnowledgeGraph.NoteLike(
+                        n.optString("id"), n.optString("title"),
+                        strings(n.optJSONArray("tags")), strings(n.optJSONArray("links")), strings(n.optJSONArray("backlinks")),
+                    )
+                )
+            }
+            link.request("jarvis/memory/list") { memoryResult ->
+                val memory = ArrayList<KnowledgeGraph.MemoryLike>()
+                val entries = memoryResult?.optJSONArray("entries")
+                if (entries != null) for (i in 0 until entries.length()) {
+                    val m = entries.optJSONObject(i) ?: continue
+                    memory.add(KnowledgeGraph.MemoryLike(m.optString("id"), m.optString("text"), strings(m.optJSONArray("tags"))))
+                }
+                val (nodes, edges) = KnowledgeGraph.build(notes, memory)
+                graphNodes = nodes
+                ui.onKnowledge(nodes, edges)
+            }
+        }
+    }
+
+    private fun strings(arr: org.json.JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<String>(arr.length())
+        for (i in 0 until arr.length()) out.add(arr.optString(i))
+        return out
+    }
 
     override fun onResponseDelta(delta: String) {
         responseBuffer.append(delta)
@@ -705,6 +788,71 @@ class JarvisConversation(
 
     override fun onTtsUrl(absoluteUrl: String) {
         tts?.play(absoluteUrl) { if (running) beginNextTurn() }
+    }
+
+    override fun onTtsChunk(absoluteUrl: String, index: Int) {
+        chunksHeard += 1
+        chunkQueue.addLast(absoluteUrl)
+        playNextChunk()
+    }
+
+    override fun onTtsEnd(absoluteUrl: String, remainderUrl: String?, chunks: Int) {
+        if (chunksHeard == 0) {
+            // Nothing was chunked: the whole reply, as before.
+            onTtsUrl(absoluteUrl)
+            return
+        }
+        // The sentences were played as they came; only what they did not
+        // cover is left, and the turn ends when the queue drains.
+        if (remainderUrl != null) chunkQueue.addLast(remainderUrl)
+        awaitingChunkEnd = true
+        chunksHeard = 0
+        if (!chunkPlaying && chunkQueue.isEmpty()) {
+            awaitingChunkEnd = false
+            if (running) beginNextTurn()
+        } else {
+            playNextChunk()
+        }
+    }
+
+    private fun playNextChunk() {
+        if (chunkPlaying) return
+        val next = chunkQueue.removeFirstOrNull() ?: return
+        chunkPlaying = true
+        tts?.play(next) {
+            chunkPlaying = false
+            if (chunkQueue.isNotEmpty()) {
+                playNextChunk()
+            } else if (awaitingChunkEnd) {
+                awaitingChunkEnd = false
+                if (running) beginNextTurn()
+            }
+        }
+    }
+
+    override fun onBusEvent(type: String, data: JSONObject) {
+        if (activity.apply(type, data)) {
+            ui.onActivity(activity)
+            if (type.startsWith("vision_look_")) ui.onLooking(activity.lookingCaption().isNotEmpty())
+        }
+        // A held ACTION (M98): raised on this phone's consent screen and answered
+        // with jarvis/approve on this socket. A held QUESTION (`answerable` set)
+        // reaches the phone through companion.ask instead, as before.
+        if (type == "jarvis_approval_required" && !data.has("answerable")) {
+            val requestId = data.optString("request_id").ifEmpty { data.optString("id") }
+            ApprovalBridge.raiseServerRequest(
+                context,
+                requestId,
+                data.optString("tool"),
+                data.optString("summary"),
+                data.optLong("ttl", 300L),
+            ) { id, approved ->
+                client?.sendCommand(
+                    "jarvis/approve",
+                    JSONObject().put("request_id", id).put("approved", approved),
+                )
+            }
+        }
     }
 
     override fun onRunEnd() {
@@ -731,6 +879,9 @@ class JarvisConversation(
         main.removeCallbacks(clearTools)
         tools.started(name, round, index, total, ToolRun.summarise(arguments))
         ui.onTools(tools)
+        val touched = KnowledgeGraph.touchedBy(name, arguments.toMap(), graphNodes)
+        if (touched.isNotEmpty()) ui.onKnowledgePulse(touched)
+        ui.onWork()
     }
 
     override fun onToolFinished(
@@ -745,6 +896,8 @@ class JarvisConversation(
         main.removeCallbacks(clearTools)
         tools.finished(name, round, index, total, ok, error, durationMs)
         ui.onTools(tools)
+        // A note or a memory changed: the graph is out of date until re-read.
+        if (ok && (name.startsWith("note_") || name == "remember" || name == "forget")) loadKnowledge()
         // Leave the last round up for a moment once nothing is running, so what
         // just happened can be read. A failure gets longer — see ToolRun.holdMs.
         if (!tools.running) main.postDelayed(clearTools, tools.holdMs())

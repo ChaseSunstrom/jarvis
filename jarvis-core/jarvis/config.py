@@ -29,10 +29,32 @@ class ConfigError(Exception):
 
 
 class JarvisSafeLoader(yaml.SafeLoader):
-    """SafeLoader with the config-dir bound for relative includes."""
+    """SafeLoader with the config-dir bound for relative includes.
+
+    A mapping with the same key twice is refused, naming both lines. PyYAML
+    keeps the last one silently: configuration.yaml carried two `n8n:` blocks
+    (M37's and M77's) for a day, the first one dead and its comments
+    describing tiers the loaded block did not have (27 Aug 2026).
+    """
 
     config_dir: Path = Path(".")
     secrets: dict[str, Any] = {}
+
+    def construct_mapping(self, node: yaml.Node, deep: bool = False) -> Any:  # type: ignore[override]
+        if isinstance(node, yaml.MappingNode):
+            seen: dict[Any, int] = {}
+            for key_node, _value in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    continue  # `<<:` may legitimately appear more than once
+                key = self.construct_object(key_node, deep=deep)
+                if isinstance(key, (str, int, float, bool)) and key in seen:
+                    raise ConfigError(
+                        f"{key!r} appears twice in {node.start_mark.name} "
+                        f"(lines {seen[key]} and {key_node.start_mark.line + 1}); "
+                        "the second would silently replace the first"
+                    )
+                seen[key] = key_node.start_mark.line + 1
+        return super().construct_mapping(node, deep=deep)
 
 
 def _rel(loader: JarvisSafeLoader, node: yaml.Node) -> Path:
@@ -48,10 +70,45 @@ def _secret(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
     return loader.secrets[key]
 
 
+def _unquote(value: str) -> str:
+    """Strip ONE matching pair of surrounding quotes from a tag argument.
+
+    ## Why this is not cosmetic
+
+    A tag's argument is a plain YAML scalar, so the quoting a human writes
+    inside it is not YAML quoting — it is characters. `!env_var TOKEN ""`
+    therefore produced the two-character string `""`, which is TRUTHY.
+
+    The shipped configuration.yaml uses exactly that idiom for both
+    orchestrator secrets. With the variables unset:
+
+        token           == '""'      -> `configured` says yes
+        approval_secret == '""'      -> `can_approve` says yes
+        token == approval_secret     -> `secrets_are_distinct` says no
+
+    So an install that had set nothing believed it was configured, skipped the
+    `NotConfigured` guard, and posted to a port with nothing behind it — and,
+    far worse, armed the approval path with a secret whose value is two
+    characters an attacker guesses on the first try. `APPROVAL_SECRET` is the
+    only thing that can release a command to the sandbox or apply a diff.
+
+    One pair only, and only when the ends match, so a value that genuinely
+    starts or ends with a quote survives.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
 def _env_var(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
-    args = str(loader.construct_scalar(node)).split()  # type: ignore[arg-type]
+    # `split(None, 1)`, not `split()`: the default is everything after the
+    # name, so `!env_var GREETING Good morning` is "Good morning" rather than
+    # "Good" — the old form silently truncated at the first space.
+    args = str(loader.construct_scalar(node)).split(None, 1)  # type: ignore[arg-type]
+    if not args:
+        raise ConfigError("!env_var needs a variable name")
     name = args[0]
-    default = args[1] if len(args) > 1 else None
+    default = _unquote(args[1].strip()) if len(args) > 1 else None
     value = os.environ.get(name, default)
     if value is None:
         raise ConfigError(f"environment variable {name} is not set and has no default")
@@ -59,8 +116,26 @@ def _env_var(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
 
 
 def _join_url(base: str, path: str) -> str:
-    """Join a base URL and a path without doubling or dropping the slash."""
-    return base.rstrip("/") + "/" + path.lstrip("/") if path else base.rstrip("/")
+    """Join a base URL and a path without doubling or dropping the slash.
+
+    And without doubling the segment where they meet. `!env_url` replaced a
+    bug where the path was lost with one where it was applied twice: the
+    `llm:` block requires LLM_URL to be a base URL, an OpenAI-compatible base
+    URL ends in `/v1`, and `/v1` + `/v1/models` is
+    `https://host/v1/v1/models` — a 404 every thirty seconds for two days on
+    this host, with the dashboard reporting the model server as offline while
+    Jarvis was talking to it.
+
+    So when the base's last segment is the path's first, they are the same
+    segment written twice. `/api` + `/api/ps` collapses for the same reason.
+    """
+    base = base.rstrip("/")
+    if not path:
+        return base
+    parts = [part for part in path.split("/") if part]
+    if parts and base.rsplit("/", 1)[-1].lower() == parts[0].lower():
+        parts = parts[1:]
+    return "/".join([base, *parts]) if parts else base
 
 
 def _env_url(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
@@ -151,7 +226,10 @@ def load_yaml(path: Path, config_dir: Path, secrets: dict[str, Any]) -> Any:
     _Loader.config_dir = config_dir
     _Loader.secrets = secrets
     with path.open("r", encoding="utf-8") as handle:
-        return yaml.load(handle, Loader=_Loader) or {}
+        loaded = yaml.load(handle, Loader=_Loader)
+    # `or {}` here turned an included list document (`[]` in automations.yaml)
+    # into a mapping, and one empty mapping became one phantom automation.
+    return {} if loaded is None else loaded
 
 
 def load_secrets(config_dir: Path) -> dict[str, Any]:

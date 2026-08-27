@@ -49,10 +49,17 @@ class SiriOrbView @JvmOverloads constructor(
 
     private var tone = SiriPalette.Tone.LISTENING
 
-    /** Live blob colours; blended toward the tone's over [TONE_BLEND_MS]. */
-    private val colors = SiriPalette.blobs(tone).copyOf()
-    private var coreColor = SiriPalette.core(tone)
-    private var rimColor = SiriPalette.rim(tone)
+    /**
+     * Live blob colours; blended toward the tone's over [TONE_BLEND_MS]. From
+     * [ReactorOrb.Palette], so this orb rests in the accent as the home
+     * screen's and the console's do.
+     */
+    private val colors = ReactorOrb.Palette.blobs(tone).copyOf()
+    private var coreColor = ReactorOrb.Palette.core(tone)
+    private var rimColor = ReactorOrb.Palette.rim(tone)
+
+    /** No decorative motion (see [JarvisUi.reducedMotion]); read once per attach. */
+    private var stillness = false
 
     /** Where the blend started, and from which colours. */
     private var blendFrom = colors.copyOf()
@@ -65,6 +72,9 @@ class SiriOrbView @JvmOverloads constructor(
 
     /** Free-running chrome rotation, degrees. Same. */
     private var spinDeg = 0f
+
+    /** The reactor's own clock, in seconds — every period is read off it against the tokens. */
+    private var timeSeconds = 0f
 
     /** Raw and smoothed microphone level, 0..1. */
     private var amplitude = 0f
@@ -127,7 +137,9 @@ class SiriOrbView @JvmOverloads constructor(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         lastFrameMs = 0L
-        entrance = 0f
+        stillness = JarvisUi.reducedMotion(context)
+        // Under reduced motion the orb is simply there: no scale-in.
+        entrance = if (stillness) 1f else 0f
         entranceStartMs = now()
         schedule()
     }
@@ -153,13 +165,17 @@ class SiriOrbView @JvmOverloads constructor(
         val dt = dtMs / 1000f
 
         smoothed += (amplitude - smoothed) * 0.22f
-        // Louder means faster, so the orb visibly reacts to a voice rather than
-        // only to a state change.
-        val hz = SiriPalette.orbitHz(tone) * (1f + 0.6f * smoothed)
-        phase = (phase + dt * hz * ReactorOrb.TWO_PI) % ReactorOrb.TWO_PI
-        spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
-
-        entrance = ((nowMs - entranceStartMs).toFloat() / ENTRANCE_MS).coerceIn(0f, 1f)
+        if (!stillness) {
+            // Louder means faster, so the orb visibly reacts to a voice rather than
+            // only to a state change.
+            val hz = SiriPalette.orbitHz(tone) * (1f + 0.6f * smoothed)
+            phase = (phase + dt * hz * ReactorOrb.TWO_PI) % ReactorOrb.TWO_PI
+            spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
+            // The reactor's own clock: the renderer reads every period off it
+            // against the tokens, so the overlay turns at the home screen's rate.
+            timeSeconds += dt
+            entrance = ((nowMs - entranceStartMs).toFloat() / ENTRANCE_MS).coerceIn(0f, 1f)
+        }
         applyBlend(nowMs)
         invalidate()
     }
@@ -169,7 +185,7 @@ class SiriOrbView @JvmOverloads constructor(
         if (tone == SiriPalette.Tone.IDLE) 20f else 40f
 
     private fun applyBlend(nowMs: Long) {
-        val target = SiriPalette.blobs(tone)
+        val target = ReactorOrb.Palette.blobs(tone)
         val t = if (blendStartMs == 0L) {
             1f
         } else {
@@ -178,8 +194,8 @@ class SiriOrbView @JvmOverloads constructor(
         for (i in colors.indices) {
             colors[i] = evaluator.evaluate(t, blendFrom[i], target[i]) as Int
         }
-        coreColor = evaluator.evaluate(t, blendCoreFrom, SiriPalette.core(tone)) as Int
-        rimColor = evaluator.evaluate(t, blendRimFrom, SiriPalette.rim(tone)) as Int
+        coreColor = evaluator.evaluate(t, blendCoreFrom, ReactorOrb.Palette.core(tone)) as Int
+        rimColor = evaluator.evaluate(t, blendRimFrom, ReactorOrb.Palette.rim(tone)) as Int
     }
 
     // --- drawing --------------------------------------------------------------
@@ -203,11 +219,18 @@ class SiriOrbView @JvmOverloads constructor(
             (0.4f + 0.6f * arrive) * (1f + AMPLITUDE_SWELL * smoothed)
         f.alpha = arrive
         f.level = smoothed
+        f.time = timeSeconds
         f.phase = phase
         f.spinDeg = spinDeg
         f.blobs = colors
         f.core = coreColor
         f.rim = rimColor
+        f.idle = tone == SiriPalette.Tone.IDLE
+        f.rimAlpha = if (tone == SiriPalette.Tone.LISTENING || tone == SiriPalette.Tone.SPEAKING) {
+            ReactorOrb.RIM_ALPHA_LIT
+        } else {
+            ReactorOrb.RIM_ALPHA_REST
+        }
         f.maxRadius = span
         f.turbulence = tone == SiriPalette.Tone.THINKING
         reactor.draw(canvas, f)

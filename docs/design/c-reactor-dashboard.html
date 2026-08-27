@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · Reactor · Dashboard</title>
+<style>
+@font-face{font-family:"Space Grotesk";font-weight:300;src:url(fonts/space-grotesk-300.woff2) format("woff2")}
+@font-face{font-family:"Space Grotesk";font-weight:400;src:url(fonts/space-grotesk-400.woff2) format("woff2")}
+@font-face{font-family:"Space Grotesk";font-weight:500;src:url(fonts/space-grotesk-500.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:400;src:url(fonts/jetbrains-mono-400.woff2) format("woff2")}
+:root{
+  --bg:#020509; --bg-bloom:rgba(79,227,255,.06);
+  --glass:rgba(10,21,32,.55); --glass-line:rgba(79,227,255,.14); --glass-line-soft:rgba(79,227,255,.07);
+  --line:#123040; --line-soft:#0d2330;
+  --text:#d6eef5; --text-bright:#f3fbfe; --dim:#7ea6b3; --faint:#3f5c66;
+  --accent:#4fe3ff; --accent-glow:rgba(79,227,255,.35); --accent-wash:rgba(79,227,255,.10); --accent-ink:#031017;
+  --ok:#6ff2c0; --warn:#f2b84b; --danger:#ff6b5c;
+  --font:"Space Grotesk",sans-serif; --font-mono:"JetBrains Mono",monospace;
+  --fs-2xs:11px; --fs-xs:12px; --fs-sm:13px; --fs-md:15px; --fs-lg:18px; --fs-xl:26px; --fs-2xl:34px; --fs-display:52px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r:12px; --r-pill:999px; --blur:14px; --dur:220ms; --ease:cubic-bezier(.22,.8,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:400 var(--fs-md)/1.5 var(--font)}
+body{overflow:hidden;background:radial-gradient(ellipse 50% 40% at 20% 30%,var(--bg-bloom),transparent 70%),radial-gradient(ellipse 120% 80% at 50% 120%,#04101a,transparent 60%),var(--bg)}
+.app{display:grid;grid-template-rows:auto auto 1fr;height:100vh;padding:var(--s5) var(--s6) var(--s6);gap:var(--s4)}
+.top{display:flex;align-items:center;justify-content:space-between}
+.brand{font-weight:500;letter-spacing:.3em;color:var(--text-bright);font-size:var(--fs-sm)}
+.pills{display:flex;gap:var(--s1);padding:4px;border:1px solid var(--glass-line-soft);border-radius:var(--r-pill);background:var(--glass);backdrop-filter:blur(var(--blur))}
+.pills a{font-size:var(--fs-xs);color:var(--dim);text-decoration:none;padding:6px 14px;border-radius:var(--r-pill)}
+.pills a.on{color:var(--accent-ink);background:var(--accent)}
+.dots{display:flex;gap:var(--s4);font-size:var(--fs-2xs);color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.dots i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--faint);margin-right:6px}
+.dots i.live{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.title{display:flex;align-items:end;justify-content:space-between}
+.title h1{font:300 var(--fs-2xl)/1.1 var(--font);color:var(--text-bright)}
+.title p{color:var(--dim);font-size:var(--fs-sm);margin-top:2px}
+.seg{display:flex;gap:2px;padding:3px;border:1px solid var(--glass-line-soft);border-radius:var(--r-pill);background:var(--glass)}
+.seg span{font-size:var(--fs-2xs);letter-spacing:.14em;text-transform:uppercase;padding:8px 14px;border-radius:var(--r-pill);color:var(--faint)}
+.seg span.on{color:var(--text-bright);background:rgba(255,255,255,.06)}
+.btn{font:500 var(--fs-xs)/1 var(--font);letter-spacing:.14em;text-transform:uppercase;padding:11px 18px;border-radius:var(--r-pill);border:1px solid var(--glass-line);color:var(--dim);background:var(--glass);margin-left:var(--s2)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);box-shadow:0 0 20px var(--accent-glow)}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:1fr;gap:var(--s4);min-height:0}
+.card{background:var(--glass);border:1px solid var(--glass-line-soft);border-radius:var(--r);backdrop-filter:blur(var(--blur));box-shadow:0 20px 40px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.03);padding:var(--s4);display:flex;flex-direction:column;min-height:0;position:relative;overflow:hidden}
+.card.c2{grid-column:span 2}.card.c3{grid-column:span 3}.card.r2{grid-row:span 2}
+.card.hero{border-color:var(--glass-line);box-shadow:0 0 0 1px rgba(79,227,255,.05),0 0 60px rgba(79,227,255,.08),0 20px 40px rgba(0,0,0,.35)}
+.card h3{font-size:var(--fs-2xs);letter-spacing:.22em;text-transform:uppercase;color:var(--dim);display:flex;justify-content:space-between}
+.card h3 .src{color:var(--faint);letter-spacing:.08em;text-transform:none}
+.card h3 .src.inf::before{content:"◆ ";color:var(--warn)}
+.big{font:300 var(--fs-display)/1 var(--font);color:var(--text-bright);margin-top:var(--s2);font-variant-numeric:tabular-nums}
+.big small{font-size:var(--fs-sm);color:var(--faint);margin-left:var(--s1)}
+.big.live{color:var(--accent);text-shadow:0 0 24px var(--accent-glow)}
+.sub{font-size:var(--fs-xs);color:var(--dim);margin-top:2px}
+.card svg{flex:1;width:100%;min-height:0;margin-top:var(--s2)}
+.hero .body{display:grid;grid-template-columns:150px 1fr;gap:var(--s4);align-items:center;flex:1;min-height:0}
+.hero .body svg.ring{width:150px;height:150px;flex:none;margin:0}
+.list{font-size:var(--fs-xs);margin-top:var(--s2)}
+.list div{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--glass-line-soft);color:var(--dim)}
+.list b{font-weight:400;color:var(--text)}.list .ok{color:var(--ok)}
+.bars{display:flex;align-items:flex-end;gap:4px;flex:1;margin-top:var(--s2)}
+.bars i{flex:1;background:var(--line);border-radius:3px 3px 0 0;min-height:2px}.bars i.hi{background:var(--dim)}.bars i.now{background:var(--accent);box-shadow:0 0 12px var(--accent-glow)}
+.axis{display:flex;justify-content:space-between;font:400 var(--fs-2xs)/1 var(--font-mono);color:var(--faint);margin-top:var(--s2)}
+.handle{position:absolute;right:8px;bottom:8px;width:10px;height:10px;border-right:1px solid var(--glass-line);border-bottom:1px solid var(--glass-line);border-radius:0 0 3px 0}
+td{font-size:var(--fs-xs);padding:4px 0;border-bottom:1px solid var(--glass-line-soft);color:var(--dim)}
+td.n{text-align:right;color:var(--text);font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;margin-top:var(--s2)}
+td svg{width:64px;height:14px;margin:0;vertical-align:middle}
+</style></head>
+<body><div class="app">
+  <header class="top">
+    <span class="brand">JARVIS</span>
+    <nav class="pills"><a href="#">Voice</a><a href="#">Devices</a><a href="#">Areas</a><a href="#">Automations</a><a href="#">Tools</a><a href="#">Tasks</a><a class="on" href="#">Dashboards</a><a href="#">Code</a><a href="#">Settings</a></nav>
+    <div class="dots"><span><i class="live"></i>link</span><span><i class="live"></i>influx · homelab</span><span><i></i>10 s</span></div>
+  </header>
+  <div class="title">
+    <div><h1>Homelab</h1><p>9 widgets · internal + InfluxDB · saved for this device</p></div>
+    <div style="display:flex;align-items:center"><div class="seg"><span>1h</span><span class="on">6h</span><span>24h</span><span>7d</span></div><button class="btn">Edit</button><button class="btn primary">+ Widget</button></div>
+  </div>
+
+  <main class="grid">
+    <section class="card c2 r2 hero"><h3>Throughput · llama-swap <span class="src">internal</span></h3>
+      <div class="body"><svg class="ring" viewBox="0 0 150 150" data-ring="62"></svg><div><div class="big live">31.4<small>tok/s</small></div><div class="sub">qwen3-8b · q4_k_m · 8k ctx<br>first token 640 ms · 46 turns / 6 h</div></div></div>
+      <svg data-area="18 22 24 21 27 29 33 31 30 34 36 33 31 29 32 35 31 31" data-live="1" viewBox="0 0 400 90" preserveAspectRatio="none"></svg><i class="handle"></i></section>
+    <section class="card c2"><h3>GPU · rtx 3090 <span class="src inf">influx</span></h3><div class="big">61<small>°C</small></div><div class="sub">fan 41 % · vram 14.2 / 24 GB</div><svg data-area="58 59 61 63 62 60 59 61 64 66 63 61" viewBox="0 0 300 60" preserveAspectRatio="none"></svg><i class="handle"></i></section>
+    <section class="card c2"><h3>STT · whisper base.en <span class="src">internal</span></h3><div class="big">412<small>ms p50</small></div><div class="sub">p95 780 ms · 46 runs</div><div class="bars" data-bars="380 410 395 640 420 780 402 398 455 412 430 470 410 388 402 415 620 405 399 412"></div><div class="axis"><span>−6h</span><span>now</span></div><i class="handle"></i></section>
+    <section class="card c2"><h3>Power · rack <span class="src inf">influx</span></h3><div class="big">186<small>W</small></div><div class="sub">today 3.9 kWh · €1.12</div><svg data-area="150 160 172 210 240 230 198 184 178 186 190 186" viewBox="0 0 300 60" preserveAspectRatio="none"></svg><i class="handle"></i></section>
+    <section class="card c2"><h3>Tasks / day <span class="src">internal</span></h3><div class="big">9</div><div class="sub">7 done · 1 error · 1 running</div><div class="bars" data-bars="6 4 8 11 7 9 9" data-now="1"></div><div class="axis"><span>mon</span><span>today</span></div><i class="handle"></i></section>
+
+    <section class="card c2"><h3>Rooms <span class="src">internal</span></h3><table><tr><td>office</td><td><svg data-spark="21.9 21.8 21.6 21.5 21.4 21.4 21.4 21.4" viewBox="0 0 64 14" preserveAspectRatio="none"></svg></td><td class="n">21.4 °C</td></tr><tr><td>kitchen</td><td><svg data-spark="19.2 19.6 20.1 20.8 21.2 21.0 20.7 20.5" viewBox="0 0 64 14" preserveAspectRatio="none"></svg></td><td class="n">20.5 °C</td></tr><tr><td>bedroom</td><td><svg data-spark="18.4 18.3 18.2 18.2 18.1 18.1 18.0 18.0" viewBox="0 0 64 14" preserveAspectRatio="none"></svg></td><td class="n">18.0 °C</td></tr><tr><td>rack</td><td><svg data-spark="27 28 29 31 33 32 31 31" viewBox="0 0 64 14" preserveAspectRatio="none"></svg></td><td class="n">31.0 °C</td></tr></table><i class="handle"></i></section>
+    <section class="card c2"><h3>Host <span class="src">internal</span></h3><div class="big">1.84<small>load</small></div><div class="sub">4 cores · 42 GB free of 79</div><div class="list"><div><span>jarvis-core</span><b class="ok">up 6 d</b></div><div><span>wyoming ×3</span><b class="ok">up 6 d</b></div><div><span>orchestrator · sandbox</span><b class="ok">up 2 d</b></div></div><i class="handle"></i></section>
+    <section class="card c2"><h3>Calls by tool · 24h <span class="src">internal</span></h3><div class="list"><div><span>light.turn_on</span><b>41</b></div><div><span>climate.get_state</span><b>27</b></div><div><span>web_search</span><b>12</b></div><div><span>schedule.add</span><b>6</b></div><div><span>code.run_check</span><b>5</b></div></div><i class="handle"></i></section>
+  </main>
+</div>
+<script>
+(function(){const N='http://www.w3.org/2000/svg';
+function pts(d,w,h,p){const mn=Math.min(...d),mx=Math.max(...d),sp=(mx-mn)||1;return d.map((v,i)=>[p+i*(w-2*p)/(d.length-1),h-p-((v-mn)/sp)*(h-2*p)]);}
+function smooth(p){let d='M'+p[0].join(' ');for(let i=1;i<p.length;i++){const a=p[i-1],b=p[i];const cx=(a[0]+b[0])/2;d+=` C ${cx} ${a[1]}, ${cx} ${b[1]}, ${b[0]} ${b[1]}`;}return d;}
+let gid=0;
+document.querySelectorAll('svg[data-area]').forEach(s=>{const d=s.dataset.area.split(' ').map(Number);const [w,h]=s.getAttribute('viewBox').split(' ').slice(2).map(Number);const p=pts(d,w,h,4);const live=s.dataset.live;const id='g'+(gid++);const defs=document.createElementNS(N,'defs');defs.innerHTML=`<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${live?'#4fe3ff':'#7ea6b3'}" stop-opacity=".35"/><stop offset="1" stop-color="${live?'#4fe3ff':'#7ea6b3'}" stop-opacity="0"/></linearGradient>`;s.appendChild(defs);const area=document.createElementNS(N,'path');area.setAttribute('d',smooth(p)+` L ${p[p.length-1][0]} ${h} L ${p[0][0]} ${h} Z`);area.setAttribute('fill',`url(#${id})`);s.appendChild(area);const line=document.createElementNS(N,'path');line.setAttribute('d',smooth(p));line.setAttribute('fill','none');line.setAttribute('stroke',live?'#4fe3ff':'#7ea6b3');line.setAttribute('stroke-width','1.5');line.setAttribute('vector-effect','non-scaling-stroke');if(live)line.setAttribute('style','filter:drop-shadow(0 0 4px rgba(79,227,255,.7))');s.appendChild(line);const last=p[p.length-1];const c=document.createElementNS(N,'circle');c.setAttribute('cx',last[0]);c.setAttribute('cy',last[1]);c.setAttribute('r',3);c.setAttribute('fill',live?'#4fe3ff':'#d6eef5');s.appendChild(c);});
+document.querySelectorAll('svg[data-spark]').forEach(s=>{const d=s.dataset.spark.split(' ').map(Number);const [w,h]=s.getAttribute('viewBox').split(' ').slice(2).map(Number);const p=pts(d,w,h,2);const l=document.createElementNS(N,'path');l.setAttribute('d',smooth(p));l.setAttribute('fill','none');l.setAttribute('stroke','#7ea6b3');l.setAttribute('stroke-width','1.2');l.setAttribute('vector-effect','non-scaling-stroke');s.appendChild(l);});
+document.querySelectorAll('.bars[data-bars]').forEach(b=>{const d=b.dataset.bars.split(' ').map(Number);const mx=Math.max(...d);d.forEach((v,i)=>{const e=document.createElement('i');e.style.height=Math.max(2,Math.round(v/mx*100))+'%';if(v>=mx*.8)e.className='hi';if(b.dataset.now&&i===d.length-1)e.className='now';b.appendChild(e);});});
+document.querySelectorAll('svg[data-ring]').forEach(s=>{const pct=+s.dataset.ring;const r=62,c=2*Math.PI*r;const mk=(st,da,sw,extra)=>{const e=document.createElementNS(N,'circle');e.setAttribute('cx',75);e.setAttribute('cy',75);e.setAttribute('r',r);e.setAttribute('fill','none');e.setAttribute('stroke',st);e.setAttribute('stroke-width',sw);e.setAttribute('stroke-linecap','round');e.setAttribute('transform','rotate(-90 75 75)');if(da)e.setAttribute('stroke-dasharray',da);if(extra)e.setAttribute('style',extra);return e;};s.appendChild(mk('#123040','',8));s.appendChild(mk('#4fe3ff',`${c*pct/100} ${c}`,8,'filter:drop-shadow(0 0 8px rgba(79,227,255,.6))'));const t=document.createElementNS(N,'text');t.setAttribute('x',75);t.setAttribute('y',72);t.setAttribute('text-anchor','middle');t.setAttribute('fill','#f3fbfe');t.setAttribute('font-family','Space Grotesk');t.setAttribute('font-size','26');t.setAttribute('font-weight','300');t.textContent=pct+'%';s.appendChild(t);const u=document.createElementNS(N,'text');u.setAttribute('x',75);u.setAttribute('y',90);u.setAttribute('text-anchor','middle');u.setAttribute('fill','#3f5c66');u.setAttribute('font-family','JetBrains Mono');u.setAttribute('font-size','9');u.setAttribute('letter-spacing','2');u.textContent='OF PEAK';s.appendChild(u);});
+})();
+</script>
+</body></html>

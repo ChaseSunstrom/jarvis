@@ -9,13 +9,15 @@ and one audit surface.
 
 ```
 Browser HUD (SvelteKit) ─┐
-Android app (Kotlin)     ─┼─► jarvis-core ─► Ollama qwen3:8b (persona + tools)
+Android app (Kotlin)     ─┼─► jarvis-core ─► the model server at LLM_URL (persona + tools)
 Desktop agent (Python)   ─┘        │
                                    ├─► entities, automations, scenes, scripts
                                    ├─► get_user_context / run_background_task
                                    ├─► web_search / web_fetch ─► SearXNG, jarvis-browser
+                                   ├─► deep_research ─► a task, several searches, cited
+                                   ├─► start_coding_job ─► a branch, a diff, your own checks
                                    ├─► delegate_to_agents ─► jarvis-orchestrator
-                                   │                          └─► OpenCode ─► Ollama
+                                   │                          └─► OpenCode ─► the same model server
                                    └─► execute_command ─► jarvis-sandbox (network: none)
                             Wyoming: whisper STT 10300 · Piper TTS 10200 · OWW 10400
 ```
@@ -27,7 +29,7 @@ change, because `jarvis-core` implements the same REST/WebSocket/pipeline API
 HA does — see [`standalone.md`](standalone.md).
 
 **Rejected alternatives:** LocalAI/Neon/OVOS as the brain; a generic MCP host
-driving Ollama directly (bypasses the exposure/permission model); a
+driving the model server directly (bypasses the exposure/permission model); a
 Tasker/WebView phone app (no real ASSIST role, no lock-screen activation).
 
 ## Components
@@ -58,7 +60,7 @@ implements identically (see `jarvis-web/src/lib/pipeline.ts` and
 * audio framing: each binary frame = 1 byte (handler id) + Int16LE PCM;
   a lone handler-id byte signals end-of-audio;
 * render `stt-end` (final transcript), stream `intent-progress`
-  `chat_log_delta.content`, on `tts-end` fetch `tts_output.url` and play;
+  `chat_log_delta.content`, on `tts-chunk` play each sentence as it comes, on `tts-end` fetch `tts_output.remainder_url` (or `url`, if no chunk was played) and play;
 * keep `conversation_id` from `intent-end` for multi-turn continuity.
 
 ## Tiers of parallelism

@@ -1,0 +1,27 @@
+name: vision-look-fixture
+capability: vision
+# The fixture ground: the camera is a still the fixture site serves, so the
+# picture is one this repository drew — a kitchen table, a red mug, the word
+# KITCHEN — and the answer can be checked against it. Needs a vision model on
+# the model server (`VISION_MODEL`, a GGUF VLM llama-swap serves); without one
+# the harness writes no vision block and the scenario cannot pass — which is
+# the true state, not a skip.
+ground: fixture
+gated-on: M56
+intent: >
+  Vision, end to end: a spoken question about a named camera pulls one frame
+  from it (consent `always` for the fixture), sends it to the local vision
+  model on the OpenAI wire, and the answer names what is in the picture. The
+  description comes back fenced as untrusted content, and the look is on the
+  audit trail. The voice tab's activity strip draws the look from the same
+  events the rig sees. Needs VISION_MODEL — a vision model the model server
+  serves; without one the harness writes no vision block and this cannot pass.
+variants: [text]
+turns:
+  - say: "What do you see on the kitchen camera?"
+    expect:
+      capability: vision
+      reply_means: >-
+        describes the picture — a mug or cup, a table or a kitchen — rather
+        than saying it cannot see or has no camera
+      reply_absent: "no camera"

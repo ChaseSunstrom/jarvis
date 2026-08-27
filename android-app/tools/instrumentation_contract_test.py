@@ -208,7 +208,11 @@ def expected_onscreen_literals() -> dict[str, tuple[set[str], set[str]]]:
 # a renamed DENY button: `automation/policy/ActionTier.kt` parses the wire word
 # "DENY", so a haystack of the WHOLE app would report the button as still
 # present after somebody renamed it to "REFUSE".
-UI_SUBPACKAGES = {"ui", "companion"}
+# `tasks` draws the floating progress chip, whose words ("waiting for you",
+# "it failed, and said no more than that") a person reads and an
+# instrumented test can wait for — TaskOverlay exposes `rootForTest` for
+# exactly that, the same seam AssistOverlay has.
+UI_SUBPACKAGES = {"ui", "companion", "tasks", "surface"}  # surface: the house's panels and the dock on the voice screen (M103)
 
 # Sub-packages whose strings a person DOES read, on a surface no instrumented
 # test can reach.
@@ -443,8 +447,14 @@ def test_the_hooks_cannot_answer_or_weaken_a_consent_prompt():
     A hook that could approve a Tier-3 action would make ConsentGateTest a test
     of the hook rather than of the gate. Checked structurally rather than
     trusted to a comment: the file must not name the approval bridge, must not
-    write the policy store, and must not touch the kill switches or the arming
-    delay.
+    write a policy, must not touch the panic switch or the arming delay — and
+    may write the master switch exactly one way, ON. That switch is the
+    precondition of every dispatch (M22's default is OFF, resetState returns
+    it there), so with no way to turn it on every dispatching test was a test
+    of the standing ban: five failed on CI that way. Turning it on weakens no
+    prompt — Tier 3 still asks, which ConsentGateTest then proves. Turning it
+    OFF from a hook would be a kill switch a test could hide behind, and stays
+    forbidden.
     """
     src = read(DEBUG / "kotlin" / "ai" / "jarvis" / "app" / "testing" / "TestHooks.kt")
     code = "\n".join(
@@ -457,7 +467,7 @@ def test_the_hooks_cannot_answer_or_weaken_a_consent_prompt():
         "ALLOW_ALWAYS": "could remember an answer",
         ".remember(": "could write a standing policy",
         "setPolicy": "could write a standing policy",
-        "automationEnabled": "could flip the master kill switch",
+        "automationEnabled = false": "could flip the master kill switch off",
         "panic": "could flip the panic switch",
         "ARM_MS": "could shorten the tap-jacking arming delay",
     }
@@ -466,6 +476,13 @@ def test_the_hooks_cannot_answer_or_weaken_a_consent_prompt():
         "TestHooks gained a way to weaken the consent gate: "
         + "; ".join(f"{t} ({w})" for t, w in sorted(found.items()))
     )
+    # The master switch: written once, as `= true`, and read nowhere else here.
+    writes = re.findall(r"automationEnabled\s*=\s*(\w+)", code)
+    assert writes == ["true"], (
+        f"TestHooks writes the master switch as {writes or 'nothing'}; the one "
+        "permitted write is `automationEnabled = true`, in enableAutomation"
+    )
+    assert code.count("automationEnabled") == 1, "the master switch is named more than once in TestHooks"
     # …and the observation hook is still there, still read-only. `.all()` is
     # PolicyStore's only reader; a hook that grew a writer would have tripped
     # `setPolicy` / `.remember(` above, and one that lost its reader would make

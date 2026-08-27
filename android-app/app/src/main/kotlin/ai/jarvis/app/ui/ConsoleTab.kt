@@ -16,7 +16,7 @@ package ai.jarvis.app.ui
  * thing from the house's automations that happens to share a word. Two of the
  * three buttons went somewhere the browser has no equivalent of, and the one
  * that did land in the console dropped you at its front door with no way to
- * reach the other four sections.
+ * reach the other sections.
  *
  * So the phone speaks the console's own nav now, and this is that nav. One
  * table, mirrored from `jarvis-web/src/routes/+layout.svelte` and pinned
@@ -51,15 +51,28 @@ enum class ConsoleTab(
     /** Path under the console's origin. Never taken from an intent. */
     val path: String,
 ) {
-    DEVICES("DEVICES", "/devices"),
-    AREAS("AREAS", "/areas"),
-    AUTOMATIONS("AUTOMATIONS", "/automations"),
-    TOOLS("TOOLS", "/tools"),
+    // Four, not eleven. M48 consolidated the console's destinations — devices,
+    // areas, dashboards and automations are sections of HOUSE now, and so on —
+    // and this table mirrors that exactly, because a phone offering a
+    // different set of front doors from the browser at the same URL is the
+    // defect `console_parity_test.py` exists to catch. It caught the eleventh
+    // (DESKTOP) being here and not there, twice.
+    //
+    // The sections themselves are reached inside the WebView, from the
+    // destination's own strip. This table is the front doors only.
+    DASHBOARDS("DASHBOARDS", "/dashboards"),
+    HOUSE("HOUSE", "/house"),
+    WORK("WORK", "/work"),
+    KNOWLEDGE("KNOWLEDGE", "/knowledge"),
     SETTINGS("SETTINGS", "/settings");
 
     companion object {
-        /** Where a tap with no tab lands. The console's own default. */
-        val DEFAULT = DEVICES
+        /**
+         * Where a tap with no tab lands: the first front door, which is the
+         * dashboard since M62 made it a destination rather than a section of
+         * HOUSE — the thing a person opens the console to look at.
+         */
+        val DEFAULT = DASHBOARDS
 
         /**
          * Resolve an intent's extra, or [DEFAULT].

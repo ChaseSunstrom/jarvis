@@ -1,0 +1,22 @@
+name: interactions-thread-continuity
+capability: interactions
+gated-on: M17
+intent: >
+  One conversation, two surfaces. Started at the console and continued from the
+  phone, the thread has to be the same thread — "it" in the second turn still
+  means what it meant in the first, on a different client.
+variants: [text, text-ui]
+# The light starts off, or a scenario that ran before this one leaves it on and
+# the first turn is answered — truthfully — with "it is already on" and no
+# service call, which is a fine answer and not the one this thread is about.
+setup:
+  states:
+    light.bed_light: "off"
+turns:
+  - say: "Turn on the bed light."
+    expect:
+      service: {domain: light, service: turn_on, entity_id: light.bed_light}
+  - say: "And what did I just ask you to do?"
+    expect:
+      reply_contains: ["bed light"]
+      reply_means: "recalls that it was asked to turn on the bed light"

@@ -35,10 +35,17 @@ const MAY_ATTACH_THE_TOKEN: Record<string, string> = {
 		'allow-listed to media paths by mediaProxyTarget, which re-tests the NORMALISED url',
 	'api/pair/+server.ts':
 		'needs a console-password session proved server-side, and the pairing secret that session releases',
+	'api/memory/export/+server.ts':
+		'one path and one method: it can fetch /api/memory/export and nothing else, and the ' +
+		'only thing the caller controls is a format that is normalised to `json` or `markdown` ' +
+		'before it is used. It exists because a download is what "you can leave with your data" ' +
+		'means, and a browser cannot hold the token',
 	'api/voice/speaker/+server.ts':
-		'the upstream path is a constant — nothing from the caller reaches the URL — and the ' +
-		'payload it relays carries counts and scores, never the voiceprint. DELETE additionally ' +
-		'needs a console-password session, because it disables the gate that refuses strangers'
+		'the upstream path is a constant and the one thing from the caller that reaches the URL ' +
+		'is `label`, a person\'s name checked to jarvis-core\'s own rule (printable, at most forty ' +
+		'characters) and URL-encoded; the payload it relays carries counts and scores, never the ' +
+		'voiceprint. DELETE additionally needs a console-password session, because it disables ' +
+		'the gate that refuses strangers'
 };
 
 /**

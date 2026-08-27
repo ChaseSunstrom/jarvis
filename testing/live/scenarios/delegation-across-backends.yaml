@@ -1,0 +1,41 @@
+name: delegation-across-backends
+capability: subagents
+ground: fixture
+gated-on: M42
+intent: >
+  One request, several kinds of worker. The plan has to reach at least two
+  BACKENDS — a specialist reading pages is not the same thing as the research
+  engine running a cited report, and neither is a coding job — and roll up into
+  one answer under one lead the console can draw.
+
+  What is asserted is the shape rather than the prose: a delegation task
+  appears, it has children, and the reply acknowledges rather than inventing
+  findings it cannot have yet. The findings themselves are the subsystems'
+  business and each has its own scenario.
+variants: [text]
+turns:
+  # Both by address (see research-deep-report.yaml): a name the house has no
+  # note of is a question back, not a delegation.
+  # Two pieces of DIFFERENT shape, or the lead is right to send both to one
+  # worker: on the seventeenth house (27 Aug 2026) "read this page" and
+  # "summarise that page" both went to the summarizer, correctly, and the
+  # gate's "two backends" was the scenario's own premise. A page to read and
+  # a repository's tests to run are two kinds of work.
+  - say: >
+      Two things at once please: find out what the household handbook at
+      {{handbook}} says about the cheap electricity rate, and separately have
+      the coder run the fixture repository's tests and tell me which fail.
+      Don't wait for them.
+    expect:
+      capability: subagents
+      task: {kind: delegation, within: 60}
+      reply_means: >
+        acknowledges that the work has been split up and started, and says what
+        each piece is. It must NOT present findings — nothing has reported yet.
+  - say: "How is that going?"
+    wait: 45
+    expect:
+      task: {kind: delegation, within: 600}
+      reply_means: >
+        reports on the delegated work — either that it is still running, or what
+        came back. It must not claim a result it was not given.

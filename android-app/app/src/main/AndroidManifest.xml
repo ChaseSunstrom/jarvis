@@ -81,6 +81,8 @@
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <!-- Tier 2. Special access (Settings.System.canWrite) — screen brightness,
          auto-rotate and friends. -->
+    <!-- set_wallpaper (M61): a normal permission, granted at install. -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
 
@@ -100,6 +102,12 @@
     <!-- Tier 1 (resolve a name to a number for the consent prompt) — but the
          send/call it feeds is Tier 3. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Tier 3, every time (M61: the last Tasker rows). Reading the inbox and
+         the call log is other people's words and other people's numbers, and
+         every result is marked untrusted; hanging up is done to a person. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
 
     <!-- ===================== calendar ===================== -->
     <!-- Tier 1 to read. -->
@@ -120,8 +128,12 @@
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 
     <!-- ===================== camera & media ===================== -->
-    <!-- Tier 2. "What am I looking at" — an explicit, user-visible capture. -->
+    <!-- Tier 3. "What am I looking at", and take_photo (M61): an explicit,
+         approved capture, never a quiet one. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Normal permission. nfc_read / nfc_write (M61) arm reader mode on a
+         one-frame Activity; the tag has to be held to the phone by a person. -->
+    <uses-permission android:name="android.permission.NFC" />
     <!-- Tier 2. Reading media the user points Jarvis at. -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
@@ -206,6 +218,7 @@
     <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="true" />
@@ -317,6 +330,31 @@
             android:theme="@style/Theme.JarvisInvisible"
             android:excludeFromRecents="true"
             android:taskAffinity="ai.jarvis.app.permission"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <!--
+          Two more one-frame hosts, for the Tasker rows that end in an Activity
+          rather than a system service (M61, ForegroundResultBridge). scan_code
+          hands off to the scanner app and waits for its result; nfc_read and
+          nfc_write arm NFC reader mode, which only a resumed Activity can.
+          Same rules as the permission trampoline: not `noHistory` (the scanner
+          is a separate activity and the result would land on a dead window),
+          `configChanges` so a rotation is not a second request, not exported.
+        -->
+        <activity
+            android:name=".ScanCodeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.JarvisInvisible"
+            android:excludeFromRecents="true"
+            android:taskAffinity="ai.jarvis.app.scan"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <activity
+            android:name=".NfcTagActivity"
+            android:exported="false"
+            android:theme="@style/Theme.JarvisInvisible"
+            android:excludeFromRecents="true"
+            android:taskAffinity="ai.jarvis.app.nfc"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
 
         <!-- Server URL, token, pipeline, device name, wake-word gating. -->

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · Reactor · Task</title>
+<style>
+@font-face{font-family:"Space Grotesk";font-weight:300;src:url(fonts/space-grotesk-300.woff2) format("woff2")}
+@font-face{font-family:"Space Grotesk";font-weight:400;src:url(fonts/space-grotesk-400.woff2) format("woff2")}
+@font-face{font-family:"Space Grotesk";font-weight:500;src:url(fonts/space-grotesk-500.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:400;src:url(fonts/jetbrains-mono-400.woff2) format("woff2")}
+:root{
+  --bg:#020509; --bg-bloom:rgba(79,227,255,.08);
+  --glass:rgba(10,21,32,.55); --glass-line:rgba(79,227,255,.14); --glass-line-soft:rgba(79,227,255,.07);
+  --line:#123040; --line-soft:#0d2330;
+  --text:#d6eef5; --text-bright:#f3fbfe; --dim:#7ea6b3; --faint:#3f5c66;
+  --accent:#4fe3ff; --accent-glow:rgba(79,227,255,.35); --accent-wash:rgba(79,227,255,.10); --accent-ink:#031017;
+  --ok:#6ff2c0; --warn:#f2b84b; --danger:#ff6b5c;
+  --font:"Space Grotesk",sans-serif; --font-mono:"JetBrains Mono",monospace;
+  --fs-2xs:11px; --fs-xs:12px; --fs-sm:13px; --fs-md:15px; --fs-lg:18px; --fs-xl:26px; --fs-2xl:34px; --fs-display:52px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r:12px; --r-pill:999px; --blur:14px; --dur:220ms; --ease:cubic-bezier(.22,.8,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:400 var(--fs-md)/1.5 var(--font)}
+body{overflow:hidden;background:radial-gradient(ellipse 50% 40% at 50% 46%,var(--bg-bloom),transparent 70%),radial-gradient(ellipse 120% 80% at 50% 120%,#04101a,transparent 60%),var(--bg)}
+.app{position:relative;height:100vh}
+.top{position:absolute;top:var(--s5);left:var(--s6);right:var(--s6);display:flex;align-items:center;justify-content:space-between}
+.brand{font-weight:500;letter-spacing:.3em;color:var(--text-bright);font-size:var(--fs-sm)}
+.pills{display:flex;gap:var(--s1);padding:4px;border:1px solid var(--glass-line-soft);border-radius:var(--r-pill);background:var(--glass);backdrop-filter:blur(var(--blur))}
+.pills a{font-size:var(--fs-xs);color:var(--dim);text-decoration:none;padding:6px 14px;border-radius:var(--r-pill)}
+.pills a.on{color:var(--accent-ink);background:var(--accent)}
+.dots{display:flex;gap:var(--s4);font-size:var(--fs-2xs);color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.dots i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--faint);margin-right:6px}
+.dots i.live{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.dots i.warn{background:var(--warn)}
+/* history strip */
+.strip{position:absolute;top:84px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:0;font:400 var(--fs-2xs)/1 var(--font-mono);color:var(--faint)}
+.strip .n{display:flex;flex-direction:column;align-items:center;gap:6px;width:132px;position:relative}
+.strip .n::before{content:"";position:absolute;top:5px;left:50%;right:-50%;height:1px;background:var(--line)}
+.strip .n:last-child::before{display:none}
+.strip .n i{width:11px;height:11px;border-radius:50%;border:1px solid var(--faint);background:var(--bg);position:relative;z-index:1}
+.strip .n.d i{background:var(--dim);border-color:var(--dim)}
+.strip .n.e i{background:var(--danger);border-color:var(--danger)}
+.strip .n.r i{background:var(--accent);border-color:var(--accent);box-shadow:0 0 10px var(--accent)}
+.strip .n span{white-space:nowrap}.strip .n.r span{color:var(--accent)}
+/* central ring */
+.ring{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:420px;height:420px}
+.ring svg{width:100%;height:100%;overflow:visible}
+.ring .inner{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:90px}
+.ring .step{font-size:var(--fs-2xs);letter-spacing:.3em;text-transform:uppercase;color:var(--accent)}
+.ring .pct{font:300 var(--fs-display)/1 var(--font);color:var(--text-bright);margin:var(--s2) 0}
+.ring h1{font:400 var(--fs-md)/1.3 var(--font);color:var(--text);max-width:22ch}
+.ring .el{font:400 var(--fs-2xs)/1 var(--font-mono);color:var(--faint);margin-top:var(--s3);letter-spacing:.08em}
+/* glass */
+.glass{position:absolute;background:var(--glass);border:1px solid var(--glass-line-soft);border-radius:var(--r);backdrop-filter:blur(var(--blur));box-shadow:0 30px 60px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.03);overflow:hidden}
+.glass h2{font-size:var(--fs-2xs);letter-spacing:.22em;text-transform:uppercase;color:var(--dim);padding:var(--s3) var(--s4);border-bottom:1px solid var(--glass-line-soft);display:flex;justify-content:space-between}
+.glass h2 b{color:var(--faint);font-weight:400}
+.plan{left:var(--s6);top:150px;width:360px}
+.plan ol{list-style:none}
+.plan li{display:grid;grid-template-columns:22px 1fr auto;gap:var(--s2);padding:10px var(--s4);border-bottom:1px solid var(--glass-line-soft);font-size:var(--fs-sm);color:var(--dim);align-items:baseline}
+.plan li i{font-style:normal;color:var(--faint)}.plan li.d i{color:var(--ok)}.plan li.r i{color:var(--accent)}
+.plan li.r{color:var(--text-bright);background:var(--accent-wash)}
+.plan li .ms{font:400 var(--fs-2xs)/1 var(--font-mono);color:var(--faint)}.plan li.r .ms{color:var(--accent)}
+.calls{left:var(--s6);bottom:var(--s6);width:360px}
+.calls .c{display:flex;align-items:center;gap:var(--s2);padding:8px var(--s4);border-bottom:1px solid var(--glass-line-soft);font:400 var(--fs-2xs)/1.4 var(--font-mono);color:var(--dim)}
+.calls .c i{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+.calls .c.r i{background:var(--accent);box-shadow:0 0 8px var(--accent);animation:pulse 1.2s var(--ease) infinite}
+@keyframes pulse{50%{opacity:.4}}
+.calls .c b{font-weight:400;color:var(--text)}.calls .c span{margin-left:auto;color:var(--faint)}
+.calls .c.r b{color:var(--text-bright)}
+.out{right:var(--s6);top:150px;width:400px;bottom:150px}
+.out pre{padding:var(--s3) var(--s4);font:400 var(--fs-2xs)/1.8 var(--font-mono);color:var(--dim);white-space:pre-wrap}
+.out .k{color:var(--faint)}.out .ok{color:var(--ok)}
+.out .cur::after{content:"";display:inline-block;width:6px;height:1em;background:var(--accent);vertical-align:-2px;margin-left:2px;box-shadow:0 0 8px var(--accent);animation:blink 1s steps(2) infinite}
+@keyframes blink{to{opacity:0}}
+/* approval */
+.approval{position:absolute;left:50%;bottom:var(--s6);transform:translateX(-50%);display:flex;align-items:center;gap:var(--s4);padding:var(--s3) var(--s3) var(--s3) var(--s5);background:var(--glass);border:1px solid rgba(242,184,75,.35);border-radius:var(--r-pill);backdrop-filter:blur(var(--blur));box-shadow:0 20px 50px rgba(0,0,0,.5)}
+.approval .lbl{font-size:var(--fs-2xs);letter-spacing:.22em;text-transform:uppercase;color:var(--warn)}
+.approval .what{color:var(--text-bright);font-size:var(--fs-sm)}
+.approval .args{font:400 var(--fs-2xs)/1 var(--font-mono);color:var(--dim)}
+.btn{font:500 var(--fs-xs)/1 var(--font);letter-spacing:.14em;text-transform:uppercase;padding:12px 20px;border-radius:var(--r-pill);border:1px solid var(--glass-line);color:var(--dim);background:transparent}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);box-shadow:0 0 20px var(--accent-glow)}
+.actions{position:absolute;right:var(--s6);bottom:var(--s6);display:flex;gap:var(--s2)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style></head>
+<body><div class="app">
+  <header class="top">
+    <span class="brand">JARVIS</span>
+    <nav class="pills"><a href="#">Voice</a><a href="#">Devices</a><a href="#">Areas</a><a href="#">Automations</a><a href="#">Tools</a><a class="on" href="#">Tasks</a><a href="#">Dashboards</a><a href="#">Code</a><a href="#">Settings</a></nav>
+    <div class="dots"><span><i class="live"></i>2 running</span><span><i class="warn"></i>1 held</span><span><i></i>6 done today</span></div>
+  </header>
+
+  <div class="strip" aria-label="today">
+    <div class="n d"><i></i><span>06:00 dentist</span></div><div class="n d"><i></i><span>06:30 balcony</span></div><div class="n d"><i></i><span>07:00 briefing</span></div><div class="n e"><i></i><span>13:10 pairing</span></div><div class="n d"><i></i><span>14:02 whisper</span></div><div class="n r"><i></i><span>02:39 offline</span></div><div class="n"><i></i><span>03:00 purge</span></div>
+  </div>
+
+  <div class="ring">
+    <svg viewBox="0 0 420 420" aria-hidden="true">
+      <defs><filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6"/></filter></defs>
+      <circle cx="210" cy="210" r="196" fill="none" stroke="#0d2330" stroke-width="1"/>
+      <circle cx="210" cy="210" r="150" fill="none" stroke="#0d2330" stroke-width="1" stroke-dasharray="1 7"/>
+      <!-- five step segments on r=176, circumference 1105.8; each 221.2 minus a 10 gap -->
+      <g fill="none" stroke-width="10" stroke-linecap="butt" transform="rotate(-90 210 210)">
+        <circle cx="210" cy="210" r="176" stroke="#7ea6b3" stroke-dasharray="211 894.8" stroke-dashoffset="0"/>
+        <circle cx="210" cy="210" r="176" stroke="#7ea6b3" stroke-dasharray="211 894.8" stroke-dashoffset="-221.2"/>
+        <circle cx="210" cy="210" r="176" stroke="#4fe3ff" stroke-dasharray="129 976.8" stroke-dashoffset="-442.4" filter="url(#glow)"/>
+        <circle cx="210" cy="210" r="176" stroke="#4fe3ff" stroke-dasharray="129 976.8" stroke-dashoffset="-442.4"/>
+        <circle cx="210" cy="210" r="176" stroke="#123040" stroke-dasharray="82 1023.8" stroke-dashoffset="-571.4"/>
+        <circle cx="210" cy="210" r="176" stroke="#123040" stroke-dasharray="211 894.8" stroke-dashoffset="-663.6"/>
+        <circle cx="210" cy="210" r="176" stroke="#123040" stroke-dasharray="211 894.8" stroke-dashoffset="-884.8"/>
+      </g>
+      <g font-family="JetBrains Mono" font-size="9" fill="#3f5c66" letter-spacing="2"><text x="210" y="18" text-anchor="middle">01</text><text x="404" y="150" text-anchor="middle">02</text><text x="330" y="404" text-anchor="middle">03</text><text x="90" y="404" text-anchor="middle">04</text><text x="16" y="150" text-anchor="middle">05</text></g>
+    </svg>
+    <div class="inner"><div><div class="step">step 3 of 5 · wiring</div><div class="pct">61<span style="font-size:var(--fs-xl);color:var(--dim)">%</span></div><h1>Add an OFFLINE state to the settings screen</h1><div class="el">code · jarvis-web · 02:14 elapsed</div></div></div>
+  </div>
+
+  <aside class="glass plan"><h2>Plan <b>the model's own</b></h2>
+    <ol><li class="d"><i>✓</i><span>Read the settings route and its socket wiring</span><span class="ms">18 s</span></li><li class="d"><i>✓</i><span>Wrap the page in ScreenState</span><span class="ms">54 s</span></li><li class="r"><i>▶</i><span>Wire socket status to the offline state</span><span class="ms">01:02</span></li><li><i>·</i><span>Run npm run check and the settings spec</span><span class="ms">—</span></li><li><i>·</i><span>Write it up: branch, diff, what was not done</span><span class="ms">—</span></li></ol>
+  </aside>
+
+  <aside class="glass calls"><h2>Tool calls <b>live · 9</b></h2>
+    <div class="c"><i></i><b>read_file</b> +page.svelte<span>12 ms</span></div>
+    <div class="c"><i></i><b>search</b> "ScreenState"<span>3 hits</span></div>
+    <div class="c"><i></i><b>edit_file</b> wrap in ScreenState<span>+22 −5</span></div>
+    <div class="c"><i></i><b>read_file</b> connection.ts<span>3 ms</span></div>
+    <div class="c"><i></i><b>edit_file</b> status → offline<span>+14 −2</span></div>
+    <div class="c r"><i></i><b>run_check</b> npm run check<span>5.1 s</span></div>
+  </aside>
+
+  <aside class="glass out"><h2>Output <b>run_check</b></h2>
+<pre><span class="k">$ npm run check</span>
+&gt; jarvis-web@0.1.0 check
+&gt; svelte-kit sync &amp;&amp; svelte-check --tsconfig ./tsconfig.json
+
+<span class="k">Loading svelte-check in workspace: /work</span>
+<span class="k">Getting Svelte diagnostics…</span>
+<span class="ok">✔</span> src/routes/settings/+page.svelte
+    0 errors, 0 warnings
+<span class="ok">✔</span> src/lib/ui/ScreenState.svelte
+    0 errors
+<span class="cur">Checking 446 files… 312</span></pre>
+  </aside>
+
+  <div class="approval">
+    <div><div class="lbl">Held · tier 3</div><div class="what">Push branch jarvis/2026-08-24-offline-state to origin?</div><div class="args">code.push_branch · force never · expires 04:12</div></div>
+    <button class="btn primary">Approve</button><button class="btn">Deny</button>
+  </div>
+  <div class="actions"><button class="btn">Cancel</button><button class="btn">Diff</button></div>
+</div></body></html>

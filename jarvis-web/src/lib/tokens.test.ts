@@ -13,10 +13,14 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { STATE_ACCENT, TOKENS, accentFor, cssVar, token } from './tokens';
+import { STATE_ACCENT, TOKENS, accentFor, cssVar, token, tokenMs } from './tokens';
 
 const cssPath = fileURLToPath(new URL('./styles/tokens.css', import.meta.url));
 const css = readFileSync(cssPath, 'utf8');
+/** The source of truth every generated file is checked against. */
+const source = JSON.parse(
+	readFileSync(fileURLToPath(new URL('../../../design/tokens.json', import.meta.url)), 'utf8')
+);
 
 /** The `--name: value` pairs declared on `:root`, in file order. */
 function parseRootTokens(source: string): Record<string, string> {
@@ -67,13 +71,19 @@ describe('design tokens', () => {
 		}
 	});
 
-	it('declares the palette the brief specifies', () => {
-		expect(TOKENS['--jv-bg']).toBe('#04070c');
-		expect(TOKENS['--jv-accent']).toBe('#3fd8ff');
-		expect(TOKENS['--jv-amber']).toBe('#ff9e2c');
-		expect(TOKENS['--jv-gold']).toBe('#ffcf5c');
-		expect(TOKENS['--jv-danger']).toBe('#ff6b5c');
-		expect(TOKENS['--jv-panel']).toMatch(/^rgba\(/);
+	it('is generated from design/tokens.json, the one place a value is typed', () => {
+		for (const name of ['bg', 'accent', 'amber', 'gold', 'danger', 'text', 'line'] as const) {
+			expect(TOKENS[`--jv-${name}`], name).toBe(source.color[name].$value);
+		}
+		expect(TOKENS['--jv-wash']).toMatch(/^rgba\(/);
+		expect(css.includes('@generated from design/tokens.json')).toBe(true);
+	});
+
+	it('reads a duration token as milliseconds', () => {
+		expect(tokenMs('--jv-dur-base')).toBe(260);
+		expect(tokenMs('--jv-rx-level')).toBe(3400);
+		// A colour is a valid token name and still not a duration: the check is at runtime.
+		expect(() => tokenMs('--jv-accent')).toThrow(/not a duration/);
 	});
 
 	it('names every token in the --jv- namespace', () => {
@@ -81,7 +91,7 @@ describe('design tokens', () => {
 	});
 
 	it('resolves tokens by name and refuses a typo', () => {
-		expect(token('--jv-accent')).toBe('#3fd8ff');
+		expect(token('--jv-accent')).toBe(TOKENS['--jv-accent']);
 		expect(cssVar('--jv-accent')).toBe('var(--jv-accent)');
 		// @ts-expect-error — the point is that the name is not a valid token
 		expect(() => token('--jv-nope')).toThrow(/unknown design token/);
@@ -131,10 +141,10 @@ describe('where colours may be written', () => {
 	 *
 	 * Scope: stylesheets, and the `<style>` block of every component — which is
 	 * where the design system actually lives. Script bodies are deliberately not
-	 * scanned: `Orb.svelte` carries a GLSL shader that cannot read a custom
-	 * property and says so at length, and `qr.ts` emits SVG fills for a code that
-	 * has to survive being photographed. Both are documented exceptions to a rule
-	 * about CSS, not quiet ones about colour.
+	 * scanned: `qr.ts` emits SVG fills for a code that has to survive being
+	 * photographed, a documented exception to a rule about CSS, not a quiet one
+	 * about colour. (The GLSL shader that used to be the other exception is gone
+	 * with M49; the reactor is an SVG whose every colour is a custom property.)
 	 *
 	 * Black and white pass. Neither is a palette colour: the two in the tree are
 	 * a mask stencil (only its alpha is read) and the paper a QR is printed on.

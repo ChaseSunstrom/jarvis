@@ -421,3 +421,37 @@ async def test_the_sidecar_is_read_back_instead_of_re_embedded_every_boot(jarvis
     )
     # And it still answers, from the vectors it loaded rather than from nothing.
     assert await revived.async_semantic_ids("where do we keep the caffeine")
+
+
+# --- per-model prefixes and floors (M33) -----------------------------------
+def test_each_model_family_gets_its_own_prefixes():
+    """A model trained with task prefixes is measurably worse without them."""
+    from jarvis.integrations.memory.vectors import prefixes_for
+
+    assert prefixes_for("nomic-embed-text") == ("search_document: ", "search_query: ")
+    document, query = prefixes_for("BAAI/bge-small-en-v1.5")
+    assert document == "" and query.startswith("Represent this sentence")
+    assert prefixes_for("intfloat/e5-small-v2") == ("passage: ", "query: ")
+    # And a model nobody recognises gets nothing, which is right for the
+    # general case and harmless for one that wanted something.
+    assert prefixes_for("some-new-embedder") == ("", "")
+
+
+def test_the_similarity_floor_belongs_to_the_model():
+    """0.62 was tuned for nomic and threw away five of six bge paraphrases.
+
+    bge-small put the same six queries at 0.450-0.652 and ranked all six
+    correctly; a constant floor turned a working model into an empty search.
+    """
+    from jarvis.integrations.memory.vectors import floor_for
+
+    assert floor_for("nomic-embed-text") == 0.62
+    assert floor_for("BAAI/bge-small-en-v1.5") < 0.45
+    assert floor_for("something-unknown") == 0.62
+
+
+def test_the_index_uses_its_models_floor_not_the_constant():
+    from jarvis.integrations.memory.vectors import VectorIndex
+
+    assert VectorIndex(model="BAAI/bge-small-en-v1.5").floor < 0.45
+    assert VectorIndex(model="nomic-embed-text").floor == 0.62

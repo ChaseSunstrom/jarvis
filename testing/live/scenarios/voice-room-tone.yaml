@@ -1,0 +1,19 @@
+name: voice-room-tone
+capability: voice
+intent: >
+  The harder negative: not digital silence but an empty room with an extractor
+  fan in it. A wake word that fires on this fires all night, and a detector
+  whose threshold was set by hope passes the silence test and fails this one.
+variants: [voice]
+tags: [wake-word, negative]
+turns:
+  - sound: room_tone
+    audio: {seconds: 4}
+    say: ""
+    expect:
+      # M35: with `--vad-filter` the recogniser returns nothing for a room with
+      # a fan in it, so the pipeline reports a coded error instead of handing
+      # the model a hallucinated word. This asserts there IS no text, which is
+      # a stronger promise than "whatever it heard moved nothing".
+      error: {code: stt-no-text-recognized}
+      no_service: [light.turn_on, light.turn_off, lock.unlock]

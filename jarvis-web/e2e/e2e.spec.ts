@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 /**
  * Put `light.lab_lights` back to `off`, whatever the last test left it as.
@@ -61,10 +61,11 @@ test("a turn runs with nothing clicked, and renders transcript and response", as
     },
   );
 
-  // latency readout shows measured timings
-  await expect(page.getByTestId("latency")).toContainText("stt", {
+  // the THIS TURN panel shows measured timings
+  await expect(page.getByTestId("latency")).toContainText("transcribe", {
     timeout: 10_000,
   });
+  await expect(page.getByTestId("latency")).toContainText("ms");
 
   // no pipeline error surfaced
   await expect(page.getByTestId("error")).toHaveCount(0);
@@ -102,17 +103,23 @@ test("the tts proxy only reaches media paths", async ({ request }) => {
 
 // --- management UI ---------------------------------------------------------
 
-test("console nav links the HUD to the management pages", async ({ page }) => {
+test("the bar links the voice screen to the five destinations", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("console-link").click();
-  await expect(page).toHaveURL(/\/devices$/);
+  // One bar everywhere (M49): HOUSE is a tab on the voice screen, and it
+  // lands in HOUSE's first section because a destination's path is a redirect.
+  await page.getByTestId("nav-house").click();
+  await expect(page).toHaveURL(/\/house\/devices$/);
 
+  // Five destinations, not eleven (M48; the dashboard became one with M62).
+  // Each lands on its own first section, because a destination's own path is
+  // a redirect and never a second page — except the dashboard, which has no
+  // sections and IS its page.
   for (const [testid, path] of [
-    ["nav-areas", "/areas"],
-    ["nav-automations", "/automations"],
-    ["nav-tools", "/tools"],
-    ["nav-settings", "/settings"],
-    ["nav-devices", "/devices"],
+    ["nav-dashboards", "/dashboards"],
+    ["nav-work", "/work/tasks"],
+    ["nav-knowledge", "/knowledge/notes"],
+    ["nav-settings", "/settings/assistant"],
+    ["nav-house", "/house/devices"],
   ] as const) {
     await page.getByTestId(testid).click();
     await expect(page).toHaveURL(new RegExp(`${path}$`));
@@ -126,7 +133,7 @@ test("console nav links the HUD to the management pages", async ({ page }) => {
 test("devices page groups entities by area and a toggle round-trips call_service", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
 
   // Grouped under the area the entity registry puts it in.
   const lab = page.getByTestId("area-lab");
@@ -198,7 +205,7 @@ test("the devices page shows the phones and desktops running Jarvis", async ({
   // Distinct from the entity list below it: these are the machines on the
   // other end of the socket. Nothing showed them before, so you could grant
   // your phone forty capabilities and never confirm it had connected.
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   const panel = page.getByTestId("companions");
   await expect(panel).toBeVisible({ timeout: 15_000 });
 
@@ -228,6 +235,7 @@ test("areas page creates, renames and deletes an area", async ({ page }) => {
   const bay = page.getByTestId("area-test_bay");
   await expect(bay).toBeVisible({ timeout: 10_000 });
 
+  await page.getByTestId("edit-test_bay").click();
   await page.getByTestId("rename-test_bay").fill("Test Bay Two");
   await page.getByTestId("save-test_bay").click();
   await expect(bay).toContainText("Test Bay Two", { timeout: 10_000 });
@@ -240,6 +248,7 @@ test("areas page creates, renames and deletes an area", async ({ page }) => {
     timeout: 10_000,
   });
 
+  if (!(await page.getByTestId("delete-test_bay").isVisible())) await page.getByTestId("edit-test_bay").click();
   await page.getByTestId("delete-test_bay").click();
   await expect(bay).toHaveCount(0, { timeout: 10_000 });
   await expect(page.getByTestId("error")).toHaveCount(0);
@@ -282,6 +291,8 @@ test("automations page shows last_triggered, toggles and runs now", async ({
     0,
   );
 
+  await page.getByTestId("more-automation.morning_lights").click();
+
   await page.getByTestId("trigger-automation.morning_lights").click();
   await expect(page.getByTestId("flash")).toContainText("triggered", {
     timeout: 10_000,
@@ -299,7 +310,7 @@ test("a held action can be approved from the console, on any page", async ({
 }) => {
   // The console had no way to answer an approval at all: the gate fired, the
   // model was told to wait, and only the phone could say yes.
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
     timeout: 15_000,
   });
@@ -344,7 +355,7 @@ test("a held action can be approved from the console, on any page", async ({
   // It must survive navigation: the action is still waiting whatever page you
   // wander to, and an approval that expires unseen looks like Jarvis ignoring
   // you.
-  await page.getByTestId("nav-automations").click();
+  await page.getByTestId("nav-house").click();
   await expect(page.getByTestId("approvals")).toBeVisible();
 
   await page.getByTestId("approve-lock_control").click();
@@ -416,6 +427,8 @@ test("tools page creates, edits and deletes a tool, and protects the built-ins",
   await open.getByTestId("tool-save").click();
   await expect(created).toContainText("Search Paperless", { timeout: 10_000 });
 
+  // DELETE lives in the editor (M55): open it if the save closed it.
+  if (!(await page.getByTestId("tool-delete-paperless_search").isVisible())) await page.getByTestId("tool-edit-paperless_search").click();
   const del = page.getByTestId("tool-delete-paperless_search");
   await del.click();
   await expect(del).toHaveText("CONFIRM?");
@@ -428,7 +441,11 @@ test("tools page creates, edits and deletes a tool, and protects the built-ins",
 test("settings page edits a setting, resets it, and is honest about restarts", async ({
   page,
 }) => {
-  await page.goto("/settings");
+  // The raw rows — key, source, SAVE, RESET — live behind EVERYTHING now
+  // (M54); the plain rows above them are covered by settings.spec.ts.
+  await page.goto("/settings/assistant");
+  await expect(page.getByTestId("everything")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("everything-summary").click();
   const model = page.getByTestId("setting-llm.model");
   await expect(model).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("source-llm.model")).toHaveText("yaml");
@@ -437,7 +454,9 @@ test("settings page edits a setting, resets it, and is honest about restarts", a
   // looks clickable teaches people to click it and learn nothing.
   await expect(page.getByTestId("save-llm.model")).toBeDisabled();
 
-  await page.getByTestId("input-llm.model").selectOption("qwen3:14b");
+  // The choices are what LLM_URL names — the gateway's aliases — and the
+  // MODELS panel above says which served model each stands for.
+  await page.getByTestId("input-llm.model").selectOption("house-fast");
   await page.getByTestId("save-llm.model").click();
   await expect(page.getByTestId("source-llm.model")).toHaveText("overlay", {
     timeout: 10_000,
@@ -467,9 +486,13 @@ test("settings page edits a setting, resets it, and is honest about restarts", a
   await expect(page.getByTestId("source-llm.model")).toHaveText("yaml", {
     timeout: 10_000,
   });
-  await expect(page.getByTestId("input-llm.model")).toHaveValue("qwen3:8b");
+  await expect(page.getByTestId("input-llm.model")).toHaveValue("house");
 
   // A package owns this one: no way to edit it, and the file to edit is named.
+  // It is a House setting, so it is on the House section.
+  await page.goto("/settings/house");
+  await expect(page.getByTestId("everything")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("everything-summary").click();
   await expect(page.getByTestId("input-jarvis.time_zone")).toBeDisabled();
   await expect(page.getByTestId("package-jarvis.time_zone")).toContainText(
     "packages/house.yaml",
@@ -520,6 +543,7 @@ test("automations page creates, edits and deletes an automation", async ({
   await expect(created).toContainText("Porch Light");
 
   // --- edit -----------------------------------------------------------
+  await page.getByTestId("more-automation.porch_light").click();
   await page.getByTestId("edit-automation.porch_light").click();
   const openEditor = page.locator('[data-testid^="editor-ui_"]');
   await expect(openEditor.getByTestId("field-alias")).toHaveValue(
@@ -540,6 +564,7 @@ test("automations page creates, edits and deletes an automation", async ({
   await expect(page.getByTestId("delete-automation.night_mode")).toHaveCount(0);
 
   // --- delete ----------------------------------------------------------
+  await page.getByTestId("more-automation.porch_light").click();
   const del = page.getByTestId("delete-automation.porch_light");
   await del.click();
   // One click arms, the second commits — an automation is recoverable only
@@ -551,10 +576,83 @@ test("automations page creates, edits and deletes an automation", async ({
   await expect(page.getByTestId("error")).toHaveCount(0);
 });
 
-test("tools page degrades to the service catalogue and test-runs a tool", async ({
+/** Tell the mock to forget the toolbox commands, the way an older backend has. */
+async function forgetToolbox(page: Page, unsupported: boolean): Promise<void> {
+  await page.evaluate(
+    (flag) =>
+      new Promise((resolve) => {
+        const ws = new WebSocket(
+          `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
+        );
+        ws.onopen = () =>
+          ws.send(
+            JSON.stringify({
+              id: 94,
+              type: "jarvis/test/tools_unsupported",
+              unsupported: flag,
+            }),
+          );
+        ws.onmessage = () => {
+          ws.close();
+          resolve(null);
+        };
+      }),
+    unsupported,
+  );
+}
+
+test("tools page lists the model's own toolbox and test-runs a tool", async ({
+  page,
+}) => {
+  // The native path — jarvis-core implements jarvis/tools/list and
+  // jarvis/tools/call. This is what the user actually gets; the fallback
+  // below is only for an older backend.
+  await page.goto("/tools");
+  await forgetToolbox(page, false);
+  await page.reload();
+
+  await expect(page.getByTestId("tool-select")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("hint")).toHaveCount(0);
+
+  // A registry tool with no dot in its name — the exact shape whose fallback
+  // used to re-throw "unknown command 'jarvis/tools/call'", because
+  // splitToolName() needs a dot and code_task has none.
+  await page.getByTestId("tool-select").selectOption("code_task");
+  await page.getByTestId("tool-args").fill('{"repo": "x", "instruction": "y"}');
+  await page.getByTestId("tool-run").click();
+  await expect(page.getByTestId("tool-result")).toContainText("code_task", {
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("error")).toHaveCount(0);
+});
+
+test("a tier-3 tool asks before it runs, even from the test runner", async ({
+  page,
+}) => {
+  // The console is authenticated, so it is tempting to let it just run things.
+  // That would make this page the easiest Tier-3 bypass in the product.
+  await page.goto("/tools");
+  await forgetToolbox(page, false);
+  await page.reload();
+  await expect(page.getByTestId("tool-select")).toBeVisible({ timeout: 15_000 });
+
+  await page.getByTestId("tool-select").selectOption("lock_control");
+  // Said BEFORE the button is pressed, not after.
+  await expect(page.getByTestId("tool-needs-approval")).toContainText("asks you first");
+
+  await page.getByTestId("tool-args").fill('{"name": "front door"}');
+  await page.getByTestId("tool-run").click();
+  await expect(page.getByTestId("tool-result")).toContainText("approval_required", {
+    timeout: 10_000,
+  });
+});
+
+test("tools page degrades to the service catalogue on an older backend", async ({
   page,
 }) => {
   await page.goto("/tools");
+  await forgetToolbox(page, true);
+  await page.reload();
 
   // The mock answers unknown_command for jarvis/tools/list — the page must
   // explain that and fall back rather than break.
@@ -579,19 +677,27 @@ test("tools page degrades to the service catalogue and test-runs a tool", async 
   await page.getByTestId("tool-run").click();
   await expect(page.getByTestId("error")).toContainText("not valid JSON");
 
-  // exposure toggle writes through the entity registry
+  // exposure toggle writes through the entity registry. It is behind the
+  // page's Entity exposure fold (M50), closed on load.
+  await page.getByTestId("tools-section-exposure").locator("summary").click();
   const expose = page.getByTestId("expose-light.lab_lights");
   await expect(expose).toHaveText("EXPOSED");
   await expose.click();
   await expect(expose).toHaveText("HIDDEN", { timeout: 10_000 });
   await expose.click();
   await expect(expose).toHaveText("EXPOSED", { timeout: 10_000 });
+
+  // Put it back: the suite shares one mock process, and a leaked flag would
+  // make whichever test runs next fail for a reason that is not its own.
+  await forgetToolbox(page, false);
 });
 
 test("settings page reports the selected backend and streams events", async ({
   page,
 }) => {
-  await page.goto("/settings");
+  // This console's own environment and the event stream are SETTINGS ›
+  // Console (M54): neither is a house setting.
+  await page.goto("/settings/console");
 
   // serve-e2e.mjs points JARVIS_URL at the mock and HA_URL at a dead port, so
   // seeing the mock's url here proves JARVIS_* took precedence.
@@ -605,11 +711,11 @@ test("settings page reports the selected backend and streams events", async ({
   await expect(page.getByTestId("config-problem")).toHaveCount(0);
   // The pipeline is read-only and says so. It used to be a `<select>` whose
   // value could not be committed anywhere, next to a second, read-only copy
-  // of a TTS voice the editable Voice group above already owns.
+  // of a TTS voice the editable Voice section already owns.
   await expect(page.getByTestId("pipeline-name")).toContainText("Jarvis");
   await expect(page.getByTestId("tts-voice")).toHaveCount(0);
-  // ...and the voice is edited exactly once, in the group that can save it.
-  await expect(page.getByTestId("setting-voice.tts_voice")).toBeVisible();
+  // ...and the voice is edited exactly once, on the section that can save it
+  // (settings.spec.ts walks every setting to its section).
 
   // The event stream is a diagnostic now, folded away rather than sitting
   // open below the settings people came to change.
@@ -621,7 +727,7 @@ test("settings page reports the selected backend and streams events", async ({
   // the live event stream fills once something moves
   await expect(page.getByTestId("live-filter")).toHaveText("state_changed");
   const page2 = await page.context().newPage();
-  await page2.goto("/devices");
+  await page2.goto("/house/devices");
   await page2.getByTestId("toggle-switch.desk_fan").click({ timeout: 15_000 });
   await expect(page.getByTestId("event-log")).toContainText("switch.desk_fan", {
     timeout: 15_000,
@@ -637,7 +743,7 @@ test("the boot sequence plays, never blocks a click, and runs once per session",
 }) => {
   // `commit` returns before hydration, so the poll below starts early enough
   // to catch a 1.2 s overlay instead of racing it.
-  await page.goto("/devices", { waitUntil: "commit" });
+  await page.goto("/house/devices", { waitUntil: "commit" });
   await expect(page.getByTestId("boot")).toBeAttached({ timeout: 10_000 });
 
   // The precise claim is "pointer-events: none": while the overlay is on
@@ -670,7 +776,7 @@ test("the boot sequence plays, never blocks a click, and runs once per session",
 
   // And does not replay on the next load in the same session.
   await page.reload();
-  await expect(page.getByTestId("nav-devices")).toBeVisible();
+  await expect(page.getByTestId("nav-house")).toBeVisible();
   await expect(page.getByTestId("boot")).toHaveCount(0);
 });
 
@@ -678,8 +784,8 @@ test("prefers-reduced-motion skips the boot sequence entirely", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/devices", { waitUntil: "commit" });
-  await expect(page.getByTestId("nav-devices")).toBeVisible({
+  await page.goto("/house/devices", { waitUntil: "commit" });
+  await expect(page.getByTestId("nav-house")).toBeVisible({
     timeout: 10_000,
   });
   await expect(page.getByTestId("boot")).toHaveCount(0);
@@ -692,22 +798,41 @@ test("prefers-reduced-motion skips the boot sequence entirely", async ({
 test("route changes swap the console body and mark the current nav item", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   const route = page.getByTestId("route");
-  await expect(route).toHaveAttribute("data-route", "/devices");
-  await expect(page.getByTestId("nav-devices")).toHaveAttribute(
+  await expect(route).toHaveAttribute("data-route", "/house/devices");
+
+  // The DESTINATION is lit while you are anywhere inside it. It is a prefix
+  // match: a destination's own path redirects to its first section, so the
+  // user is never at `/house` — they are at `/house/devices` — and an exact
+  // match left every tab unlit the moment the consolidation landed.
+  await expect(page.getByTestId("nav-house")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.getByTestId("nav-work")).not.toHaveAttribute(
     "aria-current",
     "page",
   );
 
-  await page.getByTestId("nav-automations").click();
-  await expect(route).toHaveAttribute("data-route", "/automations");
-  await expect(route).toContainText("AUTOMATIONS");
-  await expect(page.getByTestId("nav-automations")).toHaveAttribute(
+  // Switching SECTION keeps the destination lit and swaps the body.
+  await page.getByTestId("section-automations").click();
+  await expect(route).toHaveAttribute("data-route", "/house/automations");
+  // The section's own probe, not a heading: a section no longer repeats its
+  // name under a tab that already says it.
+  await expect(page.getByTestId("automations-screen")).toBeVisible();
+  await expect(page.getByTestId("nav-house")).toHaveAttribute(
     "aria-current",
     "page",
   );
-  await expect(page.getByTestId("nav-devices")).not.toHaveAttribute(
+
+  // Switching DESTINATION moves the mark.
+  await page.getByTestId("nav-work").click();
+  await expect(page.getByTestId("nav-work")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.getByTestId("nav-house")).not.toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -720,7 +845,7 @@ test("route changes swap the console body and mark the current nav item", async 
 test("the connection indicator reports the real websocket state", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("link-status")).toHaveAttribute(
     "data-status",
     "connected",
@@ -734,7 +859,7 @@ test("the connection indicator reports the real websocket state", async ({
 test("the command palette opens from the keyboard, filters, and toggles an entity", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("link-status")).toHaveAttribute(
     "data-status",
     "connected",
@@ -791,7 +916,7 @@ test("the command palette opens from the keyboard, filters, and toggles an entit
 });
 
 test("the command palette jumps to a page", async ({ page }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   // data-status only becomes "connected" from client code, so this doubles as
   // "the page has hydrated" — a keystroke sent before that lands nowhere.
   await expect(page.getByTestId("link-status")).toHaveAttribute(
@@ -804,11 +929,11 @@ test("the command palette jumps to a page", async ({ page }) => {
   await page.keyboard.press("Control+k");
   await page.getByTestId("palette-input").fill("settings");
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/settings\/assistant$/);
 });
 
 test("keyboard shortcuts focus the filter and navigate", async ({ page }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("link-status")).toHaveAttribute(
     "data-status",
     "connected",
@@ -849,8 +974,9 @@ test("keyboard shortcuts focus the filter and navigate", async ({ page }) => {
 test("a rejected call_service raises a toast as well as an inline error", async ({
   page,
 }) => {
-  await page.goto("/devices");
-  const lock = page.getByTestId("lock-lock.front_door");
+  await page.goto("/house/devices");
+  // The door starts locked, so the one control the row offers (M55) is UNLOCK.
+  const lock = page.getByTestId("unlock-lock.front_door");
   await expect(lock).toBeVisible({ timeout: 15_000 });
   await page.getByTestId("filter").fill("front door");
   await expect(lock).toBeVisible();
@@ -859,10 +985,10 @@ test("a rejected call_service raises a toast as well as an inline error", async 
 
   const toast = page.getByTestId("toast").first();
   await expect(toast).toBeVisible({ timeout: 10_000 });
-  await expect(toast).toContainText("Lock failed");
-  await expect(toast).toContainText("unknown service lock.lock");
+  await expect(toast).toContainText("Unlock failed");
+  await expect(toast).toContainText("unknown service lock.unlock");
   await expect(page.getByTestId("error")).toContainText(
-    "unknown service lock.lock",
+    "unknown service lock.unlock",
   );
 
   // It is dismissible, not just decorative.
@@ -874,11 +1000,11 @@ test("the console is usable at phone width without sideways scrolling", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByTestId("nav-devices")).toBeVisible();
+  await expect(page.getByTestId("nav-house")).toBeVisible();
   await expect(page.getByTestId("toggle-light.lab_lights")).toBeVisible();
 
   const overflow = await page.evaluate(
@@ -946,13 +1072,18 @@ test("every management editor fits a phone, which is where the app shows them", 
   expect(url.x + url.width).toBeLessThanOrEqual(391);
 
   // Settings: a row per setting, each with a control and two buttons — the
-  // most likely thing to wrap badly.
-  await page.goto("/settings");
+  // most likely thing to wrap badly. The MODELS panel and the plain rows
+  // first, then the raw rows behind EVERYTHING.
+  await page.goto("/settings/assistant");
+  await expect(page.getByTestId("models-list")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("plain-llm.options.temperature")).toBeVisible();
+  await noOverflow("settings · plain");
+  await page.getByTestId("everything-summary").click();
   await expect(page.getByTestId("setting-llm.model")).toBeVisible({
     timeout: 15_000,
   });
   await noOverflow("settings");
-  for (const id of ["input-llm.model", "save-llm.model"]) {
+  for (const id of ["input-llm.model", "save-llm.model", "role-chat", "plain-save-llm.options.temperature"]) {
     const box = (await page.getByTestId(id).boundingBox())!;
     expect(box.x + box.width, `settings · ${id}`).toBeLessThanOrEqual(391);
   }
@@ -963,7 +1094,7 @@ test("every management editor fits a phone, which is where the app shows them", 
 test("keyboard focus is visible, and icon-only controls are labelled", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("link-status")).toHaveAttribute(
     "data-status",
     "connected",
@@ -1010,7 +1141,7 @@ test("keyboard focus is visible, and icon-only controls are labelled", async ({
 
 test("the console header stays put when the page scrolls", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 480 });
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
     timeout: 15_000,
   });
@@ -1021,10 +1152,23 @@ test("the console header stays put when the page scrolls", async ({ page }) => {
 
   // `overflow-x: hidden` on the root is one careless line away from turning the
   // document into a scroll container and quietly breaking `position: sticky`.
-  const nav = (await page.getByTestId("nav-devices").boundingBox())!;
-  expect(nav.y).toBeLessThan(80);
+  //
+  // Measured against the HEADER's own box, not a fixed 80px. The number was a
+  // proxy for "the header is one row tall", which is not what this test is
+  // about: the eleventh section (`/desktop`) made the header wrap to two rows
+  // at 1280px and this went red while `position: sticky` was working
+  // perfectly. Making the nav scroll instead of wrap fixes the height and
+  // hides SETTINGS behind an invisible scroll, which is worse — so the header
+  // is two rows for now (M48 owns the nav's real overflow answer) and this
+  // asserts the thing in its own name.
+  const header = (await page.getByTestId("top-bar").boundingBox())!;
+  expect(header.y).toBe(0);
+  const nav = (await page.getByTestId("nav-house").boundingBox())!;
+  expect(nav.y).toBeGreaterThanOrEqual(0);
+  expect(nav.y + nav.height).toBeLessThanOrEqual(header.y + header.height);
   const badge = (await page.getByTestId("link-status").boundingBox())!;
-  expect(badge.y).toBeLessThan(80);
+  expect(badge.y).toBeGreaterThanOrEqual(0);
+  expect(badge.y + badge.height).toBeLessThanOrEqual(header.y + header.height);
 });
 
 // The tab icon. Committing a favicon proves nothing on its own — it has to be
@@ -1077,7 +1221,7 @@ test("a turn shows every tool it calls, with real progress and a reason when one
   // The bug this replaces: a turn that called four tools and took nine seconds
   // rendered a spinner. Tool calls are the moment the assistant touches the
   // house, and they were the one thing the console never showed.
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   // Wait for the page's own connection to be live before asking the mock to
   // broadcast — an event fired before the layout subscribes reaches nobody,
   // and the test would fail for a reason that has nothing to do with the panel.
@@ -1153,7 +1297,7 @@ test("a phone that registers while the console is open appears without a reload"
   // frame through the relay (fixed in the app), and this half: the console
   // read the companion list exactly once, at mount, so a device that arrived
   // a minute later was invisible for as long as the tab stayed open.
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("companion-pixel-8")).toBeVisible({
     timeout: 15_000,
   });
@@ -1200,7 +1344,7 @@ test("Jarvis can ask a question and the answer reaches the server", async ({
   // A question rides the approval gate rather than a second channel, so it
   // inherits single use, an expiry and human-only resolution. What it does not
   // inherit is the words: "APPROVE / DENY" is the wrong pair for "which lamp?".
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
     timeout: 15_000,
   });
@@ -1342,6 +1486,133 @@ test("Jarvis can ask a question and the answer reaches the server", async ({
   await expect(page.getByTestId("error")).toHaveCount(0);
 });
 
+test("a question that runs out of time says it lapsed, and does not vanish", async ({
+  page,
+}) => {
+  // The operator came back to answer after the clock and found nothing where
+  // the question had been (M66). The card used to be dropped at 0 s. Now it
+  // stays, says what happened and after how long — the sentence the voice
+  // says to a late answer — and offers CLEAR; and a late press on it is told
+  // the same by the server rather than "unknown, expired or already-used".
+  await page.goto("/house/devices");
+  await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
+    timeout: 15_000,
+  });
+  const ask = async (payload: Record<string, unknown>) =>
+    page.evaluate(
+      (body) =>
+        new Promise((resolve) => {
+          const ws = new WebSocket(
+            `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
+          );
+          ws.onopen = () => ws.send(JSON.stringify({ id: 94, ...body }));
+          ws.onmessage = () => {
+            ws.close();
+            resolve(null);
+          };
+        }),
+      payload,
+    );
+
+  // A long clock reads as minutes, not "1789s".
+  await ask({
+    type: "jarvis/test/ask_user",
+    request_id: "ask-long",
+    question: "Which lamp did you mean?",
+  });
+  await expect(page.getByTestId("question-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("approval-expiry-ask_user")).toHaveText(/^\d+:\d\d$/);
+  await page.getByTestId("answer-dismiss").click();
+  await expect(page.getByTestId("question-ask_user")).toHaveCount(0, {
+    timeout: 10_000,
+  });
+
+  // A two-second clock, watched run out.
+  await ask({
+    type: "jarvis/test/ask_user",
+    request_id: "ask-lapse",
+    question: "What is the printer's URL?",
+    ttl: 2,
+  });
+  await expect(page.getByTestId("question-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("lapsed-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("question-ask_user")).toHaveCount(0);
+  await expect(page.getByTestId("lapsed-text")).toHaveText(
+    "This question lapsed after 2 seconds — ask again and Jarvis will wait.",
+  );
+  await expect(page.getByTestId("approvals-head")).toContainText("1 lapsed");
+  // Still there after a moment: it does not vanish on its own.
+  await page.waitForTimeout(1500);
+  await expect(page.getByTestId("lapsed-ask_user")).toBeVisible();
+  await page.getByTestId("lapsed-clear").click();
+  await expect(page.getByTestId("approvals")).toHaveCount(0, { timeout: 10_000 });
+
+  // A late answer, sent anyway: the server says the same thing in words.
+  await ask({
+    type: "jarvis/test/ask_user",
+    request_id: "ask-late",
+    question: "Which one?",
+    ttl: 60,
+  });
+  await expect(page.getByTestId("question-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  const late = await page.evaluate(
+    () =>
+      new Promise<Record<string, unknown>>((resolve) => {
+        const ws = new WebSocket(
+          `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
+        );
+        ws.onopen = () => {
+          // Age the request past its clock on the mock, then answer it.
+          ws.send(
+            JSON.stringify({
+              id: 93,
+              type: "jarvis/test/expire_approval",
+              request_id: "ask-late",
+            }),
+          );
+        };
+        let sent = false;
+        ws.onmessage = (ev) => {
+          const frame = JSON.parse(ev.data as string);
+          if (frame.id === 93 && !sent) {
+            sent = true;
+            ws.send(
+              JSON.stringify({
+                id: 92,
+                type: "jarvis/approve",
+                request_id: "ask-late",
+                approved: true,
+                answer: "the corner one",
+              }),
+            );
+          } else if (frame.id === 92) {
+            ws.close();
+            resolve(frame.result);
+          }
+        };
+      }),
+  );
+  expect(late.expired).toBe(true);
+  expect(late.error).toBe(
+    "That question expired after 60 seconds; ask again and I'll wait.",
+  );
+  // ...and the bar, told by the server, shows it lapsed rather than dropping it.
+  await expect(page.getByTestId("lapsed-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByTestId("lapsed-clear").click();
+  await expect(page.getByTestId("approvals")).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.getByTestId("error")).toHaveCount(0);
+});
+
 /** What the console's own password is set to, once, by the first test to need it. */
 const CONSOLE_PASSWORD = "e2e-console-password";
 /** Mirrors JARVIS_PAIRING_SECRET on the mock backend (see mock-ha.mjs). */
@@ -1377,7 +1648,7 @@ test("the console shows a pairing QR, and what it encodes is a code and not a to
   // worse than typing it: a QR on a screen can be photographed from across the
   // room and stays valid as long as the token does. So the QR carries a
   // short-lived, single-use code the app exchanges for a token.
-  await page.goto("/settings");
+  await page.goto("/settings/console");
   const panel = page.getByTestId("pairing");
   await expect(panel).toBeVisible({ timeout: 15_000 });
 
@@ -1457,7 +1728,7 @@ test("the pairing secret is shown only after the password, and only from the ser
   // must not be in the page before the button that asks for it: a control that
   // fetched it on load and hid it behind a `{#if}` has already handed it over
   // to anything that can read the DOM.
-  await page.goto("/settings");
+  await page.goto("/settings/console");
   await unlockConsole(page);
   if (await page.getByTestId("pair-secret-form").count()) {
     await page.getByTestId("pair-secret").fill(PAIRING_SECRET);
@@ -1493,7 +1764,7 @@ test("a paired device can be un-paired, and the panel says what is connected", a
   // Pairing without un-pairing is a one-way door. A phone that is lost, sold
   // or no longer trusted has to be removable, and until this existed the only
   // way was editing the token store by hand on the server.
-  await page.goto("/settings");
+  await page.goto("/settings/console");
   const panel = page.getByTestId("tokens");
   await expect(panel).toBeVisible({ timeout: 15_000 });
 
@@ -1650,7 +1921,7 @@ test("the console shows whose voice Jarvis answers, without the voiceprint reach
   const payload = page.waitForResponse(
     (r) => r.url().includes("/api/voice/speaker") && r.request().method() === "GET",
   );
-  await page.goto("/settings");
+  await page.goto("/settings/voice");
   const body = await (await payload).json();
   expect(body.enrolled).toBe(true);
   for (const key of ["vector", "vectors", "samples_data", "mean", "profile"]) {
@@ -1693,7 +1964,7 @@ test("the console shows whose voice Jarvis answers, without the voiceprint reach
 test("forgetting a voiceprint is refused without the console password", async ({
   page,
 }) => {
-  await page.goto("/settings");
+  await page.goto("/settings/voice");
   await page.getByTestId("speaker-forget").click();
   await expect(page.getByTestId("speaker-error")).toContainText(/unlock the console/i);
   // Still enrolled: the refusal was real rather than cosmetic.
@@ -1707,12 +1978,12 @@ test("the console drops its own nav when the Android app is framing it", async (
     userAgent: "JarvisAndroid/1.0.0 (ai.jarvis.app; management)",
   });
   const page = await framed.newPage();
-  await page.goto("/devices");
+  await page.goto("/house/devices");
 
   // The page is there and working...
   await expect(page.getByTestId("area-lab")).toBeVisible({ timeout: 15_000 });
   // ...and its copy of the frame's chrome is not.
-  await expect(page.getByTestId("nav-devices")).toBeHidden();
+  await expect(page.getByTestId("nav-house")).toBeHidden();
   await expect(page.getByTestId("hud-link")).toBeHidden();
   await framed.close();
 
@@ -1720,8 +1991,8 @@ test("the console drops its own nav when the Android app is framing it", async (
   // there, and a rule that hid it everywhere would pass the assertions above.
   const plain = await browser.newContext();
   const normal = await plain.newPage();
-  await normal.goto("/devices");
-  await expect(normal.getByTestId("nav-devices")).toBeVisible({ timeout: 15_000 });
+  await normal.goto("/house/devices");
+  await expect(normal.getByTestId("nav-house")).toBeVisible({ timeout: 15_000 });
   await expect(normal.getByTestId("hud-link")).toBeVisible();
   await plain.close();
 });
@@ -1746,7 +2017,7 @@ test("the console drops its own nav when the Android app is framing it", async (
 test("the console offers enrolment, reading its phrases from the server", async ({
   page,
 }) => {
-  await page.goto("/settings");
+  await page.goto("/settings/voice");
   const panel = page.getByTestId("voice-identity");
   await expect(panel).toBeVisible();
 
@@ -1777,7 +2048,7 @@ test("enrolling from a locked console is refused, and says how to unlock it", as
   // records real audio and really posts it — the refusal comes from the
   // relay, not from there being nothing to send.
   await context.grantPermissions(["microphone"]);
-  await page.goto("/settings");
+  await page.goto("/settings/voice");
   await page.getByTestId("enrol-start").click();
   await page.getByTestId("enrol-record-0").click();
   await expect(page.getByTestId("enrol-stop-0")).toBeVisible();

@@ -1,0 +1,31 @@
+name: memory-remember-and-recall
+capability: memory
+gated-on: M15
+intent: >
+  A memory that lives in a process is not a memory. The service is killed
+  between the two turns — a real SIGTERM and a real restart — which is the only
+  honest way to test the claim, and the recall comes back through the same
+  conversation surface a person would use.
+
+  Both halves are asserted against the STORE as well as the wording: an
+  assistant that says "I'll remember that" and stores nothing passes every
+  phrasing check ever written.
+variants: [voice, text]
+setup:
+  clear: [memory]
+turns:
+  - say: "Remember that the spare key is in the blue tin on the shelf."
+    expect:
+      capability: memory
+      memory: {recalls: "blue tin"}
+      reply_means: >
+        acknowledges the fact — that it has it, or will keep it. It must NOT
+        say it cannot remember things, and must not ask for the fact again.
+  - say: "Where did I say the spare key was?"
+    restart: true
+    expect:
+      reply_contains: ["blue tin"]
+      memory: {recalls: "blue tin"}
+      reply_means: >-
+        names the blue tin on the shelf as where the spare key is — an answer
+        of just "the blue tin on the shelf" counts, the question named the key

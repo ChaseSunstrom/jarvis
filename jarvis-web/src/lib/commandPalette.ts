@@ -6,6 +6,7 @@
 // actually easy to get wrong — the ranking, the wrap-around, which entities can
 // be toggled — are unit-tested rather than eyeballed.
 
+import { SCREENS } from './screens';
 import { areaForEntity, areaKey, domainOf, friendlyName, isOn } from './jarvisClient';
 import type {
 	AreaEntry,
@@ -49,15 +50,49 @@ export const TOGGLE_DOMAINS = new Set([
 	'humidifier'
 ]);
 
-/** The console's own routes, always present so the palette works while offline. */
-export const PAGE_ITEMS: readonly PaletteItem[] = [
-	{ id: 'page:/', kind: 'page', label: 'Voice HUD', detail: '/', href: '/', keywords: 'talk mic orb' },
-	{ id: 'page:/devices', kind: 'page', label: 'Devices', detail: '/devices', href: '/devices', keywords: 'entities states' },
-	{ id: 'page:/areas', kind: 'page', label: 'Areas', detail: '/areas', href: '/areas', keywords: 'rooms zones' },
-	{ id: 'page:/automations', kind: 'page', label: 'Automations', detail: '/automations', href: '/automations', keywords: 'routines' },
-	{ id: 'page:/tools', kind: 'page', label: 'Tools', detail: '/tools', href: '/tools', keywords: 'llm catalogue exposure' },
-	{ id: 'page:/settings', kind: 'page', label: 'Settings', detail: '/settings', href: '/settings', keywords: 'backend events log' }
-];
+/**
+ * The console's own routes, always present so the palette works while offline.
+ *
+ * Built from `screens.ts` rather than typed here — this was a FOURTH copy of
+ * the route list, and it still said `/devices` and `/tools` after those became
+ * sections. It indexes **sections as well as destinations**, and that matters
+ * more now than it did: with four front doors instead of eleven, this is the
+ * fast path for somebody who knows exactly where they are going, and a palette
+ * that could only offer the four would have made the console slower to use
+ * rather than simpler.
+ */
+const PAGE_KEYWORDS: Readonly<Record<string, string>> = {
+	'/': 'talk mic orb voice',
+	'/house': 'home rooms devices entities lights',
+	'/work': 'jobs tasks progress research coding',
+	'/knowledge': 'notes memory remember wrote',
+	'/settings': 'models backend tools installed skills plugins voice house console',
+	'/house/devices': 'entities states lights switches',
+	'/house/areas': 'rooms zones',
+	'/dashboards': 'graphs charts history metrics readings',
+	'/house/automations': 'routines rules triggers traces',
+	'/work/tasks': 'jobs progress background scheduled research',
+	'/work/code': 'repository repositories git branch diff agent coding job',
+	'/knowledge/notes': 'write wrote markdown report',
+	'/knowledge/memory': 'remember forget facts recall',
+	'/settings/assistant': 'models model llm temperature name language chat fast vision',
+	'/settings/voice': 'wake word tts voice speaker enrol enrolment whose voice language',
+	'/settings/house': 'time zone timezone units metric imperial areas rooms location',
+	'/settings/console': 'text size backend pairing password pair phone desktop shell machines agent computer events log',
+	'/settings/system': 'environment env variables .env restart token secret tz timezone',
+	'/settings/tools': 'llm catalogue exposure mcp skills plugins extensions catalog install'
+};
+
+export const PAGE_ITEMS: readonly PaletteItem[] = SCREENS.filter(
+	(screen) => !screen.path.includes('[')
+).map((screen) => ({
+	id: `page:${screen.path}`,
+	kind: 'page' as const,
+	label: screen.within ? `${screen.label ?? screen.name} · in ${screen.within.slice(1)}` : screen.name,
+	detail: screen.path,
+	href: screen.path,
+	keywords: PAGE_KEYWORDS[screen.path] ?? ''
+}));
 
 /** The toggle Enter would perform, or undefined when the entity is not flippable. */
 export function toggleFor(state: EntityState): PaletteToggle | undefined {
@@ -113,7 +148,7 @@ export function buildPaletteItems(source: PaletteSource): PaletteItem[] {
 			kind: automation ? 'automation' : 'entity',
 			label,
 			detail: areaName ? `${state.entity_id} · ${areaName}` : state.entity_id,
-			href: `${automation ? '/automations' : '/devices'}?focus=${encodeURIComponent(state.entity_id)}`,
+			href: `${automation ? '/house/automations' : '/house/devices'}?focus=${encodeURIComponent(state.entity_id)}`,
 			toggle: toggleFor(state),
 			entityId: state.entity_id,
 			keywords: [state.state, areaName, ...(entry?.aliases ?? [])].filter(Boolean).join(' ')

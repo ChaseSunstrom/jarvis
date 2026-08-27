@@ -680,6 +680,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
 
     ingest = SensorIngest(jarvis)
     jarvis.data[DATA_INGEST] = ingest
+    _register_tools(jarvis)
 
     webhooks = jarvis.data.setdefault(DATA_WEBHOOKS, {})
     existing = webhooks.get(FALLBACK_WEBHOOK_ID)
@@ -785,3 +786,219 @@ __all__ = [
     "async_setup",
     "handle_sensor_post",
 ]
+
+
+# --- what the model can ask (M57) -------------------------------------------
+
+#: Domains whose states are readings.
+_READING_DOMAINS = ("sensor", "binary_sensor")
+
+
+def _area_name(jarvis: "Jarvis", entity_id: str, attributes: dict[str, Any]) -> str:
+    """The room a reading is in, from the registry or the attributes, or ''."""
+    if attributes.get("area"):
+        return str(attributes["area"])
+    try:
+        entry = jarvis.entities.get(entity_id)
+        area_id = getattr(entry, "area_id", None) if entry is not None else None
+        if area_id:
+            area = jarvis.areas.get(area_id)
+            return str(getattr(area, "name", "") or "")
+    except Exception:  # noqa: BLE001 - a registry that is not there is not an error here
+        pass
+    return ""
+
+
+def _readings(jarvis: "Jarvis") -> list[dict[str, Any]]:
+    """Every reading the house has, as rows with a unit, a class, an age and a room."""
+    now = time.time()
+    rows: list[dict[str, Any]] = []
+    for domain in _READING_DOMAINS:
+        for state in jarvis.states.all(domain):
+            attrs = dict(state.attributes or {})
+            value: Any = state.state
+            try:
+                value = float(state.state)
+            except (TypeError, ValueError):
+                pass
+            rows.append({
+                "entity_id": state.entity_id,
+                "name": str(attrs.get("friendly_name") or state.entity_id),
+                "value": value,
+                "unit": attrs.get("unit_of_measurement") or "",
+                "device_class": attrs.get("device_class") or "",
+                "area": _area_name(jarvis, state.entity_id, attrs),
+                "age_s": max(0, int(now - float(state.last_updated or now))),
+                "available": state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN),
+            })
+    return rows
+
+
+def readings(jarvis: "Jarvis", area: str = "", limit: int = 0) -> list[dict[str, Any]]:
+    """The rows `sensor_readings` reads, for a console widget (M63).
+
+    The same rows the tool returns — a reading with a unit, a class, a room and
+    an age — newest first, so a dashboard shows what just happened. `area`
+    filters by room the way the tool does; `limit` caps the list, 0 meaning
+    all. Unavailable sensors are kept, flagged `available: false`: a widget
+    that quietly dropped a dead sensor would hide the one thing worth noticing.
+    Works without the sensors integration: the rows come from the state
+    machine, so anything with a unit counts.
+    """
+    rows = _readings(jarvis)
+    wanted = str(area or "").strip().lower()
+    if wanted:
+        rows = [r for r in rows if wanted in r["area"].lower()]
+    rows.sort(key=lambda r: r["age_s"])
+    return rows[: int(limit)] if limit and int(limit) > 0 else rows
+
+
+def _fmt(row: dict[str, Any]) -> str:
+    unit = f" {row['unit']}" if row["unit"] else ""
+    where = f" in the {row['area']}" if row["area"] else ""
+    return f"{row['name']}{where}: {row['value']}{unit}"
+
+
+def _window_seconds(window: Any, default: float = 24 * 3600) -> float:
+    """'24h', '7d', '30m', 90 (seconds) → seconds."""
+    if window is None or window == "":
+        return default
+    text = str(window).strip().lower()
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([smhdw])", text)
+    if not m:
+        return default
+    n, unit = float(m.group(1)), m.group(2)
+    return n * {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 7 * 86400}[unit]
+
+
+def _register_tools(jarvis: "Jarvis") -> None:
+    registry = jarvis.data.get("llm_tools")
+    if registry is None or not hasattr(registry, "register"):
+        return
+    from ...llm.tools import TIER_DIRECT, schema_object
+
+    async def tool_readings(args: dict[str, Any], context: Any = None) -> Any:
+        rows = _readings(jarvis)
+        area = str(args.get("area") or "").strip().lower()
+        klass = str(args.get("device_class") or "").strip().lower()
+        query = str(args.get("query") or "").strip().lower()
+        if area:
+            rows = [r for r in rows if area in r["area"].lower()]
+        if klass:
+            rows = [r for r in rows if r["device_class"].lower() == klass]
+        if query:
+            rows = [r for r in rows if query in r["name"].lower() or query in r["entity_id"].lower()]
+        rows = [r for r in rows if r["available"]]
+        limit = int(args.get("limit") or 25)
+        shown = rows[:limit]
+        spoken = (
+            "; ".join(_fmt(r) for r in shown[:6]) if shown else "no readings match"
+        )
+        return {"count": len(rows), "readings": shown, "spoken": spoken}
+
+    async def tool_compare(args: dict[str, Any], context: Any = None) -> Any:
+        """Coldest / warmest / highest — across rooms, for one device class."""
+        klass = str(args.get("metric") or args.get("device_class") or "temperature").strip().lower()
+        rows = [r for r in _readings(jarvis) if r["device_class"].lower() == klass and isinstance(r["value"], float) and r["available"]]
+        if not rows:
+            return {"metric": klass, "rows": [], "spoken": f"no {klass} readings to compare"}
+        rows.sort(key=lambda r: r["value"])
+        lowest, highest = rows[0], rows[-1]
+        return {
+            "metric": klass,
+            "lowest": lowest,
+            "highest": highest,
+            "rows": rows,
+            "spoken": f"lowest {klass}: {_fmt(lowest)}; highest: {_fmt(highest)}",
+        }
+
+    async def tool_history(args: dict[str, Any], context: Any = None) -> Any:
+        from ..history import get_stats
+
+        entity_id = str(args.get("entity_id") or "").strip()
+        if not entity_id:
+            return {"error": "say which entity_id"}
+        seconds = _window_seconds(args.get("window"), 24 * 3600)
+        end = time.time()
+        stats = await get_stats(jarvis, [entity_id], start=end - seconds, end=end)
+        summary = stats.get(entity_id) or {"count": 0}
+        state = jarvis.states.get(entity_id)
+        unit = (state.attributes.get("unit_of_measurement") if state else "") or ""
+        if not summary.get("count"):
+            spoken = f"no history for {entity_id} in that window"
+        else:
+            spoken = (
+                f"{entity_id} over the window: min {summary.get('min')}{unit}, "
+                f"max {summary.get('max')}{unit}, mean {summary.get('mean')}{unit}, "
+                f"now {summary.get('last', state.state if state else '?')}{unit}"
+            )
+        return {"entity_id": entity_id, "window_s": seconds, "stats": summary, "spoken": spoken}
+
+    async def tool_summary(args: dict[str, Any], context: Any = None) -> Any:
+        rows = [r for r in _readings(jarvis) if r["available"]]
+        by_class: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            by_class.setdefault(r["device_class"] or "other", []).append(r)
+        parts = []
+        for klass, group in sorted(by_class.items()):
+            nums = [g for g in group if isinstance(g["value"], float)]
+            if klass == "temperature" and nums:
+                nums.sort(key=lambda g: g["value"])
+                parts.append(f"temperature {nums[0]['value']}–{nums[-1]['value']} {nums[0]['unit']} across {len(nums)} rooms")
+            elif klass == "power" and nums:
+                parts.append(f"power draw {round(sum(g['value'] for g in nums), 1)} W over {len(nums)} readings")
+            else:
+                parts.append(f"{len(group)} {klass} reading(s)")
+        return {"count": len(rows), "by_class": {k: len(v) for k, v in by_class.items()}, "spoken": "; ".join(parts) or "no readings"}
+
+    registry.register(
+        name="sensor_readings",
+        description=(
+            "Current readings from every sensor in the house — temperature, humidity, power, "
+            "air quality, whatever is attached — with units, the room and how old each is. "
+            "Filter by area, device_class (temperature, humidity, power, energy, …) or a word "
+            "from the name. Read this before answering a question about a reading."
+        ),
+        parameters=schema_object({
+            "area": {"type": "string", "description": "a room name, or part of one"},
+            "device_class": {"type": "string", "description": "temperature | humidity | power | energy | pressure | illuminance | battery | …"},
+            "query": {"type": "string", "description": "a word from the sensor's name"},
+            "limit": {"type": "integer", "description": "at most this many rows (default 25)"},
+        }),
+        handler=tool_readings,
+        tier=TIER_DIRECT,
+        domain=DOMAIN,
+    )
+    registry.register(
+        name="sensor_compare",
+        description="Which room is coldest, warmest, drawing the most power: the lowest and highest reading of one device class across the house.",
+        parameters=schema_object({
+            "metric": {"type": "string", "description": "the device class to compare: temperature, humidity, power, …"},
+        }),
+        handler=tool_compare,
+        tier=TIER_DIRECT,
+        domain=DOMAIN,
+    )
+    registry.register(
+        name="sensor_history",
+        description="One sensor over a window: min, max, mean, first and last. Window like '24h', '7d', '30m'.",
+        parameters=schema_object({
+            "entity_id": {"type": "string", "description": "the sensor, e.g. sensor.garage_temperature"},
+            "window": {"type": "string", "description": "how far back: 1h, 24h, 7d (default 24h)"},
+        }, required=["entity_id"]),
+        handler=tool_history,
+        tier=TIER_DIRECT,
+        domain=DOMAIN,
+    )
+    registry.register(
+        name="sensor_summary",
+        description="The house at a glance: how many readings of each kind, the temperature spread across rooms, the total power draw.",
+        parameters=schema_object({}),
+        handler=tool_summary,
+        tier=TIER_DIRECT,
+        domain=DOMAIN,
+    )

@@ -103,11 +103,18 @@ Server → device:
 ```json
 {"type": "jarvis_message", "message_id": "a1b2c3", "kind": "ask",
  "mode": "ask", "text": "Deploy to production?", "options": ["yes", "no"],
- "conversation_id": "conv-7", "importance": "high", "timeout_s": 120}
+ "conversation_id": "conv-7", "importance": "high", "timeout_s": 120,
+ "spoken": false}
 ```
 
 `kind`: `say` (aloud) · `ask` (needs an answer) · `notify` (quiet).
 `mode` is what presence decided: `speak` · `ask` · `notify`.
+`spoken` (optional, default `false`): the words are already being said to the
+user by the reply they belong to — a question raised by a spoken turn, whose
+reply is the model's own sentence and carries it. A device shows such a
+message and does **not** read it out; the answer is taken by tapping, or by
+the next thing said to whatever surface the user spoke to (M66). A phone that
+read it out anyway was how the operator heard every question twice.
 
 Device → server:
 

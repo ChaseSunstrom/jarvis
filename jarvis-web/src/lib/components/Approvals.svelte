@@ -16,8 +16,16 @@
 	 * server-side when it was raised — fuzzy targets already resolved to concrete
 	 * entity ids — so what runs is what is shown here, and a second click cannot
 	 * run it twice because jarvis-core pops the request before executing.
+	 *
+	 * A request that runs out of time does not vanish (M66). It used to: the
+	 * ticker dropped the card at 0 s, and the operator who came back to answer a
+	 * question found nothing where it had been. Now the card stays, says the
+	 * question lapsed and after how long, and offers CLEAR — the same sentence
+	 * the voice says to a late answer.
 	 */
+	import { Button } from '$lib/ui';
 	import { onMount } from 'svelte';
+	import { argumentsOf, headlineOf, summaryOf } from '$lib/approvals';
 	import { describeError, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
 	import type { BusEvent, PendingApproval, Subscription } from '$lib/jarvisClient';
@@ -36,6 +44,14 @@
 	 * infuriating in exactly the moment somebody is trying to reply.
 	 */
 	let answers = $state<Record<string, string>>({});
+	/**
+	 * Requests whose clock ran out, by id, with when we noticed.
+	 *
+	 * Kept beside `pending` rather than removed from it, because the server's
+	 * `jarvis_approval_expired` and our own countdown can both say so, in either
+	 * order, and a card must not flicker between the two.
+	 */
+	let lapsed = $state<Record<string, number>>({});
 	/** Ticks once a second so the countdown is honest. */
 	let now = $state(Date.now());
 
@@ -49,6 +65,13 @@
 
 	function drop(id: string): void {
 		pending = pending.filter((p) => idOf(p) !== id);
+		delete lapsed[id];
+		delete answers[id];
+	}
+
+	function markLapsed(id: string): void {
+		if (!id || lapsed[id]) return;
+		lapsed[id] = Date.now();
 	}
 
 	/** Seconds left, or null when the server gave no expiry. */
@@ -58,13 +81,32 @@
 		return Math.max(0, Math.round(req.expires_at - now / 1000));
 	}
 
-	/** The arguments, rendered compactly — this is what the human is agreeing to. */
-	function summarise(req: PendingApproval): string {
-		const args = req.arguments ?? {};
-		const parts = Object.entries(args)
-			.filter(([, v]) => v !== null && v !== undefined && v !== '')
-			.map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : JSON.stringify(v)}`);
-		return parts.join(' · ') || 'no arguments';
+	/**
+	 * The countdown, readable at thirty minutes as well as at thirty seconds.
+	 *
+	 * "1789s" is a number nobody converts; the question's clock (M66) is long
+	 * enough that minutes are the unit, and the seconds still tick so it is
+	 * visibly alive.
+	 */
+	function clockText(left: number): string {
+		if (left < 60) return `${left}s`;
+		const minutes = Math.floor(left / 60);
+		const seconds = left % 60;
+		return `${minutes}:${String(seconds).padStart(2, '0')}`;
+	}
+
+	/** The clock a request was put on, in words — the server's `ttl` when it sends one. */
+	function waitedText(req: PendingApproval): string {
+		const seconds =
+			typeof req.ttl === 'number' && req.ttl > 0
+				? req.ttl
+				: req.expires_at && req.created
+					? req.expires_at - req.created
+					: 0;
+		if (!seconds) return 'its time';
+		if (seconds < 120) return `${Math.round(seconds)} seconds`;
+		const minutes = Math.round(seconds / 60);
+		return `${minutes} minute${minutes === 1 ? '' : 's'}`;
 	}
 
 	/**
@@ -86,6 +128,16 @@
 	const choicesOf = (req: PendingApproval): string[] =>
 		Array.isArray(req.choices) ? req.choices.map(String) : [];
 
+	/** The lapse sentence — the same words the voice uses for a late answer. */
+	function lapsedText(req: PendingApproval): string {
+		return isQuestion(req)
+			? `This question lapsed after ${waitedText(req)} — ask again and Jarvis will wait.`
+			: `This request to ${req.tool} lapsed after ${waitedText(req)} — ask again and Jarvis will hold it.`;
+	}
+
+	let waiting = $derived(pending.filter((p) => !lapsed[idOf(p)]));
+	let lapsedCount = $derived(pending.length - waiting.length);
+
 	async function resolve(
 		req: PendingApproval,
 		approved: boolean,
@@ -97,16 +149,27 @@
 		err = '';
 		try {
 			const result = await conn.client.resolveApproval(id, approved, answer);
+			if (result?.expired) {
+				// The server knows it lapsed and says after how long. The card
+				// stays and says the same, rather than disappearing under the
+				// finger that just pressed it.
+				markLapsed(id);
+				toasts.error(`${req.tool} was not run`, result.error ?? 'the request had expired');
+				return;
+			}
 			drop(id);
-			delete answers[id];
 			if (result?.status === 'error') {
-				// Expired or already used. Saying so is better than a silent
+				// Already used, or unknown. Saying so is better than a silent
 				// disappearance, because the action did NOT happen.
 				toasts.error(`${req.tool} was not run`, result.error ?? 'the request had expired');
 			} else if (isQuestion(req)) {
 				toasts.success(approved ? 'Answer sent' : `Dismissed ${req.tool}`);
 			} else {
-				toasts.success(approved ? `Approved ${req.tool}` : `Denied ${req.tool}`);
+				// The sentence when the server gave one: "Approved Change
+				// Temperature… from 0.7 to 0.2" is a receipt; "Approved
+				// change_setting" is not.
+				const what = headlineOf(req);
+				toasts.success(approved ? `Approved ${what}` : `Denied ${what}`);
 			}
 		} catch (e) {
 			err = describeError(e);
@@ -119,9 +182,12 @@
 	onMount(() => {
 		const ticker = setInterval(() => {
 			now = Date.now();
-			// Drop what the server has already expired, so the card cannot sit at
-			// "0s" offering a button that can no longer do anything.
-			pending = pending.filter((p) => (secondsLeft(p) ?? 1) > 0);
+			// What the server has expired stays on screen as lapsed — a card at
+			// "0s" offering a button is a lie, and a card that vanishes is a
+			// question the person never finds again.
+			for (const req of pending) {
+				if ((secondsLeft(req) ?? 1) <= 0) markLapsed(idOf(req));
+			}
 		}, 1000);
 		return () => clearInterval(ticker);
 	});
@@ -150,9 +216,20 @@
 				);
 				subs.push(
 					await connection.client.subscribeEvents((event: BusEvent) => {
-						// Answered somewhere else — the phone, a script, another tab.
+						// Answered somewhere else — the phone, a script, another
+						// tab, or the next thing said out loud.
 						drop(String(event.data?.request_id ?? event.data?.id ?? ''));
 					}, 'jarvis_approval_resolved')
+				);
+				subs.push(
+					await connection.client.subscribeEvents((event: BusEvent) => {
+						// The server noticed it lapsed. Kept, as lapsed: the
+						// countdown here may already have said so, or may be a
+						// second behind; either way the card reads the same.
+						const req = event.data as PendingApproval;
+						if (idOf(req)) upsert(req);
+						markLapsed(idOf(req));
+					}, 'jarvis_approval_expired')
 				);
 			} catch (e) {
 				if (!disposed) err = describeError(e);
@@ -169,8 +246,16 @@
 {#if pending.length}
 	<section class="approvals" data-testid="approvals" aria-live="assertive">
 		<div class="head">
-			<span class="mark" aria-hidden="true">[ ! ]</span>
-			<span>{pending.length} thing{pending.length === 1 ? '' : 's'} waiting on you</span>
+			<span data-testid="approvals-head">
+				{#if waiting.length}
+					Held · {waiting.length} thing{waiting.length === 1 ? '' : 's'} waiting on you · asks before it runs
+				{:else}
+					Held · nothing waiting on you
+				{/if}
+				{#if lapsedCount}
+					· {lapsedCount} lapsed
+				{/if}
+			</span>
 		</div>
 
 		{#if err}<p class="err" data-testid="approval-error" role="alert">{err}</p>{/if}
@@ -178,12 +263,26 @@
 		{#each pending as req (idOf(req))}
 			{@const left = secondsLeft(req)}
 			{@const id = idOf(req)}
-			{#if isQuestion(req)}
+			{#if lapsed[id]}
 				<!--
-				  A question, not an action. Same gate, same expiry, same
-				  single-use guarantee — see `ask_user` in jarvis-core — but
-				  "APPROVE / DENY" is the wrong pair of words for "which lamp did
-				  you mean?", so it gets the shape of the thing it is.
+				  Out of time. The request is gone server-side and nothing here
+				  can run it, so the only control is CLEAR. What stays is the
+				  fact and the remedy — the sentence the voice would say.
+				-->
+				<div class="req lapsed" data-testid="lapsed-{req.tool}">
+					<div class="what">
+						<b>{isQuestion(req) ? questionOf(req) : req.tool}</b>
+						<span class="desc" data-testid="lapsed-text">{lapsedText(req)}</span>
+					</div>
+					<Button testid="lapsed-clear" onclick={() => drop(id)}>CLEAR</Button>
+				</div>
+			{:else if isQuestion(req)}
+				<!--
+				  A question, not an action. Same gate, same single-use
+				  guarantee — see `ask_user` in jarvis-core — on its own, longer
+				  clock, but "APPROVE / DENY" is the wrong pair of words for
+				  "which lamp did you mean?", so it gets the shape of the thing
+				  it is.
 				-->
 				<div class="req question" class:tainted={req.tainted} data-testid="question-{req.tool}">
 					<div class="what">
@@ -197,31 +296,33 @@
 							  rather than by Jarvis. Nothing is blocked; the tier
 							  already decided what may run. The human is simply
 							  told, which is the only defence that works against a
-							  sentence that is legitimate half the time.
+							  sentence that is legitimate half the time. It is also
+							  why this one cannot be answered out loud: only here,
+							  where this line is.
 							-->
 							<span class="desc warn" data-testid="question-tainted">
 								This turn read something from outside your house before asking. Treat the
-								wording above as untrusted — never type a password or a code into it.
+								wording above as untrusted — never type a password or a code into it. It can
+								only be answered here, not by voice.
 							</span>
 						{:else}
-							<span class="desc">Jarvis is waiting for your answer</span>
+							<span class="desc">Jarvis is waiting for your answer — say it, or answer here</span>
 						{/if}
 					</div>
 					{#if left !== null}
-						<span class="left" data-testid="approval-expiry-{req.tool}">{left}s</span>
+						<span class="left" data-testid="approval-expiry-{req.tool}">{clockText(left)}</span>
 					{/if}
 					{#if choicesOf(req).length}
 						<div class="choices" data-testid="question-choices">
 							{#each choicesOf(req) as choice (choice)}
-								<button
-									type="button"
-									class="btn approve"
-									data-testid="answer-choice-{choice}"
+								<Button
+									variant="approve"
+									testid="answer-choice-{choice}"
 									disabled={busy === id}
 									onclick={() => resolve(req, true, choice)}
 								>
 									{choice}
-								</button>
+								</Button>
 							{/each}
 						</div>
 					{:else}
@@ -240,59 +341,70 @@
 								}
 							}}
 						/>
-						<button
-							type="button"
-							class="btn approve"
-							data-testid="answer-send"
+						<Button
+							variant="approve"
+							testid="answer-send"
 							disabled={busy === id || !(answers[id] ?? '').trim()}
 							onclick={() => resolve(req, true, (answers[id] ?? '').trim())}
 						>
 							SEND
-						</button>
+						</Button>
 					{/if}
-					<button
-						type="button"
-						class="btn ghost danger"
-						data-testid="answer-dismiss"
+					<Button variant="danger" testid="answer-dismiss"
 						disabled={busy === id}
 						onclick={() => resolve(req, false)}
 					>
 						DISMISS
-					</button>
+					</Button>
 				</div>
 			{:else}
 				<div class="req" class:tainted={req.tainted} data-testid="approval-{req.tool}">
 					<div class="what">
-						<b>{req.tool}</b>
+						<!--
+						  The headline is the server's sentence when it composed
+						  one — "Change Wake word (voice.wake_word) from hey_jarvis
+						  to ok_nabu" — and the tool's name otherwise. The sentence
+						  was made from the pinned arguments on the server, never
+						  from the model's words, so it is as trustworthy as the
+						  entity ids a `lock_control` card shows. With a sentence
+						  the raw `key: value` line is dropped: it would repeat the
+						  same facts in the one form a person cannot read at a
+						  glance, and the tool's name moves to the line below so
+						  the card still says WHICH tool is about to run.
+						-->
+						<b data-testid={summaryOf(req) ? `approval-summary-${req.tool}` : `approval-name-${req.tool}`}>
+							{headlineOf(req)}
+						</b>
 						{#if req.tainted}
 							<span class="desc warn" data-testid="approval-tainted">
-								Raised by a turn that read something from outside your house.
+								Raised by a turn that read something from outside your house. It can only be
+								approved here, not by voice.
 							</span>
 						{/if}
-						{#if req.description}<span class="desc">{req.description}</span>{/if}
-						<span class="args" data-testid="approval-args-{req.tool}">{summarise(req)}</span>
+						{#if summaryOf(req)}
+							<span class="args" data-testid="approval-tool-{req.tool}">{req.tool}</span>
+						{:else}
+							{#if req.description}<span class="desc">{req.description}</span>{/if}
+							<span class="args" data-testid="approval-args-{req.tool}">{argumentsOf(req)}</span>
+						{/if}
 					</div>
 					{#if left !== null}
-						<span class="left" data-testid="approval-expiry-{req.tool}">{left}s</span>
+						<span class="left" data-testid="approval-expiry-{req.tool}">{clockText(left)}</span>
 					{/if}
-					<button
-						type="button"
-						class="btn approve"
-						data-testid="approve-{req.tool}"
+					<Button
+						variant="primary"
+						testid="approve-{req.tool}"
 						disabled={busy === id}
 						onclick={() => resolve(req, true)}
 					>
 						APPROVE
-					</button>
-					<button
-						type="button"
-						class="btn ghost danger"
-						data-testid="deny-{req.tool}"
+					</Button>
+					<Button testid="deny-{req.tool}"
 						disabled={busy === id}
 						onclick={() => resolve(req, false)}
 					>
 						DENY
-					</button>
+					</Button>
 				</div>
 			{/if}
 		{/each}
@@ -300,47 +412,44 @@
 {/if}
 
 <style>
+	/*
+	 * Reactor II's held bar: a flat panel with the warn colour as an INSET rule
+	 * on its left — a box-shadow, not a border, so it never moves the layout —
+	 * the label in the warn colour, what is held in the bright text, its
+	 * arguments in mono, and APPROVE as the one filled control on the screen.
+	 */
 	.approvals {
 		position: sticky;
 		top: 0;
 		z-index: 40;
-		border: 1px solid var(--jv-warn);
-		border-left: 3px solid var(--jv-warn);
-		border-radius: var(--jv-radius-sm);
 		background: var(--jv-panel);
-		box-shadow: var(--jv-elev-panel);
-		padding: var(--jv-space-3);
-		margin-bottom: var(--jv-space-3);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-warn), var(--jv-elev-panel);
+		padding: var(--jv-space-3) var(--jv-space-4) var(--jv-space-3) var(--jv-space-5);
+		margin-bottom: var(--jv-space-4);
+		/* Waiting on you: the warn rule pulses slowly until answered (M53). */
+		animation:
+			jv-rise var(--jv-dur-base) var(--jv-ease-out) both,
+			held-pulse var(--jv-dur-blink) var(--jv-ease-in-out) infinite alternate;
 	}
-	/* A question is the assistant asking, not the assistant about to act, so
-	   it is marked with the accent rather than the warning colour. */
-	.req.question {
-		border-left: 2px solid var(--jv-accent);
-		padding-left: var(--jv-space-2);
+	@keyframes held-pulse {
+		from {
+			box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-warn), var(--jv-elev-panel);
+		}
+		to {
+			box-shadow: inset var(--jv-rule-live) 0 0 transparent, var(--jv-elev-panel);
+		}
 	}
-	.answer {
-		flex: 1 1 14rem;
-		min-width: 0;
-	}
-	/* Louder than the ordinary accent, quieter than a denial: this is a
-	   provenance note, not a failure. */
-	.req.tainted {
-		border-left-color: var(--jv-warn);
-	}
-	.desc.warn {
-		color: var(--jv-warn);
-	}
-	.choices {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--jv-space-2);
+	@media (prefers-reduced-motion: reduce) {
+		.approvals {
+			animation: none;
+		}
 	}
 	.head {
-		display: flex;
-		align-items: center;
-		gap: var(--jv-space-2);
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-wide);
 		text-transform: uppercase;
 		color: var(--jv-warn);
@@ -351,32 +460,82 @@
 		align-items: center;
 		gap: var(--jv-space-3);
 		flex-wrap: wrap;
-		padding: var(--jv-space-2) 0;
-		border-top: 1px dashed var(--jv-line-hair);
+		padding: var(--jv-space-3) 0;
+		border-top: 1px solid var(--jv-line-hair);
+	}
+	/* A question is the assistant asking, not the assistant about to act. */
+	.req.question {
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
+		padding-left: var(--jv-space-3);
+	}
+	/* Louder than the ordinary accent, quieter than a denial: provenance. */
+	.req.tainted {
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-warn);
+		padding-left: var(--jv-space-3);
+	}
+	/* Over: no rule, dim text — a fact, not a call to act. */
+	.req.lapsed {
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-line-soft);
+		padding-left: var(--jv-space-3);
+	}
+	.req.lapsed .what b {
+		color: var(--jv-text-dim);
 	}
 	.what {
 		flex: 1 1 14rem;
 		min-width: 0;
 	}
 	.what b {
+		display: block;
 		color: var(--jv-text-bright);
-		font-weight: 500;
+		font-weight: var(--jv-weight-body);
+		font-size: var(--jv-fs-sm);
 	}
-	.desc,
+	.desc {
+		display: block;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
+		overflow-wrap: anywhere;
+	}
+	.desc.warn {
+		color: var(--jv-warn);
+	}
 	.args {
 		display: block;
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
-		color: var(--jv-text-dim);
+		color: var(--jv-text-faint);
 		overflow-wrap: anywhere;
 	}
 	.left {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
+		font-variant-numeric: tabular-nums;
 		color: var(--jv-warn);
 	}
-	.approve {
-		border-color: var(--jv-ok);
-		color: var(--jv-ok);
+	.answer {
+		flex: 1 1 14rem;
+		min-width: 0;
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-3);
+	}
+	.answer:focus-visible {
+		outline: var(--jv-focus-outline);
+		outline-offset: var(--jv-focus-offset);
+	}
+	.choices {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--jv-space-2);
+	}
+	.err {
+		margin: 0 0 var(--jv-space-2);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-danger-text);
 	}
 </style>

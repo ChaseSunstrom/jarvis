@@ -86,12 +86,13 @@ class AppLaunchTest {
         // the failure carries the whole window dump: on a screen with no
         // resource ids, "no view matched" is otherwise unactionable.
         val device = Device.ui
-        // Two controls, which is the whole home screen now: the mute — the only
-        // voice control left, since opening the app opens the microphone — and
-        // MANAGE, which is the one way to everything else. The console's
-        // sections are NOT here any more; they are the tab strip inside the
-        // console frame, and a second copy of them on this screen is exactly
-        // what had to be kept in step by hand. See ConsoleFrame.
+        // The two controls every install shows: the mute — opening the app
+        // opens the microphone, so this is the voice control — and MANAGE, the
+        // one way into the console. (LISTEN and PHONE sit beside them; neither
+        // is what this test is about.) The console's sections are NOT here;
+        // they are the tab strip inside the console frame, and a second copy of
+        // them on this screen is exactly what had to be kept in step by hand.
+        // See ConsoleFrame.
         val labels = listOf("SET UP JARVIS", "MANAGE")
         for (label in labels) {
             Waits.until("the home screen to show \"$label\"") {

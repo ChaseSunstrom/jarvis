@@ -1,0 +1,97 @@
+# LiteLLM — the single internal model endpoint.
+#
+# Everything in Jarvis talks to this, and this decides which model actually
+# answers. That indirection buys three things: a model can be swapped without
+# touching Jarvis, a failing provider falls back instead of failing a turn, and
+# there is ONE place where the privacy guard can refuse.
+#
+# The local model is the default and the only one configured out of the box.
+# Cloud providers are listed and commented: they need keys the operator has not
+# supplied, and "local-only" has to stay a complete, working configuration
+# rather than a degraded one.
+
+model_list:
+  # --- the house model ------------------------------------------------------
+  - model_name: house
+    litellm_params:
+      # `openai/` here is the WIRE, not the company: llama-swap, vLLM and
+      # llama.cpp all speak it. The api_base is what makes it local.
+      # `os.environ/NAME` interpolates a WHOLE value, so the wire prefix has
+      # to be part of the variable — `openai/os.environ/LLM_MODEL` is a
+      # literal model name, and produces a proxy that starts happily and
+      # routes to a model nothing serves. Compose builds
+      # GATEWAY_LOCAL_MODEL as `openai/$LLM_MODEL` for exactly this.
+      model: os.environ/GATEWAY_LOCAL_MODEL
+      api_base: os.environ/LLM_URL
+      api_key: os.environ/LLM_API_KEY
+      rpm: 60
+    model_info:
+      # Read by the guard: what may carry private content.
+      locality: local
+
+  # A smaller local model for the voice path, when one is served. Same server,
+  # different id; `BLOCKERS.md` §2 is the reason this slot exists.
+  - model_name: house-fast
+    litellm_params:
+      model: os.environ/GATEWAY_FAST_MODEL
+      api_base: os.environ/LLM_URL
+      api_key: os.environ/LLM_API_KEY
+      rpm: 120
+    model_info:
+      locality: local
+
+  # --- off until the operator supplies a key --------------------------------
+  # Uncomment one and put its key in .env. Nothing else changes: the privacy
+  # guard below still refuses to send it anything private.
+  #
+  # - model_name: cloud-big
+  #   litellm_params:
+  #     model: anthropic/claude-sonnet-4-5
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+  #     rpm: 20
+  #   model_info:
+  #     locality: cloud
+  #
+  # - model_name: cloud-fast
+  #   litellm_params:
+  #     model: openai/gpt-4o-mini
+  #     api_key: os.environ/OPENAI_API_KEY
+  #     rpm: 60
+  #   model_info:
+  #     locality: cloud
+
+router_settings:
+  routing_strategy: simple-shuffle
+  # A provider that errors or times out falls back rather than failing the
+  # turn. Local first, always: a cloud fallback for a local failure would be a
+  # privacy decision made by an outage.
+  fallbacks:
+    - house: ["house-fast"]
+    - house-fast: ["house"]
+  num_retries: 1
+  timeout: 300
+
+# The guard. Runs before a request reaches a provider and refuses when a
+# `local-only` request has been routed at a cloud model. In-process, so it
+# cannot be bypassed by anything that talks to this proxy — which is the point
+# of putting it here rather than in Jarvis alone.
+#
+# A GUARDRAIL, not a `litellm_settings: callbacks:` entry. The difference is
+# not cosmetic: a callback WATCHES a request and a guardrail may refuse one,
+# and the first version of this loaded cleanly, logged nothing, and let a
+# tagged request straight through to the cloud mock. `testing/fixtures/
+# gateway_probe.py` is what caught that.
+litellm_settings:
+  drop_params: true
+  # Nothing about a request is logged by default. The prompts contain the
+  # house, the memory block and whatever was read this turn.
+  turn_off_message_logging: true
+
+general_settings:
+  # No database, no virtual keys, no spend tracking. This is one household's
+  # proxy; a control plane would be four containers to bill nobody.
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # The guard runs here, on every request, before routing. Not a callback and
+  # not a `guardrails:` entry — see gateway/privacy_guard.py on why both of
+  # those loaded cleanly and guarded nothing.
+  custom_auth: privacy_guard.privacy_auth

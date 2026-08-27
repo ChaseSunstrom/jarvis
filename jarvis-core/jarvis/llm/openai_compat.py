@@ -49,6 +49,7 @@ from typing import Any
 
 import httpx
 
+
 from .ollama import ChatResult, ChatStream, OllamaError, ToolCall, parse_arguments
 
 _LOGGER = logging.getLogger(__name__)
@@ -401,13 +402,21 @@ class OpenAICompatClient:
         keep_alive: str | float | None = None,
         think: bool | None = None,
         format: str | dict[str, Any] | None = None,
+        privacy: str = "",
     ) -> ChatStream:
         """Start a chat exchange. Same contract as the Ollama client's.
 
-        `keep_alive` and `think` are accepted and ignored: they are Ollama's
-        own, and a caller that sets one should not have to know which backend
-        it ended up talking to. Accepting-and-ignoring is the honest option —
-        the alternative is a TypeError from a keyword that used to work.
+        `keep_alive` is accepted and ignored: it is Ollama's own, and a caller
+        that sets it should not have to know which backend it ended up talking
+        to. `think=False` is translated (M60): a spoken turn must not wait a
+        minute for a reasoning block nobody reads; `True`/`None` leave the
+        model's own default alone, as before.
+
+        `privacy` is for a caller that KNOWS what it is sending is private —
+        the vision integration, whose prompt is a picture of the inside of
+        the house. The classifier reads text markers, and a JPEG has none, so
+        without this the one request that most needs the `local-only` tag
+        would be the one that never got it.
         """
         payload: dict[str, Any] = {
             "model": model or self.model,
@@ -417,7 +426,16 @@ class OpenAICompatClient:
         if tools:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
+        # Keep the prompt prefix on the server between turns (M60). The system
+        # message is a few thousand tokens and identical from one turn to the
+        # next up to the house summary; without this llama.cpp re-reads all of
+        # it before the first token, and on a 256k window that prefill is the
+        # largest part of the wait on a voice turn. Top-level is llama.cpp's own
+        # field; the copy in `extra_body` is what a gateway (LiteLLM) forwards.
+        # A server that knows neither ignores both.
+        payload["cache_prompt"] = True
         payload.update(_translate_options(options))
+        payload.setdefault("extra_body", {}).setdefault("cache_prompt", True)
         if format is not None:
             # Merged, not `update`d. Both translators can produce `extra_body`,
             # and a plain update let the format's copy replace the options' one
@@ -428,6 +446,15 @@ class OpenAICompatClient:
             payload.update(extra)
             if body:
                 payload.setdefault("extra_body", {}).update(body)
+        if think is False:
+            # Qwen3 and its kin reason by default, and on this wire the only
+            # way to say "not this turn" is the chat template's own switch —
+            # llama.cpp and vLLM both read `chat_template_kwargs`. Top-level
+            # for a direct server; in `extra_body` for a gateway to forward. A
+            # server that knows neither ignores both, and thinks.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+            payload.setdefault("extra_body", {}).setdefault("chat_template_kwargs", {"enable_thinking": False})
+        _tag_privacy(payload, force=privacy)
         return OpenAICompatStream(self, payload)
 
     # --- the tool loop's wire shape ---------------------------------------
@@ -551,6 +578,41 @@ class OpenAICompatClient:
             key=lambda r: int(r.get("index", 0)),
         )
         return [[float(x) for x in (r.get("embedding") or [])] for r in ordered]
+
+
+def _tag_privacy(payload: dict[str, Any], force: str = "") -> None:
+    """Mark a request whose prompt carries private content (M40).
+
+    The tag travels in `metadata` and is enforced by the gateway, which refuses
+    to route a `local-only` request at a cloud provider. Both halves exist on
+    purpose: this one knows WHAT is in the prompt, and the proxy is where the
+    refusal binds anything that can reach the endpoint rather than only a
+    well-behaved client.
+
+    A prompt with nothing private in it is not tagged at all, so an install
+    with no gateway sends exactly what it sent before. `force` is a caller's
+    own verdict (`chat(privacy=...)`), applied instead of the classifier's —
+    the only way a prompt whose private content is an image gets the tag.
+    """
+    try:
+        from ..security.privacy import HEADER, classify
+
+        if force:
+            tag = str(force)
+        else:
+            tag, _why = classify(payload.get("messages"))
+        if not tag:
+            return
+        metadata = payload.setdefault("metadata", {})
+        if isinstance(metadata, dict):
+            metadata["privacy"] = tag
+        # And as a header, because a proxy that drops unknown body keys still
+        # sees headers — and `drop_params: true` is a normal thing to configure.
+        headers = payload.setdefault("extra_headers", {})
+        if isinstance(headers, dict):
+            headers[HEADER] = tag
+    except Exception:  # pragma: no cover - tagging must never fail a turn
+        pass
 
 
 def _translate_format(format: str | dict[str, Any]) -> dict[str, Any]:

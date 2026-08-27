@@ -156,6 +156,10 @@ NOT_DANGEROUS = {
     "android.permission.VIBRATE",
     "android.permission.WAKE_LOCK",
     "android.permission.WRITE_SETTINGS",
+    "android.permission.SET_WALLPAPER",  # normal: set_wallpaper (M61) writes an image the user asked for
+    # Normal: nfc_read / nfc_write (M61) arm reader mode on a one-frame
+    # Activity, and a tag only reaches it when a person holds one to the phone.
+    "android.permission.NFC",
     # Shizuku's service, not a permission the app is granted.
     "moe.shizuku.privileged.api",
 }

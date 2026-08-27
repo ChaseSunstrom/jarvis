@@ -657,16 +657,49 @@ async def test_a_failed_approve_does_not_report_success(tmp_path: Path) -> None:
 # ===========================================================================
 # the tool surface the persona promises
 # ===========================================================================
-async def test_the_persona_prompts_tools_all_exist(tmp_path: Path) -> None:
-    """The shipped prompt names these; a prompt promising absent tools is a bug."""
-    prompt = (
+async def test_the_persona_promises_no_tool_it_cannot_guarantee(tmp_path: Path) -> None:
+    """A prompt promising absent tools is a bug — now prevented structurally.
+
+    ## What this used to assert, and why it changed
+
+    It required `config/prompts/jarvis.txt` to NAME `delegate_to_agents` and
+    `code_task`, and required both to be registered. The intent was right and
+    the mechanism was backwards: it pinned the prose and the registry together
+    for two hand-listed names, in a fixture where the orchestrator is always
+    configured. On an install without an `orchestrator:` block the prose still
+    promised both and nothing checked.
+
+    The invariant is now enforced by construction instead. The persona file
+    names no integration tool at all, and `ConversationAgent.toolbox_rule()`
+    writes the list into the prompt from the live registry — the same registry
+    `as_openai_schema()` builds the model's tools array from. Prose and
+    toolbox cannot disagree because there is only one source.
+
+    Both halves are checked here: the file stays quiet, and the generated
+    sentence does name the orchestrator's tools when it IS configured.
+    """
+    prompt_file = (
         Path(__file__).resolve().parents[1] / "config" / "prompts" / "jarvis.txt"
     ).read_text(encoding="utf-8")
-    _, registry = await build(tmp_path, FakeOrchestrator())
+    jarvis, registry = await build(tmp_path, FakeOrchestrator())
     assert registry is not None
+
     for name in ("delegate_to_agents", "code_task"):
-        assert name in prompt, f"the persona no longer mentions {name}"
-        assert registry.get(name) is not None, f"{name} is promised but not registered"
+        assert registry.get(name) is not None, f"{name} is no longer registered"
+        assert name not in prompt_file, (
+            f"the persona file names {name} again. It is read verbatim and "
+            "cannot know whether the orchestrator is configured; let "
+            "toolbox_rule() name the tools from the registry instead."
+        )
+
+    from jarvis.llm.agent import ConversationAgent
+
+    agent = ConversationAgent(jarvis, client=None, tools=registry)
+    generated = agent.system_prompt("hello", [])
+    for name in ("delegate_to_agents", "code_task"):
+        assert name in generated, (
+            f"{name} is registered but the prompt never tells the model it has it"
+        )
 
 
 @pytest.mark.parametrize(
@@ -894,4 +927,44 @@ async def test_a_fan_out_within_the_cap_claims_nothing_was_dropped(
     jarvis, _ = await build(tmp_path, fake)
     result = await call_service(jarvis, "delegate", {"tasks": ["a", "b"]})
     assert "tasks_dropped" not in result and "incomplete" not in result
+    await shutdown(jarvis)
+
+
+# --- M82: a coding job says when nobody can run it ------------------------------------
+async def test_a_remote_job_the_orchestrator_has_failed_fails_the_card_within_a_poll(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The operator's React app sat at "running · queued" for an hour while the
+    orchestrator had answered `status: error — opencode binary not installed`
+    from the first poll: the watcher read the wrapper's "ok", not the job's
+    state (26 Aug 2026)."""
+    import asyncio
+
+    from jarvis.integrations import orchestrator as module
+
+    monkeypatch.setattr(module, "POLL_SECONDS", 0.01)
+    fake = FakeOrchestrator(
+        {
+            "POST /code_task": {"job_id": "job-9", "status": "running"},
+            "GET /code_task/job-9": {
+                "job_id": "job-9",
+                "status": "error",
+                "error": "opencode binary not installed in orchestrator image",
+            },
+        }
+    )
+    jarvis, registry = await build(tmp_path, fake)
+    assert registry is not None
+    result = await registry.call("code_task", {"repo": "jarvis", "instruction": "make a react app"})
+    assert result["status"] == "started", result
+
+    task = None
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        tasks = [t for t in jarvis.tasks.tasks if t.kind == "code_task"]
+        if tasks and tasks[-1].status == "error":
+            task = tasks[-1]
+            break
+    assert task is not None, "the card never learned the job had failed"
+    assert "opencode binary not installed" in (task.error or "")
     await shutdown(jarvis)

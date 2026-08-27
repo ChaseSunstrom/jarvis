@@ -1,0 +1,71 @@
+{
+  "$comment": [
+    "What a tier MEANS, in one place.",
+    "",
+    "Three surfaces decide things from a tier and they had three ideas about it:",
+    "jarvis-core gates tier 3 and the gated domains, the console draws an",
+    "approval banner, the phone's policy engine raises a device tier — and the",
+    "MCP config comment promised '2 = confirm first' while the code ran tier 2",
+    "unprompted. A user reading that comment and installing an MCP server got",
+    "tools that ran without asking.",
+    "",
+    "Read by jarvis-core/tests/test_llm_tools.py, jarvis-web's",
+    "src/lib/tierContract.test.ts and android-app/tools/policy_truth_table_test.py."
+  ],
+  "version": 1,
+  "tiers": {
+    "1": {
+      "name": "direct",
+      "means": "Runs immediately. Reversible, cheap, and visible if it was wrong.",
+      "asks_first": false,
+      "examples": [
+        "light.turn_on",
+        "climate.get_state",
+        "web_search",
+        "note_read"
+      ]
+    },
+    "2": {
+      "name": "background",
+      "means": "Runs immediately, and is worth telling the user about — it takes time, costs something, or reaches outside the house. NOT an approval: a tier that asks is tier 3.",
+      "asks_first": false,
+      "announced": true,
+      "examples": [
+        "deep_research",
+        "delegate_to_agents",
+        "code_task",
+        "mcp_*"
+      ],
+      "phone": "The phone asks ONCE for a tier-2 action on the PHONE itself (NOTIFY -> ASK until the person chooses ALLOW_ALWAYS) — its own consent for its own device, recorded per action. This is not the server's approval: jarvis-core never holds a tier-2 call, and a tier-2 tool on the server runs immediately and is announced."
+    },
+    "3": {
+      "name": "approval",
+      "means": "Held until a human says yes, to that exact call, with the arguments pinned at the moment it was requested. A denial or an expiry runs nothing.",
+      "asks_first": true,
+      "examples": [
+        "execute_command",
+        "code_apply",
+        "code.push_branch",
+        "web.browse",
+        "files.write",
+        "lock.unlock"
+      ]
+    }
+  },
+  "rules": {
+    "a_server_may_only_raise": "A tier arriving from outside (a server telling a device what a call is worth) may RAISE the local tier, never lower it. Pinned by android-app/tools/policy_truth_table_test.py and jarvis-desktop/tests/test_policy.py.",
+    "gated_domains": "Some domains are tier 3 whatever the tool says, because the domain is the risk: `lock`, `notify`. See jarvis/const.py GATED_DOMAINS.",
+    "gated_services": "Every tier-3 tool has a service twin in GATED_SERVICES, so an automation cannot call at tier 1 what a model must ask for.",
+    "untrusted_raises": "After an untrusted result (a web page, screen text, a file), the rest of the turn is raised: a tier-1 call becomes an ask. Content that arrived from outside must not be able to spend the trust of the turn it arrived in.",
+    "held_summary": {
+      "field": "summary",
+      "means": "A held request may carry one sentence, composed by jarvis-core from the PINNED arguments at the moment the request is raised (`Tool.summarise`) — \"Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu\". A surface shows it in place of the tool's name and the raw arguments, and falls back to name-and-arguments when it is empty, which it is for every tool that has none. Never composed on a surface, never from the model's words: the sentence describes what will run. Read by jarvis-core/tests/test_tool_tiers_contract.py and jarvis-web's src/lib/tierContract.test.ts; the phone shows name-and-arguments (it has no field for the sentence yet).",
+      "$comment": "M67: a person approving `key: llm.options.temperature · value: 0.2` did not know what it was before, and \"from what\" is the whole decision."
+    },
+    "phone_asks_once_on_tier_2": "A tier-2 device action reaching the phone is asked about once and the answer remembered; the server-side meaning of tier 2 (runs immediately, announced) is unchanged."
+  },
+  "default_for_mcp": {
+    "value": 2,
+    "$comment": "An MCP server's tools are tier 2 by default: they run, and they are announced. This is written down here because the config comment used to say '2 = confirm first', which the code has never done — and a promise of a confirmation that never comes is worse than no promise."
+  }
+}

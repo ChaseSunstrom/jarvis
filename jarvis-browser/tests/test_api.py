@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from jarvis_browser.app import create_app
 from jarvis_browser.browser import FakeBackend
 
-from conftest import APPROVAL, AUTH, TOKEN
+from conftest import APPROVAL, AUTH, TOKEN, _no_robots, _no_search
 
 # Every route in the service, as (method, path, json-body).
 ROUTES = [
@@ -554,3 +554,71 @@ def test_unknown_action_is_rejected_by_the_schema(client, backend):
     r = act(client, sid, [{"action": "evaluate", "value": "fetch('/x')"}])
     assert r.status_code == 422
     assert backend.interactions == []
+
+
+# --- text first (M75) -----------------------------------------------------------
+# Every read in two research runs on 26 Aug 2026 ended "timed out after 20s on
+# /fetch": news sites that answer plain HTTP in under a second were being
+# rendered in a browser. The page is fetched as text first, on the same SSRF
+# checks; the browser is the fallback, for the page that has no text without it.
+import contextlib
+
+import httpx
+
+
+def _fetches(backend) -> list[str]:
+    return [i["url"] for i in backend.interactions if i["op"] == "fetch"]
+
+
+def _plain_app(settings, backend, pages: dict[str, tuple[int, dict, str]]):
+    """A jarvis-browser app whose plain fetches answer from `pages`
+    (url -> (status, headers, body)) through a mock transport."""
+    from jarvis_browser.app import create_app
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        status, headers, body = pages.get(str(request.url), (404, {}, ""))
+        return httpx.Response(status, headers=headers, text=body)
+
+    @contextlib.asynccontextmanager
+    async def factory():
+        # The real class: the autouse `no_outbound_http` fixture rebinds
+        # `httpx.AsyncClient` to a class that refuses, which is right for
+        # every path but this deliberate one.
+        async with httpx._client.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            yield c
+
+    app = create_app(settings, backend=backend, searcher=_no_search, robots_fetch=_no_robots)
+    app.state.plain_client_factory = factory
+    return app
+
+
+def test_a_page_with_text_is_read_over_plain_http_and_the_browser_is_not_started(settings, backend):
+    body = "<html><head><title>News</title></head><body><article>" + ("Bitcoin rose today. " * 60) + "</article></body></html>"
+    app = _plain_app(settings, backend, {"https://example.com/news": (200, {"content-type": "text/html; charset=utf-8"}, body)})
+    with TestClient(app) as c:
+        r = c.post("/fetch", json={"url": "https://example.com/news"}, headers=AUTH)
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    assert payload["fetched"] == "plain" and payload["status"] == 200
+    assert "Bitcoin rose today." in payload["text"] and payload["title"] == "News"
+    assert not _fetches(backend), "the browser was started for a page plain HTTP answered"
+
+
+def test_a_page_with_no_text_without_javascript_falls_back_to_the_browser(settings, backend):
+    body = "<html><head><title>App</title></head><body><div id='root'></div><script src='/app.js'></script></body></html>"
+    app = _plain_app(settings, backend, {"https://example.com/": (200, {"content-type": "text/html"}, body)})
+    with TestClient(app) as c:
+        r = c.post("/fetch", json={"url": "https://example.com/"}, headers=AUTH)
+    assert r.status_code == 200, r.text
+    assert "fetched" not in r.json() and "Body text" in r.json()["text"]
+    assert _fetches(backend) == ["https://example.com/"]
+
+
+def test_a_plain_redirect_to_the_lan_is_refused_and_the_browser_gets_the_url(settings, backend):
+    app = _plain_app(settings, backend, {"https://example.com/": (302, {"location": "http://127.0.0.1:8123/"}, "")})
+    with TestClient(app) as c:
+        r = c.post("/fetch", json={"url": "https://example.com/"}, headers=AUTH)
+    assert r.status_code == 200
+    # The plain path stopped at the hop; the browser (whose final URL is
+    # guarded too) read the page the fixture has for that address.
+    assert _fetches(backend) == ["https://example.com/"]

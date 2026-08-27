@@ -238,3 +238,35 @@ describe('ConsoleLink', () => {
 		link.stop();
 	});
 });
+
+describe('ConsoleLink, when the link drops', () => {
+	it('schedules the retry without calling setTimeout as a method of the link', async () => {
+		// Chrome throws "Illegal invocation" when window.setTimeout is called
+		// with anything but the window as `this`. Node does not care, so the
+		// bug — `this.setTimeoutFn(…)` on a stored, unbound setTimeout — lived
+		// until the first real drop of the link against a core that restarted.
+		// This stub is the browser's rule.
+		const original = globalThis.setTimeout;
+		const calls: number[] = [];
+		const strict = function (this: unknown, cb: () => void, ms?: number) {
+			if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+			calls.push(ms ?? 0);
+			return 1 as unknown as ReturnType<typeof setTimeout>;
+		};
+		(globalThis as any).setTimeout = strict;
+		try {
+			const link = new ConsoleLink({
+				connect: (async () => {
+					throw new Error('core restarting');
+				}) as any,
+				random: () => 0
+			});
+			link.start();
+			await flush();
+			expect(calls.length).toBeGreaterThan(0);
+			expect(['reconnecting', 'offline']).toContain(link.status);
+		} finally {
+			(globalThis as any).setTimeout = original;
+		}
+	});
+});

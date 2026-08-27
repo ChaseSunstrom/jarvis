@@ -5,6 +5,11 @@ import android.os.SystemClock
 import android.util.Log
 import ai.jarvis.app.automation.AutomationBridge
 import ai.jarvis.app.companion.CompanionMessageHandler
+import ai.jarvis.app.surface.SurfaceWatch
+import ai.jarvis.app.tasks.MomentWatch
+import ai.jarvis.app.tasks.TaskBoard
+import ai.jarvis.app.tasks.TaskFrames
+import ai.jarvis.app.tasks.TaskWatch
 import ai.jarvis.app.companion.CompanionProtocol
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
@@ -91,6 +96,13 @@ class JarvisChannel(
      * keeps the snapshot it was opened with.
      */
     private val configProvider: () -> ChannelConfig,
+    /**
+     * Told once the socket is authenticated AND registered (M98). The host uses
+     * it to ask the server for the speaker gate's mode right then, so a phone
+     * that has never opened the Whose-voice screen is not refused every turn
+     * by a house that enforces while its own Settings say the opposite.
+     */
+    private val afterRegistered: (() -> Unit)? = null,
     /** Injected for tests; production reads [AutomationBridge.dispatcher]. */
     private val dispatcherProvider: () -> AutomationBridge.ActionDispatcher? =
         { AutomationBridge.dispatcher },
@@ -554,6 +566,13 @@ class JarvisChannel(
         rememberActionCount(tierTable.size)
         startHeartbeat(current)
         flushEvents(current)
+        try {
+            afterRegistered?.invoke()
+        } catch (t: Throwable) {
+            // A hook must never take the channel down with it.
+            Log.w(TAG, "the after-registered hook failed", t)
+        }
+        watchTasks(current)
         // A fresh session means a fresh DevicePresence on the server. Comparing
         // against the pre-reconnect snapshot would leave it on its defaults —
         // locked, screen off, never interacted — until something happened to
@@ -577,6 +596,71 @@ class JarvisChannel(
             JarvisConfig(appContext).lastActionCount = count
         } catch (t: Throwable) {
             Log.d(TAG, "could not record the action count", t)
+        }
+    }
+
+    /**
+     * Ask to be told about long work, once per connection.
+     *
+     * Subscriptions FIRST, then the listing. A task that moves between the two
+     * would otherwise be missed for the life of the connection, and
+     * [TaskBoard.replaceAll] keeps whichever version is newer — so doing it in
+     * this order costs nothing and closes the window.
+     *
+     * The listing exists because the interesting case is a run that started
+     * while the phone was asleep in a pocket. Events alone would show it only
+     * once it next moved, and a research run's last move may be its last.
+     *
+     * Failure is not handled and does not need to be. An older jarvis-core
+     * answers `unknown_command` and fires nothing, which leaves the overlay
+     * empty — exactly the behaviour before this existed.
+     */
+    private fun watchTasks(current: Session) {
+        for (event in TaskBoard.EVENTS) {
+            current.send(TaskFrames.subscribe(nextRequestId.getAndIncrement(), event))
+        }
+        scope.launch {
+            val result = request(TaskFrames.TYPE_LIST, TaskFrames.listArgs())
+            if (result != null && ChannelFrames.isSuccess(result)) {
+                TaskWatch.onListing(result.optJSONObject("result"))
+            }
+        }
+        watchMoments(current)
+    }
+
+    /**
+     * And the things Jarvis said while nobody was looking.
+     *
+     * Same shape as the tasks above and for the same reason: subscribe first so
+     * nothing that arrives during the listing is lost, then list, because the
+     * interesting case is a record made while the phone was in a pocket. An
+     * older jarvis-core answers `unknown_command` and fires nothing, which
+     * leaves the inbox empty — the behaviour before this existed.
+     */
+    private fun watchMoments(current: Session) {
+        current.send(TaskFrames.subscribe(nextRequestId.getAndIncrement(), MomentWatch.EVENT))
+        scope.launch {
+            val result = request(MomentWatch.TYPE_LIST, MomentWatch.listArgs())
+            if (result != null && ChannelFrames.isSuccess(result)) {
+                MomentWatch.onListing(result.optJSONObject("result"))
+            }
+        }
+        watchSurface(current)
+    }
+
+    /**
+     * And what the house has put up (M103): the surface's panels, subscribe
+     * first and list second for the reason [watchTasks] gives. An older
+     * jarvis-core answers `unknown_command` and the voice screen shows no
+     * panels — the behaviour before this existed.
+     */
+    private fun watchSurface(current: Session) {
+        current.send(TaskFrames.subscribe(nextRequestId.getAndIncrement(), SurfaceWatch.EVENT))
+        scope.launch {
+            val result = request(SurfaceWatch.TYPE_LIST, SurfaceWatch.listArgs())
+            if (result != null && ChannelFrames.isSuccess(result)) {
+                SurfaceWatch.onListing(result.optJSONObject("result"))
+            }
         }
     }
 
@@ -752,6 +836,29 @@ class JarvisChannel(
             ChannelFrames.TYPE_RESULT -> onResult(current, msg)
 
             ChannelFrames.TYPE_DEVICE_COMMAND -> onDeviceCommand(current, msg)
+
+            ChannelFrames.TYPE_EVENT -> {
+                // Bus events this device subscribed to. Only the task ones are
+                // wanted; anything else was somebody else's subscription on a
+                // shared socket and is ignored rather than logged per frame.
+                //
+                // Guarded like `device_command`, and for a smaller version of
+                // the same reason. This frame paints a floating window over
+                // whatever the user is looking at, with a title and a line of
+                // text the sender chooses. Nothing here can be actioned — the
+                // overlay has one tap target and it opens this app — but an
+                // unauthenticated peer that can put words on somebody's screen
+                // is a phishing surface, and this socket has already been found
+                // once to accept a frame from before the handshake finished.
+                if (!current.authed || !current.registered) {
+                    Log.w(TAG, "an event arrived before the handshake finished; ignoring")
+                } else {
+                    // Two boards, one event branch: a task is work in
+                    // progress and a moment is a thing that already happened,
+                    // and neither should have to know about the other.
+                    if (!TaskWatch.onEvent(msg) && !MomentWatch.onEvent(msg)) SurfaceWatch.onEvent(msg)
+                }
+            }
 
             CompanionProtocol.TYPE_MESSAGE -> {
                 // Jarvis reaching the USER, not the user's phone. Deliberately

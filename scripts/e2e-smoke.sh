@@ -17,7 +17,7 @@
 # hung terminal.
 #
 #   ./scripts/e2e-smoke.sh
-#   OLLAMA_URL=http://127.0.0.1:11434 ./scripts/e2e-smoke.sh
+#   LLM_URL=http://127.0.0.1:8080/v1 ./scripts/e2e-smoke.sh
 #   ./scripts/e2e-smoke.sh --keep          # leave the temp config for a poke
 #
 # Exit status: 0 if nothing failed (skips are fine), 1 if any check failed,
@@ -32,7 +32,11 @@ REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 CORE_DIR="${REPO_DIR}/jarvis-core"
 
 # --- knobs ------------------------------------------------------------------
-OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
+# The model server, as `LLM_URL` names it: a base URL ending in /v1 for
+# anything OpenAI-compatible (llama-swap, llama.cpp, vLLM, LiteLLM), or an
+# Ollama base URL. `OLLAMA_URL` is still honoured for an install that predates
+# the rename.
+LLM_URL="${LLM_URL:-${OLLAMA_URL:-http://127.0.0.1:11434}}"
 WYOMING_HOST="${WYOMING_HOST:-127.0.0.1}"
 WYOMING_STT_PORT="${WYOMING_STT_PORT:-10300}"
 WYOMING_TTS_PORT="${WYOMING_TTS_PORT:-10200}"
@@ -210,7 +214,7 @@ voice:
       language: en
 
 llm:
-  url: ${OLLAMA_URL}
+  url: ${LLM_URL}
   model: ${OLLAMA_MODEL:-qwen3:8b}
   max_tool_rounds: 3
   persona: "You are Jarvis. Answer in one short sentence."
@@ -313,7 +317,7 @@ say "${BOLD}Jarvis end-to-end smoke test${RESET}"
 say "${DIM}core      ${CORE_DIR}"
 say "config    ${CONFIG_DIR}"
 say "listening 127.0.0.1:${PORT}"
-say "ollama    ${OLLAMA_URL}"
+say "model     ${LLM_URL}"
 say "wyoming   ${WYOMING_HOST} stt:${WYOMING_STT_PORT} tts:${WYOMING_TTS_PORT} wake:${WYOMING_WAKE_PORT}${RESET}"
 say ""
 
@@ -525,25 +529,34 @@ run_check "websocket handshake and command"   check_websocket
 say ""
 say "${BOLD}Local services${RESET} ${DIM}(skipped when not reachable)${RESET}"
 
-check_ollama_reachable() {
-    local models
-    models="$(curl -sS --max-time 5 "${OLLAMA_URL}/api/tags" 2>/dev/null \
+check_model_server_reachable() {
+    # `/v1/models` is the one endpoint every OpenAI-compatible server serves —
+    # llama-swap, llama.cpp, vLLM, LM Studio, LiteLLM. Ollama serves it too,
+    # alongside its own native model listing, so one probe covers both and
+    # this script stops assuming which model server the house runs.
+    local base models
+    base="${LLM_URL%/}"
+    [[ "$base" == */v1 ]] || base="${base}/v1"
+    models="$(curl -sS --max-time 5 "${base}/models" 2>/dev/null \
         | python3 -c 'import json,sys
 try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit(1)
-print(", ".join(m.get("name", "?") for m in d.get("models", [])) or "none pulled")' 2>/dev/null)"
+ids = [m.get("id", "?") for m in d.get("data", [])]
+print(", ".join(ids) or "none offered")' 2>/dev/null)"
     if [[ -z "$models" ]]; then
-        echo "no Ollama at ${OLLAMA_URL} — start it, or set OLLAMA_URL. The conversation check is skipped."
+        echo "nothing answered ${base}/models — start your model server, or set LLM_URL. The conversation check is skipped."
         return "$SKIP"
     fi
     echo "models: ${models}"
 }
 
 check_conversation() {
-    if ! curl -sS --max-time 5 -o /dev/null "${OLLAMA_URL}/api/tags" 2>/dev/null; then
-        echo "no Ollama at ${OLLAMA_URL}"
+    local base="${LLM_URL%/}"
+    [[ "$base" == */v1 ]] || base="${base}/v1"
+    if ! curl -sS --max-time 5 -o /dev/null "${base}/models" 2>/dev/null; then
+        echo "no model server at ${base}"
         return "$SKIP"
     fi
     local body speech
@@ -606,7 +619,7 @@ check_wake_reachable() {
     echo "reachable on ${WYOMING_HOST}:${WYOMING_WAKE_PORT} (detection needs a real utterance — see docs/verification.md)"
 }
 
-run_check "Ollama is reachable"           check_ollama_reachable
+run_check "Ollama is reachable"           check_model_server_reachable
 run_check "a real LLM turn answers"       check_conversation
 run_check "Wyoming STT is reachable"      check_stt_reachable
 run_check "Wyoming wake word is reachable" check_wake_reachable

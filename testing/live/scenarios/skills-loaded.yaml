@@ -1,0 +1,21 @@
+name: skills-loaded
+capability: skills
+# Not the stack: the skill it reads is one the rig drops in, not the operator's.
+ground: fixture
+gated-on: M13
+intent: >
+  A skill is a folder with a SKILL.md in it, and the promise is that dropping
+  one in teaches Jarvis something without a code change. The question here is
+  deliberately one only the skill can answer — "at most once per answer" is in
+  `house-style`'s body and nowhere else — because a question the persona could
+  also have answered proves the persona, not the skill. It also has to READ the
+  skill to answer: only the name and the description are in its prompt.
+variants: [text, voice]
+turns:
+  - say: "According to the house style guide, how many times may you say Sir in one answer?"
+    expect:
+      capability: skills
+      reply_contains: ["once"]
+      reply_means: >
+        says at most once per answer — it must not answer with a different
+        number or say it does not know

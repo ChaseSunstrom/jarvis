@@ -1,5 +1,13 @@
 # Pointing Jarvis at an OpenAI-compatible server
 
+**llama-swap** is the endpoint this house runs: it presents one
+OpenAI-compatible `/v1` and swaps the underlying llama.cpp process per model, so
+`LLM_MODEL`, `PLANNER_MODEL` and `CODER_MODEL` can name three different models
+without three servers. Nothing here is specific to it — it is one more
+OpenAI-compatible URL — but it is the one the defaults are written for, and
+`python3 scripts/check-model-server.py <url>/v1` reports which models it offers.
+
+
 jarvis-core speaks two wires. Ollama's own `/api/chat` is the default and needs
 no configuration. The other is `/v1/chat/completions`, which means the inference
 server becomes a deployment decision rather than an architectural one:

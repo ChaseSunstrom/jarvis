@@ -1,0 +1,27 @@
+name: task-background-plan
+capability: task
+intent: >
+  Work nobody waits for. Two things have to be true at once: the reply comes
+  back immediately (it must not narrate the whole job while somebody stands
+  there), and a real task appears, so the console can show what Jarvis is
+  doing.
+
+  The request is deliberately one that cannot be answered in a couple of tool
+  calls. An earlier version — "which lights are still on downstairs, tell me
+  later" — was answered inline, correctly: two `get_state` calls IS the
+  answer, and an assistant that queued a task for it would be wrong. The
+  scenario was under-specified, not the assistant.
+variants: [voice, text]
+turns:
+  - say: >
+      Go through every sensor in the house one at a time, work out which ones
+      look wrong, and write it up for me. Don't wait — tell me when it's done.
+    expect:
+      task: {kind: background, within: 45}
+      # M88: a background job with steps is a `task` panel on the voice screen
+      # while it runs, without being asked for.
+      surface: {kind: task, within: 45}
+      capability: task
+      reply_means: >
+        acknowledges that the work is under way and that it will report back —
+        it must NOT present a finished answer or a list of findings

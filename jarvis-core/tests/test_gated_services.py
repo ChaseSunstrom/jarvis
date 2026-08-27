@@ -144,11 +144,36 @@ TIER_THREE_TOOLS_AND_THEIR_SERVICE_TWINS: dict[str, str | None] = {
     "execute_command": "orchestrator.execute",
     "apply_code_task": "orchestrator.code_apply",
     "web_browse": "web.browse",
+    "write_file": "files.write",
+    # Jarvis Code. Edits a real repository — on its own branch, but on the
+    # operator's disk — and runs that repository's check commands.
+    "start_coding_job": "code.run",
+    # Sends a branch to a forge. The allow-list decides WHICH repository;
+    # this decides whether anything leaves the machine at all.
+    "push_branch": "code.push_branch",
     # --- no service form: the tool is the only door ----------------------
     # Registry-level tools with no `services.register` counterpart. An
     # automation cannot call these at all.
     "create_tool": None,
     "ask_user": None,
+    # Taking things out of the house (M69). The delete path they run is the
+    # core's `async_remove_entity` / `async_remove_device`, which the console
+    # reaches as a websocket command, not a service — an automation has no
+    # verb for it.
+    "remove_entities": None,
+    "remove_device": None,
+    # Changing a setting (M67) writes through the one function the console's
+    # `config/settings/set` websocket command is — a command, not a service —
+    # so an automation has no verb for it either. Landed beside M69, whose
+    # agent added this table's rows while M67's agent added the tool.
+    "change_setting": None,
+    # n8n (M77): a workflow acts on the world, so running, switching, making
+    # and replacing one are held. n8n's own API is the only door — there is no
+    # service form, and an automation cannot reach them.
+    "run_workflow": None,
+    "activate_workflow": None,
+    "create_workflow": None,
+    "update_workflow": None,
     # `lock_control` is Tier 3 *and* `domain="lock"`, so the service form
     # (`lock.lock` / `lock.unlock`) is already covered by GATED_DOMAINS.
     "lock_control": None,

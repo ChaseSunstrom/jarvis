@@ -34,10 +34,12 @@ with fakes and no network:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import itertools
 import logging
 import math
+import re
 import secrets
 import time
 import uuid
@@ -46,6 +48,9 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ..const import EVENT_VOICE_PIPELINE as _EVENT_VOICE_PIPELINE
+from ..const import VOICE_WAKE_END as _VOICE_WAKE_END
+from .speech_text import spoken_form
 from .audio import DEFAULT_CHANNELS, DEFAULT_RATE, DEFAULT_WIDTH, rms, wav_bytes
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -58,7 +63,7 @@ _LOGGER = logging.getLogger(__name__)
 EVENT_RUN_START = "run-start"
 EVENT_RUN_END = "run-end"
 EVENT_WAKE_START = "wake_word-start"
-EVENT_WAKE_END = "wake_word-end"
+EVENT_WAKE_END = _VOICE_WAKE_END
 EVENT_STT_START = "stt-start"
 EVENT_STT_VAD_START = "stt-vad-start"
 EVENT_STT_VAD_END = "stt-vad-end"
@@ -66,6 +71,11 @@ EVENT_STT_END = "stt-end"
 EVENT_INTENT_START = "intent-start"
 EVENT_INTENT_PROGRESS = "intent-progress"
 EVENT_INTENT_END = "intent-end"
+#: A sentence of the reply, synthesised while the model is still writing the
+#: rest (M60). Carries `index`, `text` and `tts_output` like `tts-end`; a client
+#: that plays chunks skips the whole-reply audio `tts-end` still delivers, and
+#: one that does not (the phone, today) plays that as it always did.
+EVENT_TTS_CHUNK = "tts-chunk"
 #: What the turn is doing between `intent-start` and `intent-end`, for a
 #: surface that shows the working rather than only the answer.
 #:
@@ -78,6 +88,10 @@ EVENT_INTENT_END = "intent-end"
 #: mistake.
 EVENT_INTENT_TOOL_START = "intent-tool-start"
 EVENT_INTENT_TOOL_END = "intent-tool-end"
+#: The model wrote a tool call out as text instead of making one, and is being
+#: asked to do it properly. Surfaced rather than only logged so a client can
+#: say "still working" instead of appearing to stall for an extra round.
+EVENT_INTENT_TOOL_NARRATED = "intent-tool-narrated"
 #: A slice of the model's reasoning. Never part of `intent-progress`, because
 #: that is the text the TTS speaks and the HUD renders as the reply.
 EVENT_INTENT_THINKING = "intent-thinking"
@@ -89,14 +103,20 @@ EVENT_ERROR = "error"
 #: events would give you nothing to set a threshold from.
 EVENT_SPEAKER_END = "speaker-end"
 
-#: The turn was refused because the voice was not the enrolled owner's.
+#: The verdict, on the house bus, for surfaces that did not run the turn.
+#: Shape and field names: `tests/contracts/speaker_verdict.json`.
+EVENT_SPEAKER_VERDICT = "jarvis_speaker_verdict"
+
+#: The turn was refused because the voice was not an enrolled person's.
 #: Distinct from every stt code: "I heard you and you are not who this belongs
 #: to" is a different thing from "I could not make out what you said", and a
 #: client that shows them the same way is lying to whichever one it is.
 ERROR_NOT_RECOGNISED = "speaker-not-recognised"
 
 # Bus event mirroring every pipeline event (handy for the API/websocket layer).
-EVENT_VOICE_PIPELINE = "voice_pipeline_event"
+#: Imported rather than retyped: `automation/triggers.py` listens for this
+#: and a second copy of the string is a rename that half-lands.
+EVENT_VOICE_PIPELINE = _EVENT_VOICE_PIPELINE
 
 STAGES = ("wake", "stt", "intent", "tts")
 STAGE_ORDER = {name: index for index, name in enumerate(STAGES)}
@@ -129,14 +149,29 @@ DEFAULT_VAD_SILENCE_MS = 900
 #: an hour of PCM.
 MAX_VERIFY_BYTES = 16000 * 2 * 20
 
-#: Turn events buffered between two ticks of the intent loop.
+#: Turn events buffered between two drains.
 #:
 #: Reasoning arrives token by token, so this fills fastest when a model is
 #: thinking hard — which is also when the client most wants to see something.
 #: Consecutive reasoning slices are coalesced into one frame on the way out
 #: (see `_drain_turn_events`), so in practice the queue holds tool events and a
 #: few hundred characters of thought, not one entry per token.
+#:
+#: The bound is a memory guard, not a schedule. It used to be both by accident:
+#: the only drain hung off the intent loop, which does not tick while the model
+#: is thinking or a tool is running, so a turn that queued more than this
+#: before its first token lost the oldest — the tool rows, and the reasoning
+#: before them, evicted from the left with nothing said. `TURN_EVENT_DRAIN_SECONDS`
+#: is the schedule now, and `test_a_tool_row_survives_a_turn_that_thinks_before_it_speaks`
+#: is what keeps the two separate.
 MAX_QUEUED_TURN_EVENTS = 512
+
+#: How often the intent stage flushes what the agent has reported.
+#:
+#: Fast enough that a tool row reaches the console while the tool is still
+#: running, slow enough that a turn spent entirely in reasoning costs a few
+#: dozen wakeups rather than one per token.
+TURN_EVENT_DRAIN_SECONDS = 0.05
 
 #: How much reasoning goes out in one frame. A thousand characters is a
 #: paragraph — enough that the collapsed block on the client grows visibly,
@@ -147,12 +182,14 @@ MAX_THINKING_FRAME_CHARS = 1000
 _TURN_EVENT_NAMES = {
     "tool-start": EVENT_INTENT_TOOL_START,
     "tool-end": EVENT_INTENT_TOOL_END,
+    "tool-narrated": EVENT_INTENT_TOOL_NARRATED,
     "thinking": EVENT_INTENT_THINKING,
 }
 
 _HANDLER_IDS = itertools.count(1)
 
 __all__ = [
+    "EVENT_INTENT_TOOL_NARRATED",
     "PipelineError",
     "PipelineEvent",
     "PipelineRun",
@@ -195,6 +232,41 @@ def _sane_timeout(timeout: Any) -> float:
     if not math.isfinite(value) or value <= 0:
         return DEFAULT_TIMEOUT
     return min(value, MAX_TIMEOUT)
+
+
+#: A chunk with nothing in it a synthesiser can pronounce.
+#:
+#: Piper splits its input into sentences and synthesises each one. A leading
+#: fragment with no letters or digits in it — "...?", "—", "!!" — phonemises to
+#: nothing, its wav writer closes having written no frames, and **the whole
+#: request fails**: `wave.Error: # channels not specified`, no audio for any of
+#: the text. Measured against `wyoming-piper:2.3.1` on this host: the reply
+#: "...? Shall I fetch something, Sir?" produced silence and an error, while the
+#: same sentence without the ellipsis produced 183 KB.
+#:
+#: A model reacting to a noise it could not make out opens with an ellipsis
+#: often, so this is not an edge case — it is what Jarvis says when the room is
+#: quiet and something rustles.
+_SPEAKABLE = re.compile(r"[0-9A-Za-z\u00c0-\u024f]")
+
+
+def speakable(text: str) -> str:
+    """`text` with the fragments no synthesiser can say removed.
+
+    Whitespace collapsed (a reply that begins with a blank line is common and
+    means nothing out loud) and any leading or trailing chunk that contains no
+    letter or digit dropped. Returns "" when nothing is left to say, which the
+    caller treats as "do not speak", never as an error.
+    """
+    # Said, not shown (M73): the markdown and the symbols the model writes for
+    # a screen become words here, and only here — the transcript, the console
+    # and the archive keep the reply as written.
+    collapsed = " ".join(spoken_form(str(text or "")).split())
+    if not collapsed:
+        return ""
+    parts = [part for part in re.split(r"(?<=[.!?])\s+", collapsed) if part]
+    kept = [part for part in parts if _SPEAKABLE.search(part)]
+    return " ".join(kept)
 
 
 def store_tts_audio(
@@ -240,6 +312,7 @@ class PipelineRun:
         tts_voice: str | None = None,
         wake_word: str | None = None,
         binary_handler_id: int | None = None,
+        early_speech: bool = True,
         timeout: float = DEFAULT_TIMEOUT,
         run_id: str | None = None,
         sample_rate: int = DEFAULT_RATE,
@@ -250,6 +323,7 @@ class PipelineRun:
         vad_threshold: float = DEFAULT_VAD_THRESHOLD,
         vad_silence_ms: int = DEFAULT_VAD_SILENCE_MS,
         tts_cache: dict[str, tuple[bytes, str]] | None = None,
+        device_id: str | None = None,
     ) -> None:
         if start_stage not in STAGE_ORDER:
             raise ValueError(f"unknown start_stage: {start_stage!r}")
@@ -283,6 +357,14 @@ class PipelineRun:
         self.vad_threshold = float(vad_threshold)
         self.vad_silence_ms = int(vad_silence_ms)
         self._tts_cache = tts_cache
+
+        #: Which satellite this run belongs to, when it belongs to one. Empty
+        #: for a run started by a browser or a REST call. On the bus mirror so
+        #: an automation can say "the wake word, but only in the workshop" —
+        #: without it every hook on a house-wide event fires for every room.
+        self.device_id = str(device_id or "")
+        #: Set when the run was stopped from outside rather than finishing (M96).
+        self.interrupted = False
 
         self.pipeline_id = getattr(pipeline, "id", None) or "jarvis"
         self.language = language or getattr(pipeline, "language", None) or "en"
@@ -320,7 +402,26 @@ class PipelineRun:
         self._turn_events: deque[tuple[str, dict[str, Any]]] = deque(
             maxlen=MAX_QUEUED_TURN_EVENTS
         )
+        #: Held while draining, so the intent loop and the ticker below cannot
+        #: emit at the same time.
+        self._drain_lock = asyncio.Lock()
         self._audio_ms = 0.0
+        #: Early speech (M60): how much of the reply has been synthesised
+        #: sentence by sentence, the chunks' urls, and whether a tool has run
+        #: this turn (which switches it off — see `_speak_early`).
+        self.early_speech = early_speech
+        self._spoken_upto = 0
+        self.spoken_chunks: list[str] = []
+        #: The sentences already synthesised, in order — what `_unspoken_tail`
+        #: subtracts from the reply by TEXT, since after a tool call the
+        #: authoritative reply is the last segment of the stream and a
+        #: character index into the stream means nothing in it (M74).
+        self._spoken_texts: list[str] = []
+        #: Set when a tool starts: the next delta opens a new segment, and the
+        #: cursor moves to its start so what the model wrote BEFORE the tool —
+        #: its guess — is never spoken after it (M74).
+        self._segment_reset = False
+        self._tools_ran = False
         #: The turn's audio, kept only while a gate is active and only up to
         #: :data:`MAX_VERIFY_BYTES`. Nothing is written to disk and it is
         #: dropped the moment the verdict is in — a voice assistant that
@@ -362,6 +463,9 @@ class PipelineRun:
             await self._fail(PipelineError("timeout", f"pipeline timed out after {self.timeout}s"))
         except asyncio.CancelledError:
             await self._fail(PipelineError("cancelled", "pipeline run was cancelled"))
+            # Stopped from outside (M96: assist_pipeline/stop, a barge-in, a
+            # socket gone): the end event says so, and the trace reads it.
+            self.interrupted = True
             raise
         except Exception as err:  # pragma: no cover - genuinely unexpected
             _LOGGER.exception("Unexpected error in pipeline run %s", self.run_id)
@@ -372,7 +476,18 @@ class PipelineRun:
             # thread holding a copy of somebody's audio after the turn it
             # belonged to has ended is the one thing this feature must not do.
             self._discard_verification()
-            await self._emit(EVENT_RUN_END, {})
+            if self.interrupted:
+                # On the record too (M102): the trace and the nightly review.
+                try:
+                    self.jarvis.bus.fire(
+                        "jarvis_run_stopped",
+                        {"run_id": self.run_id, "conversation_id": self.conversation_id,
+                         "seconds": round(time.monotonic() - self._started_at, 3) if getattr(self, "_started_at", None) else 0.0,
+                         "ok": False, "error": "stopped by the person", "name": "stop"},
+                    )
+                except Exception:  # pragma: no cover
+                    _LOGGER.debug("Could not record the stop", exc_info=True)
+            await self._emit(EVENT_RUN_END, {"interrupted": True} if self.interrupted else {})
         return self
 
     def _discard_verification(self) -> None:
@@ -600,17 +715,19 @@ class PipelineRun:
                         "server never heard, and the speaker gate is enforcing",
                         "an on-device recogniser",
                     )
-                    await self._emit(
-                        EVENT_SPEAKER_END,
-                        {
-                            "speaker_output": {
-                                "accepted": False,
-                                "reason": "unverifiable-transcript",
-                                "mode": gate.mode,
-                                "enforced": True,
-                            }
-                        },
-                    )
+                    refused = {
+                        "accepted": False,
+                        "reason": "unverifiable-transcript",
+                        "label": None,
+                        "nearest": None,
+                        "score": None,
+                        "threshold": None,
+                        "confidence": None,
+                        "mode": gate.mode,
+                        "enforced": True,
+                    }
+                    await self._emit(EVENT_SPEAKER_END, {"speaker_output": refused})
+                    self._fire_speaker_verdict(refused)
                     await self._fail(
                         PipelineError(
                             ERROR_NOT_RECOGNISED,
@@ -646,6 +763,7 @@ class PipelineRun:
         payload["mode"] = getattr(gate, "mode", "unknown")
         payload["enforced"] = bool(gate.blocks(verdict))
         await self._emit(EVENT_SPEAKER_END, {"speaker_output": payload})
+        self._fire_speaker_verdict(payload)
 
         if not gate.blocks(verdict):
             return None
@@ -657,11 +775,72 @@ class PipelineRun:
             getattr(verdict, "reason", "?"),
         )
         await self._fail(
-            PipelineError(ERROR_NOT_RECOGNISED, "that voice is not the enrolled owner's")
+            PipelineError(ERROR_NOT_RECOGNISED, "that voice is not an enrolled person's")
         )
         if getattr(gate, "on_reject", "speak") != "speak":
             return ""
         return str(getattr(gate, "refusal", "") or "")
+
+    def _fire_speaker_verdict(self, payload: dict[str, Any]) -> None:
+        """Put the verdict on the bus, under its own name.
+
+        `speaker-end` already reaches the client that ran the turn. This is
+        for everything else watching the house — the console's activity strip,
+        the phone's — which otherwise had no way to draw "a stranger spoke to
+        the kitchen satellite" because the pipeline mirror on the bus carries
+        every event of every run under one type. The fields are the contract
+        in `tests/contracts/speaker_verdict.json`; the console, the phone and
+        `tests/test_speaker_gate.py` all read it. Never audio, never a vector.
+        """
+        # One line in the container log per verdict — who, the score against
+        # the threshold, the reason — because on 27 Aug 2026 the only way to
+        # learn why a memory was filed under the operator was to replay the
+        # rig's voice against the API by hand.
+        _LOGGER.info(
+            "speaker: %s (nearest %s) score %s/%s %s",
+            payload.get("label") or "nobody",
+            payload.get("nearest") or "-",
+            payload.get("score"),
+            payload.get("threshold"),
+            payload.get("reason"),
+        )
+        if self.jarvis is None:
+            return
+        event = {
+            key: payload.get(key)
+            for key in (
+                "accepted", "reason", "label", "nearest", "score", "threshold",
+                "confidence", "mode", "enforced",
+            )
+        }
+        event.update(
+            {
+                "run_id": self.run_id,
+                "pipeline": self.pipeline_id,
+                "device_id": self.device_id,
+                "at": time.time(),
+            }
+        )
+        try:
+            self.jarvis.bus.fire(EVENT_SPEAKER_VERDICT, event)
+        except Exception:  # pragma: no cover - a bad listener must not kill a run
+            _LOGGER.debug("Could not fire %s", EVENT_SPEAKER_VERDICT, exc_info=True)
+
+    def speaker_label(self) -> str | None:
+        """Who this turn's voice was recognised as, or None.
+
+        None for every turn the gate did not accept: no gate, `off`, typed
+        text, a refusal let through in `observe`, and audio too short to
+        judge. It is what the agent is told about the speaker, so it says
+        nothing rather than guessing — "unverified" and "stranger" are not the
+        same claim, and a prompt line that conflated them would have the model
+        treating the owner with a cold as an intruder.
+        """
+        verdict = self.speaker_verdict
+        if verdict is None or not getattr(verdict, "accepted", False):
+            return None
+        label = getattr(verdict, "label", None)
+        return str(label) if label else None
 
     async def _persist_adapted_profile(self) -> None:
         """Write the profile back if this turn changed it.
@@ -674,13 +853,13 @@ class PipelineRun:
         if not getattr(gate, "profile_dirty", False):
             return
         gate.profile_dirty = False
-        profile = getattr(gate, "profile", None)
-        if profile is None or self.jarvis is None:
+        profiles = getattr(gate, "profiles", None)
+        if not profiles or self.jarvis is None:
             return
         try:
-            from ..integrations.voice import async_save_profile
+            from ..integrations.voice import async_save_profiles
 
-            await async_save_profile(self.jarvis, profile)
+            await async_save_profiles(self.jarvis, list(profiles))
         except Exception:
             _LOGGER.exception("Could not save the adapted voice profile")
 
@@ -689,14 +868,66 @@ class PipelineRun:
             EVENT_INTENT_START, {"engine": self.conversation_engine, "language": self.language}
         )
         reply = ""
+        # One utterance, one turn (M78). A phone's wake word and the console's
+        # microphone both heard the sentence; the copy that arrives second
+        # yields — no model, no tools, nothing said — and the surface is told
+        # which listener is answering. The console has no device id and
+        # counts as one listener of its own.
+        if self.jarvis is not None:
+            from ..api.devices import get_recent_listeners
+
+            listeners = get_recent_listeners(self.jarvis)
+            me = self.device_id or "console"
+            other = listeners.already_heard_from(text, me)
+            if other:
+                _LOGGER.info(
+                    "Pipeline %s: %r already heard from %s; this turn yields", self.run_id, text, other
+                )
+                await self._emit(
+                    EVENT_INTENT_END,
+                    {"chat_log": [], "duplicate_of": other, "conversation_id": self.conversation_id},
+                )
+                return ""
+            listeners.heard(text, me)
+            # Not listening while you enrol (M79): the phrases read aloud for
+            # a voiceprint are sentences, and every listener in the room hears
+            # them as commands. A client marks the enrolment before it records;
+            # a turn that starts inside the window yields the same way.
+            from ..api.speaker import enrolling
+
+            if enrolling(self.jarvis):
+                _LOGGER.info("Pipeline %s: an enrolment is in progress; this turn yields", self.run_id)
+                await self._emit(
+                    EVENT_INTENT_END,
+                    {"chat_log": [], "enrolling": True, "conversation_id": self.conversation_id},
+                )
+                return ""
+        # Drained by a task of its own, NOT off the back of the delta loop.
+        #
+        # The loop below used to carry the drain, with a comment claiming it
+        # ran "on every tick, not only when there is text". It did not, and the
+        # reason was one function away: `_converse_deltas` drops every falsy
+        # delta, and the agent's rounds only ever yield visible text. So during
+        # reasoning and during tool execution — precisely the seconds the rows
+        # exist to narrate — the loop never ticked and nothing drained.
+        #
+        # `_turn_events` is a bounded deque that evicts from the LEFT, so a
+        # turn that queued more than `MAX_QUEUED_TURN_EVENTS` events before
+        # producing its first token silently lost its oldest ones: the tool
+        # rows, and the reasoning that preceded them. Reproduced at 512.
+        #
+        # A ticker rather than a bigger bound: the bound is there to stop a
+        # runaway turn growing the process, and raising it would only move the
+        # cliff. The events want emitting when they happen.
+        drainer = asyncio.ensure_future(self._drain_turn_events_until_done())
         try:
             async for delta in self._converse_deltas(text):
-                # Drained on every tick, not only when there is text: a turn
-                # that spends nine seconds in tool calls produces no content
-                # delta at all, and a queue only flushed alongside one would
-                # hold the whole toolchain back until the model started
-                # speaking — which is exactly the interval the rows exist to
-                # narrate.
+                # Still drained here as well as on the ticker, and this is the
+                # half that guarantees ORDER: everything the agent queued
+                # before this delta is emitted before it. Reasoning that
+                # preceded a tool call has to reach the client ahead of the row
+                # for that call, or the transcript reads as though the model
+                # decided first and thought afterwards.
                 await self._drain_turn_events()
                 if not delta:
                     continue
@@ -705,17 +936,30 @@ class PipelineRun:
                     EVENT_INTENT_PROGRESS,
                     {"chat_log_delta": {"role": "assistant", "content": delta}},
                 )
+                await self._speak_early(reply, delta)
         except PipelineError:
             raise
         except Exception as err:
             raise PipelineError("intent-failed", str(err) or type(err).__name__) from err
         finally:
+            # Stop the ticker before the last drain, so the two cannot be
+            # emitting at once and interleave a half-merged reasoning frame.
+            drainer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drainer
             # Whatever the agent reported after the last delta — the tail of a
             # tool round, the close of a reasoning block — still belongs to this
             # turn, and on an error path it is the most informative thing there
             # is.
             await self._drain_turn_events()
 
+        # What the user is told, as distinct from everything the model said on
+        # the way there. See `_authoritative_answer`.
+        reply = self._authoritative_answer(reply)
+
+        # Only when there is one: `data` carries what there is, and an empty
+        # trace on every turn is a key every client has to ignore.
+        trace = self._memory_trace()
         await self._emit(
             EVENT_INTENT_END,
             {
@@ -723,7 +967,7 @@ class PipelineRun:
                     "response": {
                         "speech": {"plain": {"speech": reply, "extra_data": None}},
                         "response_type": "action_done",
-                        "data": {},
+                        "data": {"memory_used": trace} if trace else {},
                     },
                     "conversation_id": self.conversation_id,
                 }
@@ -731,9 +975,88 @@ class PipelineRun:
         )
         return reply
 
+    async def _speak_early(self, reply_so_far: str, delta: str = "") -> None:
+        """Synthesise each finished sentence while the model writes the next (M60).
+
+        The wait a person notices on a voice turn is from the end of their
+        sentence to the start of Jarvis's. Synthesising the whole reply after
+        the model has finished puts the model's entire generation in front of
+        the first word; this puts only the first sentence there. Each chunk is
+        stored like the whole reply and announced as `tts-chunk`.
+
+        Per segment (M74). Text before a tool call is the model guessing at
+        what the tool will find, and `_authoritative_answer` drops it; M60
+        therefore switched early speech off for the whole turn once a tool had
+        run — which put a research answer's entire generation, twelve
+        sentences, in front of its first word ("it took forever after it spit
+        out text"). Now a tool call opens a new segment: the cursor moves to
+        the first delta after it, the pending guess is never spoken, and the
+        answer the tool made possible is spoken as it is written like any
+        other. Off when the run has no synthesiser, and off by
+        `early_speech: false`.
+        """
+        if not self.early_speech or self.tts is None:
+            return
+        if self._segment_reset:
+            self._segment_reset = False
+            self._spoken_upto = len(reply_so_far) - len(delta)
+        pending = reply_so_far[self._spoken_upto :]
+        # A sentence is finished when its end mark is followed by more text;
+        # the last one is left for `tts-end`, which speaks what remains.
+        for match in re.finditer(r"(.+?[.!?])(?=\s+\S)", pending, re.S):
+            sentence = speakable(match.group(1).strip())
+            self._spoken_upto += match.end()
+            if not sentence:
+                continue
+            try:
+                pcm, rate, width, channels = await self._synthesize(sentence)
+            except Exception:  # noqa: BLE001 - early speech is a shortcut, never a failure
+                _LOGGER.debug("Pipeline %s: early speech failed; the reply is spoken whole", self.run_id)
+                self.early_speech = False
+                return
+            token, url = store_tts_audio(
+                self.jarvis, wav_bytes(pcm, rate, width, channels), TTS_MIME_TYPE, cache=self._tts_cache
+            )
+            self.spoken_chunks.append(url)
+            self._spoken_texts.append(sentence)
+            await self._emit(
+                EVENT_TTS_CHUNK,
+                {
+                    "index": len(self.spoken_chunks) - 1,
+                    "text": sentence,
+                    "tts_output": {"url": url, "mime_type": TTS_MIME_TYPE},
+                },
+            )
+
+    def _unspoken_tail(self, spoken_text: str) -> str:
+        """What the chunks did not cover, found by text rather than by index.
+
+        Walks the sentences already said through the reply in order; the tail
+        is what follows the last one found. A sentence that is not in the
+        reply (the model's guess before a tool, dropped by
+        `_authoritative_answer`) stops the walk where it is, so the tail can
+        only ever be too long — said twice — never cut in the middle.
+        """
+        cursor = 0
+        for said in self._spoken_texts:
+            at = spoken_text.find(said, cursor)
+            if at < 0:
+                break
+            cursor = at + len(said)
+        return spoken_text[cursor:].strip()
+
     async def _run_tts(self, text: str) -> str:
         if self.tts is None:
             raise PipelineError("tts-provider-missing", "no text-to-speech service configured")
+        # What is actually sent to the synthesiser. `self.response_text` keeps
+        # the reply as written — the transcript, the console and the archive all
+        # show what was said, not what was pronounceable.
+        text = speakable(text)
+        if not text:
+            _LOGGER.debug(
+                "Pipeline %s: nothing pronounceable in the reply, skipping TTS", self.run_id
+            )
+            return ""
         await self._emit(
             EVENT_TTS_START,
             {
@@ -743,6 +1066,11 @@ class PipelineRun:
                 "tts_input": text,
             },
         )
+        if self.spoken_chunks:
+            # The last sentence first (M74): a client playing the chunks is
+            # waiting for exactly this, and behind the whole-reply clip it
+            # waited for every sentence to be synthesised again.
+            await self._speak_tail(text)
         try:
             result = await self._synthesize(text)
             pcm, rate, width, channels = result
@@ -755,11 +1083,44 @@ class PipelineRun:
         self.tts_token, self.tts_url = store_tts_audio(
             self.jarvis, audio, TTS_MIME_TYPE, cache=self._tts_cache
         )
-        await self._emit(
-            EVENT_TTS_END,
-            {"tts_output": {"url": self.tts_url, "mime_type": TTS_MIME_TYPE}},
-        )
+        output: dict[str, Any] = {"url": self.tts_url, "mime_type": TTS_MIME_TYPE}
+        if self.spoken_chunks:
+            # What the chunks did not cover — the last sentence — as its own
+            # clip, so a client that played them plays only this; the whole
+            # reply above stays for a client that plays only `tts-end`. Two
+            # syntheses of the early sentences until every client chunks.
+            output["chunks"] = len(self.spoken_chunks)
+            # The tail was already sent as the last `tts-chunk` (M74), before
+            # the whole-reply clip above was even asked for; a client that
+            # played the chunks has nothing left to play. Kept in the payload,
+            # as None, so a client written against M60's shape still reads it.
+            output["remainder_url"] = None
+        await self._emit(EVENT_TTS_END, {"tts_output": output})
         return self.tts_url
+
+    async def _speak_tail(self, spoken_text: str) -> None:
+        """The part of the reply after the last early sentence, as the last chunk."""
+        tail = self._unspoken_tail(spoken_text)
+        if not tail:
+            return
+        try:
+            pcm, rate, width, channels = await self._synthesize(tail)
+        except Exception:  # noqa: BLE001 - the whole reply follows anyway
+            _LOGGER.debug("Pipeline %s: the tail failed; the whole reply follows", self.run_id)
+            return
+        _token, url = store_tts_audio(
+            self.jarvis, wav_bytes(pcm, rate, width, channels), TTS_MIME_TYPE, cache=self._tts_cache
+        )
+        self.spoken_chunks.append(url)
+        self._spoken_texts.append(tail)
+        await self._emit(
+            EVENT_TTS_CHUNK,
+            {
+                "index": len(self.spoken_chunks) - 1,
+                "text": tail,
+                "tts_output": {"url": url, "mime_type": TTS_MIME_TYPE},
+            },
+        )
 
     async def _synthesize(self, text: str) -> tuple[bytes, int, int, int]:
         try:
@@ -860,6 +1221,76 @@ class PipelineRun:
         if delta:
             yield delta
 
+    def _authoritative_answer(self, streamed: str) -> str:
+        """The agent's final answer, when it has one that differs from the stream.
+
+        The deltas are everything the model said, INCLUDING the words it wrote
+        in a round that then called a tool — a guess made before the tool ran.
+        Spoken, that is one breath containing both "the bed light is already
+        off, sir" and "the bed light is now off, sir", and there is no screen
+        out here to tell them apart.
+
+        `ConversationAgent` already separates the two (`ConversationResult.text`
+        versus `.preamble`). This asks for it, duck-typed and optional: any
+        other conversation agent — the stand-in, a test's two-line coroutine —
+        has no `last_result` and the stream is used unchanged. The prefix check
+        is what keeps a stale result from a previous turn out of this one.
+        """
+        # A bound method names its agent as `__self__`; the voice integration's
+        # wrapper (`_on_the_fast_model`) names it as `agent`, since a closure
+        # has no `__self__` — without that second look the drop never ran on
+        # a spoken turn and the model's guess was heard before its answer.
+        agent = getattr(self.converse, "__self__", None) or getattr(self.converse, "agent", None)
+        result = getattr(agent, "last_result", None)
+        preamble = str(getattr(result, "preamble", "") or "")
+        answer = str(getattr(result, "text", "") or "")
+        if not preamble or not answer:
+            return streamed
+        if not streamed.strip().startswith(preamble.strip()[:40]):
+            return streamed
+        _LOGGER.debug(
+            "Dropping %d characters of preamble from the spoken answer", len(preamble)
+        )
+        return answer
+
+    def _memory_trace(self) -> list[dict[str, str]]:
+        """The remembered notes this turn was actually given.
+
+        Sent with `intent-end` so a surface can answer "why did it say that?"
+        with the entries the model READ, rather than by asking the model — which
+        produces a plausible account of notes it may never have seen. Ids and
+        text together: the id is what the memory page links to, and the text is
+        the only part a person recognises.
+        """
+        agent = getattr(self.converse, "__self__", None) or getattr(self.converse, "agent", None)
+        result = getattr(agent, "last_result", None)
+        used = list(getattr(result, "memory_used", None) or [])
+        if not used or self.jarvis is None:
+            return []
+        store = self.jarvis.data.get("memory")
+        out: list[dict[str, str]] = []
+        for entry_id in used[:8]:
+            entry = store.get(entry_id) if store is not None else None
+            out.append({"id": entry_id, "text": getattr(entry, "text", "") or ""})
+        return out
+
+    def device_facts(self) -> dict[str, Any] | None:
+        """`{id, name, platform, area}` for the device this run came from, or None."""
+        if not self.device_id:
+            return None
+        facts: dict[str, Any] = {"id": self.device_id, "name": "", "platform": "", "area": ""}
+        try:
+            from ..api.devices import get_devices
+
+            link = get_devices(self.jarvis).get(self.device_id)
+        except Exception:  # noqa: BLE001 - a house without the hub still names the id
+            link = None
+        if link is not None:
+            facts["name"] = str(getattr(link, "name", "") or "")
+            facts["platform"] = str(getattr(link, "platform", "") or "")
+            facts["area"] = str(getattr(link, "area", "") or "")
+        return facts
+
     def _call_converse(self, text: str) -> Any:
         assert self.converse is not None
         try:
@@ -872,6 +1303,28 @@ class PipelineRun:
         # two-line coroutine — takes two arguments, and passing a third would
         # break all of them for a feature only the real agent implements.
         wants_events = "on_event" in params or takes_var_kw
+        # Who is speaking, for an agent that can take it — the same opt-in
+        # rule, and only when there is somebody to name: a turn the gate did
+        # not accept passes nothing, so the agent cannot mistake "unverified"
+        # for "a stranger" (see :meth:`speaker_label`). Not sent to a converse
+        # that lacks the parameter, or a stand-in in a test would break on the
+        # day the gate first recognised anyone.
+        extra: dict[str, Any] = {}
+        speaker = self.speaker_label()
+        if speaker is not None and ("speaker" in params or takes_var_kw):
+            extra["speaker"] = speaker
+        # `spoken` likewise (M66): whether this run will read the reply aloud,
+        # so a question the turn raises is not read aloud twice — once by the
+        # reply and once by the phone. Only the real agent takes it; the voice
+        # integration's wrapper forwards keywords, so it reaches the agent
+        # through that too.
+        wants_spoken = "spoken" in params or takes_var_kw
+        if wants_spoken:
+            extra["spoken"] = self.runs_stage("tts")
+        # Which device asked (M94), for an agent that can take it: the socket's
+        # device, named as the house knows it. Nothing for a run with no device.
+        if self.device_id and ("device" in params or takes_var_kw):
+            extra["device"] = self.device_facts()
         positional = [
             p
             for p in params.values()
@@ -879,7 +1332,11 @@ class PipelineRun:
         ]
         takes_var = any(p.kind is p.VAR_POSITIONAL for p in params.values())
         if wants_events:
-            return self.converse(text, self.conversation_id, on_event=self._on_turn_event)
+            return self.converse(
+                text, self.conversation_id, on_event=self._on_turn_event, **extra
+            )
+        if extra:
+            return self.converse(text, self.conversation_id, **extra)
         if len(positional) >= 2 or takes_var:
             return self.converse(text, self.conversation_id)
         if "conversation_id" in params:
@@ -899,6 +1356,21 @@ class PipelineRun:
             return
         self._turn_events.append((name, data if isinstance(data, dict) else {}))
 
+    async def _drain_turn_events_until_done(self) -> None:
+        """Flush the agent's turn events while the turn is still running.
+
+        Cancelled by the intent stage when the model stops streaming. The
+        interval is short enough that a tool row appears while the tool is
+        still running — which is the whole point of the row — and long enough
+        that a quiet turn costs a handful of wakeups.
+        """
+        try:
+            while True:
+                await asyncio.sleep(TURN_EVENT_DRAIN_SECONDS)
+                await self._drain_turn_events()
+        except asyncio.CancelledError:
+            raise
+
     async def _drain_turn_events(self) -> None:
         """Emit everything the agent has reported since the last tick.
 
@@ -908,9 +1380,19 @@ class PipelineRun:
         into one block anyway. Tool events are never merged — each is a
         distinct row with its own identity.
         """
+        # Serialised against the ticker: both call this, and two drains
+        # interleaving would split a coalesced reasoning frame in half and
+        # could emit a tool row between the two pieces.
+        async with self._drain_lock:
+            await self._drain_locked()
+
+    async def _drain_locked(self) -> None:
         pending: str = ""
         while self._turn_events:
             name, data = self._turn_events.popleft()
+            if name == EVENT_INTENT_TOOL_START:
+                self._tools_ran = True
+                self._segment_reset = True
             if name == EVENT_INTENT_THINKING:
                 pending += str(data.get("delta") or "")
                 if len(pending) < MAX_THINKING_FRAME_CHARS:
@@ -936,7 +1418,15 @@ class PipelineRun:
             try:
                 self.jarvis.bus.fire(
                     EVENT_VOICE_PIPELINE,
-                    {"run_id": self.run_id, "type": event_type, "data": data},
+                    {
+                        "run_id": self.run_id,
+                        "type": event_type,
+                        "data": data,
+                        # Identity, so a listener can filter without having to
+                        # correlate run ids with a second event.
+                        "pipeline": self.pipeline_id,
+                        "device_id": self.device_id,
+                    },
                 )
             except Exception:  # pragma: no cover - a bad listener must not kill a run
                 _LOGGER.debug("Could not mirror %s onto the bus", event_type, exc_info=True)

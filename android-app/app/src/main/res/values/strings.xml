@@ -144,6 +144,11 @@
     <string name="a11y_transcript">What you said: %1$s</string>
     <string name="a11y_response">Jarvis said: %1$s</string>
     <string name="a11y_tool_activity">Jarvis is using %1$s</string>
+    <!-- Long work. The progress word is deliberately a WORD when nobody
+         computed a percentage: "working" is honest, "0 percent" is not. -->
+    <string name="a11y_task_progress">Jarvis has work running: %1$s</string>
+    <string name="a11y_task_row">%1$s, %2$s. %3$s</string>
+    <string name="a11y_task_working">working, progress unknown</string>
     <string name="a11y_question">Jarvis asks: %1$s</string>
     <string name="a11y_approval">Approval needed: %1$s</string>
 
@@ -200,4 +205,6 @@
         still being sent to your server for every turn. Android needs an on-device recogniser and
         the language pack installed.</string>
     <string name="status_stt_streamed">Audio is streamed to your server, which transcribes it.</string>
+    <!-- The settings screen's one-sentence lede, under its title (M64). -->
+    <string name="settings_lede">This handset: the microphone and wake word, its permissions, and which server it talks to.</string>
 </resources>

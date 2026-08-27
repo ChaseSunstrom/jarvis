@@ -129,17 +129,40 @@ services:
       # and `.gitignore` already excludes `.storage/` everywhere in this repo.
       - ./.storage/jarvis-web:/app/.storage
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8199/healthz"]
+      # 127.0.0.1, not `localhost`. Inside this image `localhost` resolves to
+      # ::1 first, the node server binds IPv4, and wget got "connection
+      # refused" — so the container reported UNHEALTHY for two days while the
+      # console was answering every request perfectly well from the host. A
+      # healthcheck that is wrong is worse than none: it teaches you to ignore
+      # the column.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8199/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
 
+    # A node server rendering the console. SSR is the only thing that costs.
+    mem_limit: 1g
+    cpus: 1.5
+    # The console is built, not interpreted: a change under src/ has to go
+    # through vite before it is anything, so this rebuilds rather than syncs.
+    develop:
+      watch:
+        - action: rebuild
+          path: ./jarvis-web/src
+        - action: rebuild
+          path: ./jarvis-web/package.json
   jarvis-orchestrator:
     # Built here, never published: without this compose tries a registry
     # pull first and prints a scary "access denied" warning before falling
     # back to building anyway.
     pull_policy: build
-    build: ./jarvis-orchestrator
+    build:
+      context: ./jarvis-orchestrator
+      # The build reaches Debian and GitHub through the host's own network:
+      # BuildKit's default bridge could not reach deb.debian.org from this
+      # host (BLOCKERS, M82) while the running container — host networking —
+      # reaches both. `network: host` gives the build the same route.
+      network: host
     container_name: jarvis-orchestrator
     profiles: [agents]
     restart: unless-stopped
@@ -148,9 +171,15 @@ services:
         condition: service_completed_successfully
     network_mode: "host"           # binds :8188; ufw allows the core host only
     environment:
+      # The same model server and key jarvis-core uses (LLM_URL, LLM_API_KEY,
+      # LLM_MODEL in .env): a delegation that talks to a server nobody runs
+      # answers 404 with a green healthcheck. OLLAMA_URL stays as the fallback
+      # for an install that has not been repointed.
+      - LLM_URL=${LLM_URL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
-      - PLANNER_MODEL=${PLANNER_MODEL:-qwen3:8b}
-      - CODER_MODEL=${CODER_MODEL:-qwen2.5-coder:7b}
+      - PLANNER_MODEL=${PLANNER_MODEL:-${LLM_MODEL:-qwen3:8b}}
+      - CODER_MODEL=${CODER_MODEL:-${LLM_MODEL:-qwen2.5-coder:7b}}
       - WORKSPACE=/workspace
       # Two secrets, deliberately distinct. The service refuses to start if
       # either is unset.
@@ -163,11 +192,24 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8188/healthz')"]
+      # 127.0.0.1 for the same reason the console's uses it: `localhost` can
+      # resolve to ::1 first, and a service bound to IPv4 then reports
+      # unhealthy while answering every request it is given.
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8188/healthz')"]
       interval: 30s
       timeout: 5s
       retries: 3
 
+    # Fan-out to the model server; it holds requests, not models.
+    mem_limit: 1g
+    cpus: 1.5
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./jarvis-orchestrator/app
+          target: /srv/app
+        - action: rebuild
+          path: ./jarvis-orchestrator/requirements.txt
   jarvis-sandbox:
     # Built here, never published: without this compose tries a registry
     # pull first and prints a scary "access denied" warning before falling

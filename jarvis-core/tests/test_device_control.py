@@ -432,7 +432,11 @@ async def test_the_control_device_schema_follows_the_live_devices(jarvis, phone,
 
     get_devices(jarvis).disconnect(DESK)
     assert "enum" not in tool.parameters["properties"]["device"]
-    assert "No device is connected" in tool.description
+    # The wording is shorter than it was — the prompt budget is a ratchet and
+    # every word here is paid for on every round of every turn — but the claim
+    # is the same one: with nothing connected the model is told to say so
+    # rather than to invent a device.
+    assert "Nothing is connected" in tool.description
 
 
 async def test_the_model_dispatches_through_the_tool(jarvis, phone):
@@ -563,6 +567,36 @@ async def test_tell_user_goes_through_the_companion(jarvis):
     assert sent[0][0] == PHONE
     assert sent[0][1]["text"] == "The backup finished."
     assert sent[0][1]["kind"] == "say"
+
+
+async def test_tell_user_prefers_the_device_the_request_came_from(jarvis):
+    """M94. Two phones, presence pointing at the first; the turn came from the
+    second. With no device named, the message goes where the person asked
+    from — the room they are in — rather than where presence last saw them."""
+    from jarvis.api.devices import remember_device
+    from jarvis.bus import Context
+
+    presence = jarvis.data["presence"]
+    presence.register(PHONE, "Pixel 8", "android", ["ask"])
+    presence.register("tablet-1", "Kitchen tablet", "android", ["ask"])
+    presence.touch_interaction(PHONE)
+    sent = []
+
+    async def transport(device_id, payload):
+        sent.append((device_id, payload))
+        return True
+
+    jarvis.data["companion"].set_transport(transport)
+    ctx = Context(origin="llm")
+    remember_device(jarvis, ctx, {"id": "tablet-1", "name": "Kitchen tablet", "platform": "android", "area": "kitchen"})
+
+    result = await jarvis.data["llm_tools"].call("tell_user", {"message": "Done, Sir."}, ctx)
+    assert result["status"] == "delivered"
+    assert sent[0][0] == "tablet-1", sent
+    # A device named wins over the asking one.
+    sent.clear()
+    await jarvis.data["llm_tools"].call("tell_user", {"message": "Done.", "device": PHONE}, ctx)
+    assert sent[0][0] == PHONE
 
 
 async def test_a_question_reaches_the_phone_through_the_gate_not_around_it(jarvis):
@@ -737,6 +771,36 @@ async def test_untrusted_content_from_another_integration_raises_the_bar(jarvis,
     assert fresh["tier"] == TIER_AUTO
 
 
+async def test_the_registry_lets_control_device_raise_the_device_instead_of_holding_it(jarvis, phone):
+    """M43 holds every state-changing tool for approval once a turn has read
+    untrusted content. `control_device` declares `escalates_itself`, because
+    the device is the surface that asks: `_report` raises the tier to CONFIRM
+    with the reason verbatim, so the human sees the real action on the phone.
+    Held at the registry as well, the phone never saw the action and the server
+    asked about "control_device" instead — the harness self-test
+    `test_reading_untrusted_content_raises_the_next_action_to_confirm` is the
+    end-to-end twin of this.
+    """
+    link, wire = phone
+    registry = jarvis.data["llm_tools"]
+    context = Context(origin="llm")
+    mark_untrusted(jarvis, context)
+
+    command, result = await answer(
+        registry.call(
+            "control_device",
+            {"device": PHONE, "action": "get_battery", "reason": "Checking the battery, Sir."},
+            context,
+        ),
+        link, wire,
+    )
+    assert result.get("status") != "approval_required", result
+    assert command["tier"] == TIER_CONFIRM, "the device was not asked to confirm"
+    assert command["reason"] == "Checking the battery, Sir."
+    assert result["action"] == "get_battery" and "tier_raised" in result
+    assert not registry.pending_requests(), "the registry held the call as well"
+
+
 async def test_device_control_and_the_shared_store_agree(jarvis, manager):
     context = Context(origin="llm")
     manager.note_untrusted(context)
@@ -890,3 +954,55 @@ async def test_the_known_fenced_sources_are_all_wired_up(tmp_path):
         assert expected <= registered, expected - registered
     finally:
         await instance.async_stop()
+
+
+# ---------------------------------------------------------------------------
+# M98: a task definition shipped to the phone
+# ---------------------------------------------------------------------------
+
+TASK_BUNDLE = {
+    "version": 1,
+    "tasks": [
+        {
+            "id": "torch-on-charge",
+            "name": "Torch on charge",
+            "enabled": True,
+            "triggers": [{"type": "power_connected"}],
+            "steps": [{"type": "action", "action": "toggle_torch", "params": {"on": True}}],
+        }
+    ],
+}
+
+
+async def test_a_nested_bundle_reaches_the_phone_intact(jarvis, manager, phone):
+    """The phone's `import_tasks` takes a whole document as one parameter.
+
+    Everything else on the wire is flat strings and numbers, so the cleaning
+    between the tool and the frame was never exercised on a nested object; a
+    version that stringified or truncated (`MAX_TEXT` is 400) would have shipped
+    `"{'version': 1, 'tasks': [{'id': 'tor…"` and the phone would have imported
+    nothing, with the tool reporting success.
+    """
+    link, wire = phone
+    link.actions["import_tasks"] = link.actions["sms_send"].__class__.from_manifest(
+        {
+            "id": "import_tasks",
+            "tier": 3,
+            "description": "Install tasks on this phone",
+            "params": {"bundle": "object", "task": "object"},
+            "capability": "automation",
+            "available": True,
+        }
+    )
+    command, outcome = await answer(
+        manager.run(PHONE, "import_tasks", {"bundle": TASK_BUNDLE}, reason="the user asked"),
+        link,
+        wire,
+        result={"imported": 1, "held_for_consent": 0},
+    )
+    assert command["action"] == "import_tasks"
+    assert command["tier"] == 3
+    assert command["params"]["bundle"] == TASK_BUNDLE, command["params"]
+    assert isinstance(command["params"]["bundle"]["tasks"][0]["steps"][0]["params"]["on"], bool)
+    assert outcome["status"] == "ok"
+    assert outcome["result"]["imported"] == 1

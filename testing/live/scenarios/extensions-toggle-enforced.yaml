@@ -1,0 +1,57 @@
+name: extensions-toggle-enforced
+capability: house
+ground: stack
+gated-on: M46
+intent: >
+  The management surface's only claim worth making: a switch on a page moves
+  something in the running system.
+
+  Turning a skill off has to take it away from the MODEL, not off a list — a
+  skill hidden from a page is one still sitting in the system prompt, which is
+  the difference between a management surface and a filter. Asserted through
+  `jarvis/skills/list`, which is the store the prompt's skill index is built
+  from, rather than through the registry's own listing.
+
+  Flipped mid-conversation on purpose: that is when an operator actually
+  reaches for a switch, and a decision that only takes effect on the next
+  restart is not a management surface either.
+
+  What this scenario CANNOT show is the same claim for a plugin, where turning
+  one off withdraws its tools from the registry the model is offered. No
+  ToolPlugin is configured in a default deployment — calendar and mail need the
+  operator's own account — so that half is proved in `tests/test_extensions.py`
+  against a real registry instead.
+variants: [text]
+turns:
+  # A turn first, so what follows runs against a conversation already going.
+  - say: What time is it?
+    expect:
+      extension:
+        key: skill:homelab-status
+        enabled: true
+        skill_offered: [homelab-status]
+
+  - do:
+      extension:
+        key: skill:homelab-status
+        enabled: false
+    say: How is the homelab doing?
+    expect:
+      extension:
+        key: skill:homelab-status
+        enabled: false
+        skill_withheld: [homelab-status]
+        # The others are untouched: turning one off is not a mode.
+        skill_offered: [diary, note-taking, research-report]
+
+  # And back, so the scenario leaves the house as it found it.
+  - do:
+      extension:
+        key: skill:homelab-status
+        enabled: true
+    say: Thanks, that's all.
+    expect:
+      extension:
+        key: skill:homelab-status
+        enabled: true
+        skill_offered: [homelab-status]

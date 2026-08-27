@@ -83,15 +83,28 @@ async def setup_sensors(instance, config=None):
 
 
 class FakeCompanion:
-    """Stands in for the companion integration; records what it was told."""
+    """Stands in for the companion integration; records what it was told.
 
-    def __init__(self, jarvis):
+    `ask` is registered only when a test scripts an answer (`answers`), so the
+    tests written before M86 keep exercising the notify path.
+    """
+
+    def __init__(self, jarvis, answers=None):
         self.messages = []
+        self.questions = []
+        self.answers = list(answers or [])
         jarvis.services.register("companion", "notify", self, supports_response=True)
+        if answers is not None:
+            jarvis.services.register("companion", "ask", self.ask, supports_response=True)
 
     async def __call__(self, call):
         self.messages.append(dict(call.data))
         return {"status": "delivered", "message_id": "x"}
+
+    async def ask(self, call):
+        self.questions.append(dict(call.data))
+        answer = self.answers.pop(0) if self.answers else ""
+        return {"status": "delivered" if answer else "timeout", "message_id": "q", "answer": answer}
 
     @property
     def texts(self):
@@ -780,12 +793,12 @@ def test_limiter_per_rule_ceiling():
 # ===========================================================================
 # narration: end to end
 # ===========================================================================
-async def narrate_setup(jarvis, config, clock=None, minutes=None):
+async def narrate_setup(jarvis, config, clock=None, minutes=None, answers=None):
     if clock is not None:
         jarvis.data["narrate_clock"] = clock
     if minutes is not None:
         jarvis.data["narrate_local_minutes"] = lambda now: minutes
-    companion = FakeCompanion(jarvis)
+    companion = FakeCompanion(jarvis, answers=answers)
     await narrate_integration.async_setup(jarvis, config)
     return jarvis.data["narrate"], companion
 
@@ -1784,3 +1797,170 @@ async def test_the_loader_gives_narrate_a_real_tool_registry(jarvis):
     assert "Motion detected at the front door" in result["text"]
     assert "untrusted_sensor_content" in result["text"]
     assert turn_is_untrusted(jarvis, context) is True
+
+
+
+# ===========================================================================
+# M86: an offer with the notice — asked, and done only on a yes
+# ===========================================================================
+LOCK_RULE = {
+    "enabled": True,
+    "rules": [{"domains": ["lock"], "on_state": "unlocked",
+               "offer": {"service": "lock.lock", "question": "Shall I lock it?"}}],
+}
+
+
+class FakeLock:
+    def __init__(self, jarvis):
+        self.calls = []
+        jarvis.services.register("lock", "lock", self)
+
+    async def __call__(self, call):
+        self.calls.append(dict(call.data))
+
+
+async def test_an_offer_is_asked_with_the_notice_and_a_yes_runs_it(jarvis):
+    lock = FakeLock(jarvis)
+    _manager, companion = await narrate_setup(jarvis, LOCK_RULE, answers=["Yes"])
+    # A change, not an appearance: the narrator speaks of what happened to a
+    # thing it knew, so the lock is locked before it is found unlocked.
+    await flip(jarvis, "lock.back_door", "locked", {"friendly_name": "Back Door"})
+    await flip(jarvis, "lock.back_door", "unlocked", {"friendly_name": "Back Door"})
+    assert len(companion.questions) == 1, companion.messages
+    q = companion.questions[0]
+    assert q["options"] == ["Yes", "No"] and q["question"].endswith("Shall I lock it?")
+    assert "Back Door" in q["question"] or "back door" in q["question"].lower()
+    assert lock.calls == [{"entity_id": "lock.back_door"}]
+    assert companion.messages == [], "an offer is a question, not a notice as well"
+    event = jarvis.data["narrate"].history[-1]
+    assert event.acted is True and event.answered == "Yes"
+
+
+async def test_a_no_or_no_answer_leaves_the_house_as_it_was(jarvis):
+    lock = FakeLock(jarvis)
+    # A clock that steps 400 s between reads: the second unlock must fall outside the
+    # rule's per-entity debounce (min_interval, 300 s by default), or it is one question.
+    _manager, companion = await narrate_setup(jarvis, LOCK_RULE, clock=Ticker(step=400.0), answers=["No", ""])
+    # First seen is not a change (the narrator ignores an entity's first state
+    # unless the rule says on_startup), so the lock is locked before it is
+    # found unlocked — twice, 400 s apart, past the per-entity debounce.
+    await flip(jarvis, "lock.side_door", "locked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "unlocked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "locked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "unlocked", {"friendly_name": "Side Door"})
+    assert len(companion.questions) == 2
+    assert lock.calls == []
+    reasons = [e.reason for e in jarvis.data["narrate"].history if e.offer]
+    assert reasons == ["declined", "timeout"], reasons
+
+
+async def test_with_a_toolbox_the_offer_is_a_held_question_that_any_yes_resolves(jarvis):
+    """M86, second half: the offer is a held, answerable request — not a device's alone.
+
+    With no phone connected, `companion.ask` queued the question and nobody
+    knew it had been asked (the live rig, 27 Aug 2026). Held in the approvals
+    registry it shows on the console's bar, reaches a phone through the same
+    bridge every held question uses, and a spoken yes to ANY conversation is
+    its answer — a question the house raised belongs to whoever answers it.
+    """
+    from jarvis.integrations.narrate import OFFER_TOOL
+    from jarvis.llm.tools import ToolRegistry
+
+    lock = FakeLock(jarvis)
+    registry = ToolRegistry(jarvis)
+    jarvis.data["llm_tools"] = registry
+    _manager, companion = await narrate_setup(jarvis, LOCK_RULE, answers=["Yes"])
+    await flip(jarvis, "lock.back_door", "locked", {"friendly_name": "Back Door"})
+    await flip(jarvis, "lock.back_door", "unlocked", {"friendly_name": "Back Door"})
+
+    assert companion.questions == [], "held in the registry, not asked of the companion directly"
+    assert lock.calls == [], "nothing runs before the answer"
+    waiting = registry.pending_for_conversation("somebody-elses-conversation")
+    assert len(waiting) == 1 and waiting[0]["tool"] == OFFER_TOOL and waiting[0]["answerable"]
+    assert "Shall I lock it?" in waiting[0]["arguments"]["question"]
+    # what the bar, the phone and a spoken "which one?" show: the question, with Yes/No
+    assert waiting[0]["summary"] == waiting[0]["arguments"]["question"]
+    assert waiting[0]["choices"] == ["Yes", "No"]
+    asked = jarvis.data["narrate"].history[-1]
+    assert asked.delivered is True and asked.reason == "asked"
+    # not the model's to call
+    assert OFFER_TOOL not in [t["function"]["name"] for t in registry.as_openai_schema()]
+    assert OFFER_TOOL in registry.tools
+
+    outcome = await registry.approve_request(waiting[0]["request_id"], True, "yes, go ahead")
+    assert outcome.get("status") == "executed", outcome
+    assert lock.calls == [{"entity_id": "lock.back_door"}]
+    done = jarvis.data["narrate"].history[-1]
+    assert done.acted is True and done.answered == "yes, go ahead"
+    assert registry.pending_for_conversation("x") == []
+
+
+async def test_a_held_offer_answered_no_or_approved_bare_does_the_right_thing(jarvis):
+    """"No" through the same door leaves the house; a bare Approve is a yes."""
+    from jarvis.llm.tools import ToolRegistry
+
+    lock = FakeLock(jarvis)
+    registry = ToolRegistry(jarvis)
+    jarvis.data["llm_tools"] = registry
+    _manager, _companion = await narrate_setup(jarvis, LOCK_RULE, clock=Ticker(step=400.0))
+    await flip(jarvis, "lock.side_door", "locked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "unlocked", {"friendly_name": "Side Door"})
+    waiting = registry.pending_for_conversation("c1")
+    assert len(waiting) == 1, (waiting, [(e.reason, e.delivered) for e in jarvis.data["narrate"].history])
+    held = waiting[0]
+    await registry.approve_request(held["request_id"], True, "No")
+    assert lock.calls == []
+    assert jarvis.data["narrate"].history[-1].reason == "declined"
+
+    await flip(jarvis, "lock.side_door", "locked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "unlocked", {"friendly_name": "Side Door"})
+    (held,) = registry.pending_for_conversation("c2")
+    await registry.approve_request(held["request_id"], True, None)
+    assert lock.calls == [{"entity_id": "lock.side_door"}]
+
+
+async def test_the_shipped_garage_rule_holds_an_offer_for_the_demo_garage_door(jarvis):
+    """The rule that ships in configuration.yaml, against the demo house's own
+    garage door — which carried no device_class until 27 Aug 2026, so the rule
+    written for it could not fire on any house. Loaded from the file, so a
+    change to either side is caught here."""
+    import yaml
+
+    from jarvis.integrations.demo import DemoCover
+    from jarvis.llm.tools import ToolRegistry
+
+    loader = yaml.SafeLoader
+    loader.add_multi_constructor("!", lambda loader_, suffix, node: None)
+    shipped = Path(__file__).resolve().parents[1] / "config" / "configuration.yaml"
+    cfg = yaml.load(shipped.read_text(), Loader=loader)
+    rules = cfg["narrate"]
+    door = DemoCover("Garage Door", "garage_door", None, 0, "garage")
+    assert door._attr_device_class == "garage"
+    registry = ToolRegistry(jarvis)
+    jarvis.data["llm_tools"] = registry
+    # 06:50 in the house — inside the default quiet hours, which the garage rule refuses
+    await narrate_setup(jarvis, rules, minutes=6 * 60 + 50)
+    attrs = {"friendly_name": "Garage Door", "device_class": "garage", "current_position": 0}
+    await flip(jarvis, "cover.garage_door", "closed", attrs)
+    await flip(jarvis, "cover.garage_door", "opening", {**attrs, "current_position": 50})
+    await flip(jarvis, "cover.garage_door", "open", {**attrs, "current_position": 100})
+    (held,) = registry.pending_for_conversation("anyone")
+    assert held["summary"] == "The garage door has opened — Shall I close it?", held["summary"]
+    assert held["arguments"]["service"] == "cover.close_cover"
+
+
+async def test_without_an_ask_service_the_offer_is_a_notice(jarvis):
+    lock = FakeLock(jarvis)
+    _manager, companion = await narrate_setup(jarvis, LOCK_RULE)
+    await flip(jarvis, "lock.garden_door", "locked", {"friendly_name": "Garden Door"})
+    await flip(jarvis, "lock.garden_door", "unlocked", {"friendly_name": "Garden Door"})
+    assert len(companion.messages) == 1 and lock.calls == []
+
+
+def test_a_malformed_offer_is_dropped_not_kept_for_later():
+    from jarvis.integrations.narrate import build_rule
+
+    rule = build_rule({"domains": ["lock"], "offer": {"service": "lock"}}, 0, {})
+    assert rule is not None and rule.offer is None
+    rule = build_rule({"domains": ["lock"], "offer": {"service": "lock.lock"}}, 0, {})
+    assert rule.offer == {"service": "lock.lock", "question": "Shall I lock?"}

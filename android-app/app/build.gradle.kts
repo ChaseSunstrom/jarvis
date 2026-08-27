@@ -13,6 +13,8 @@ import java.util.zip.ZipFile
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 /*
@@ -58,6 +60,25 @@ android {
         // classes (config/WakeWordGate, config/ServerUrl, ui/ConsentGate, …);
         // these are the ones that need a device to mean anything.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Phone automation — driving THIS phone's other apps: reading their
+        // screens through an accessibility service, reading notifications,
+        // tapping things.
+        //
+        // Off at compile time, and that is the point of the milestone that
+        // added it (M22). The interfaces exist so the shape is designed rather
+        // than improvised later; nothing behind them runs, on any build, until
+        // somebody flips this and reads `docs/phone-automation.md` first. An
+        // assistant that can read every screen on a phone is a different
+        // product from one that turns the lights off, and enabling it is a
+        // decision a person makes with their eyes open.
+        //
+        // `-PphoneAutomation=true` at the command line, deliberately awkward.
+        buildConfigField(
+            "boolean",
+            "PHONE_AUTOMATION",
+            (project.findProperty("phoneAutomation") as String? ?: "false"),
+        )
     }
 
     buildTypes {
@@ -91,7 +112,10 @@ android {
         // UI is built programmatically (see ui/ and the ported activities).
         viewBinding = false
         dataBinding = false
-        compose = false
+        // On for the generated design-system theme (ui/theme/JarvisTheme.kt from
+        // design/tokens.json) and the Robolectric screenshot tests that use it;
+        // the screens themselves stay Views.
+        compose = true
         // BuildConfig.VERSION_NAME is used in the WebView user agent.
         buildConfig = true
     }
@@ -132,15 +156,49 @@ android {
             // a test that brushes against an Android type fails on its own
             // assertion rather than on "not mocked".
             isReturnDefaultValues = true
+            // Robolectric needs the real resources, and the screenshot tests
+            // need them to LOOK right: without this every colour is a stub and
+            // a golden would record an empty frame.
+            isIncludeAndroidResources = true
+
+            all {
+                it.systemProperty("robolectric.offline", "true")
+                // Robolectric fetches a ~150 MB `android-all` runtime per SDK
+                // from Maven Central, from inside the forked test JVM, at the
+                // moment the first test runs. On this host that JVM cannot
+                // resolve `repo1.maven.org` at all (`UnknownHostException`)
+                // while curl from the same shell gets a 200 — so the download
+                // happens in `tools/bootstrap-toolchain.sh`, where it is
+                // visible, resumable and cached, and the tests are offline.
+                it.systemProperty(
+                    "robolectric.dependency.dir",
+                    System.getenv("ROBOLECTRIC_DEPS")
+                        ?: "${System.getProperty("user.home")}/.cache/robolectric",
+                )
+                // A screenshot test renders a whole frame; the default heap
+                // runs out on the orb.
+                it.maxHeapSize = "2g"
+            }
         }
     }
 
     lint {
-        // AndroidManifest.xml declares the automation module's components
-        // (ai.jarvis.app.automation.**), which are owned by another module and
-        // may not exist yet. Lint's MissingClass must not fail the build.
-        abortOnError = false
+        // Blocking, as of M08. It was `false` because AndroidManifest.xml
+        // declares the automation module's components (ai.jarvis.app.automation.**)
+        // and lint's MissingClass fired on them — so the check that would have
+        // caught three real API-level errors was turned off for one it could
+        // not understand. The narrow rule is disabled instead, and the build
+        // fails on everything else.
+        abortOnError = true
+        disable += "MissingClass"
         checkReleaseBuilds = false
+        // Warnings are not errors: there are 236 of them, most about
+        // `String.format` locales in log lines, and a wall of them promoted to
+        // errors on the day this became blocking would have been reverted by
+        // lunchtime. The ratchet that matters here is `abortOnError` plus a
+        // zero-error build; tightening warnings is its own piece of work.
+        warningsAsErrors = false
+        textReport = true
     }
 
     packaging {
@@ -172,6 +230,13 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    // The design-system theme (ui/theme/JarvisTheme.kt is generated from
+    // design/tokens.json). Screens are still Views; see libs.versions.toml.
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -191,6 +256,17 @@ dependencies {
     implementation(libs.androidx.car.app.projected)
 
     testImplementation(libs.junit)
+    // Robolectric + Roborazzi: Android on the JVM, and a PNG out of it. This is
+    // how a screen is verified on a machine with no device attached, which is
+    // every machine this project is built on.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     // The REAL org.json on the unit-test classpath. `isReturnDefaultValues`
     // makes the stubbed android.jar copy return null instead of throwing, so
     // without this a test of JSON-parsing logic passes while proving nothing.

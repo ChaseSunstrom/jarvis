@@ -7,21 +7,20 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.RadialGradient
-import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.SweepGradient
-import android.graphics.Typeface
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import kotlin.math.max
+import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * The Jarvis HUD: the arc reactor, plus everything that frames it on a surface
@@ -102,9 +101,13 @@ class JarvisOrbView @JvmOverloads constructor(
     /** The single colour the chrome wears; the blend's current value. */
     private var currentColor = mode.color
 
-    /** Live reactor colours, blended toward the mode's over [COLOR_BLEND_MS]. */
-    private val blobColors = SiriPalette.blobs(mode.tone).copyOf()
-    private var coreColor = SiriPalette.core(mode.tone)
+    /**
+     * Live reactor colours, blended toward the mode's over [COLOR_BLEND_MS].
+     * Read from [ReactorOrb.Palette], not [SiriPalette] directly: at rest the
+     * instrument is the accent's, as the console's is (see the palette).
+     */
+    private val blobColors = ReactorOrb.Palette.blobs(mode.tone).copyOf()
+    private var coreColor = ReactorOrb.Palette.core(mode.tone)
 
     /** Where the blend started. */
     private var blendFrom = blobColors.copyOf()
@@ -119,8 +122,19 @@ class JarvisOrbView @JvmOverloads constructor(
     private var amplitude = 0f
     private var smoothedAmplitude = 0f
 
-    /** Draw brackets + wordmark + caption (for the activation popup). */
+    /** Draw the field and the caption (for the activation popup). */
     var chromeEnabled = true
+
+    /**
+     * The person asked for no motion (see [JarvisUi.reducedMotion]). Read on
+     * attach and when the clock starts, not per frame — it is a
+     * content-provider query, and this view draws sixty times a second. When
+     * true the reactor's clock does not advance: no blades, no coil, no iris,
+     * no breath. What still changes is what carries information — the level
+     * arc follows the voice, the colours follow the state — so the instrument
+     * responds without ever moving for its own sake.
+     */
+    private var stillness = false
 
     /**
      * Paint the full-view vignette behind the orb.
@@ -161,25 +175,49 @@ class JarvisOrbView @JvmOverloads constructor(
     private val frameSpec = ReactorOrb.Frame()
 
     private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val bracketPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = dp(2f)
-    }
-    private val wordmarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        textAlign = Paint.Align.CENTER
-    }
+    // The caption in mono: a state readout, which is data. There is no
+    // wordmark here any more — the brand is the bar's (see ConsoleFrame.brand),
+    // as it is on the console, where the reactor sits under the top bar and
+    // nothing is painted over it.
     private val captionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+        typeface = JarvisUi.MONO_FACE
         textAlign = Paint.Align.CENTER
     }
 
-    private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val edgePath = Path()
-    private val edgeRect = RectF()
-    private val edgeMatrix = android.graphics.Matrix()
-    private var edgeShader: SweepGradient? = null
+    /** The field lines behind the instrument: three faint circles, hairline. */
+    private val fieldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dp(FIELD_STROKE_DP)
+    }
     private val argbEvaluator = ArgbEvaluator()
+
+    /**
+     * The reactor's own clock, in seconds since this view started turning.
+     * Integrated from the wall clock in [advance] like everything else here,
+     * and handed to the renderer, which reads every period off it against the
+     * tokens — so the phone's blades take the same two minutes the web's do.
+     */
+    private var timeSeconds = 0f
+
+    /** When the last tool call lit the blades, on [timeSeconds]; -1 before any (M53). */
+    private var lastWorkAt = -1f
+    private val sweepSeconds = JarvisTokens.Motion.Dur.SWEEP / 1000f
+    private val speakSeconds = JarvisTokens.Motion.Reactor.SPEAK / 1000f
+
+    /** A camera is being looked at: the iris arcs gather and hold. */
+    var looking = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    /** A tool call started: light the blades once and let them settle. */
+    fun work() {
+        lastWorkAt = timeSeconds
+        invalidate()
+    }
 
     // --- animators ---------------------------------------------------------
 
@@ -271,19 +309,23 @@ class JarvisOrbView @JvmOverloads constructor(
         lastFrameMs = nowMs
         val dt = dtMs / 1000f
 
-        spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
-        breathPhase = (breathPhase + dt * ReactorOrb.TWO_PI / breathPeriodSeconds()) %
-            ReactorOrb.TWO_PI
-        // The blob field drifts at the same per-state rate the overlay uses, and
-        // faster with a voice, so both surfaces move alike.
-        val hz = SiriPalette.orbitHz(mode.tone) * (1f + 0.6f * smoothedAmplitude)
-        orbitPhase = (orbitPhase + dt * hz * ReactorOrb.TWO_PI) % ReactorOrb.TWO_PI
+        if (!stillness) {
+            spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
+            timeSeconds += dt
+            breathPhase = (breathPhase + dt * ReactorOrb.TWO_PI / breathPeriodSeconds()) %
+                ReactorOrb.TWO_PI
+            // The blob field drifts at the same per-state rate the overlay uses, and
+            // faster with a voice, so both surfaces move alike.
+            val hz = SiriPalette.orbitHz(mode.tone) * (1f + 0.6f * smoothedAmplitude)
+            orbitPhase = (orbitPhase + dt * hz * ReactorOrb.TWO_PI) % ReactorOrb.TWO_PI
+        }
         smoothedAmplitude += (amplitude - smoothedAmplitude) * 0.22f
         invalidate()
     }
 
     private fun startClock() {
         clockRunning = true
+        stillness = JarvisUi.reducedMotion(context)
         // Do not even start an animator the platform has already said it will
         // not run. At scale 0 `start()` ends it inside the same call, and the
         // end listener would restart the view on the vsync clock a frame later
@@ -485,11 +527,11 @@ class JarvisOrbView @JvmOverloads constructor(
     }
 
     private fun applyBlend(t: Float) {
-        val target = SiriPalette.blobs(mode.tone)
+        val target = ReactorOrb.Palette.blobs(mode.tone)
         for (i in blobColors.indices) {
             blobColors[i] = argbEvaluator.evaluate(t, blendFrom[i], target[i]) as Int
         }
-        coreColor = argbEvaluator.evaluate(t, blendCoreFrom, SiriPalette.core(mode.tone)) as Int
+        coreColor = argbEvaluator.evaluate(t, blendCoreFrom, ReactorOrb.Palette.core(mode.tone)) as Int
         currentColor = argbEvaluator.evaluate(t, blendRimFrom, mode.color) as Int
     }
 
@@ -497,17 +539,7 @@ class JarvisOrbView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        val inset = dp(EDGE_STROKE_DP) / 2f
-        edgeRect.set(inset, inset, w - inset, h - inset)
-        val corner = dp(24f)
-        edgePath.reset()
-        edgePath.addRoundRect(edgeRect, corner, corner, Path.Direction.CW)
-        edgePaint.strokeWidth = dp(EDGE_STROKE_DP)
-        edgeShader = SweepGradient(
-            w / 2f, h / 2f,
-            intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, currentColor, Color.TRANSPARENT),
-            floatArrayOf(0f, 0.55f, 0.8f, 1f)
-        )
+        invalidate()
     }
 
     /** Whether the clock was running when this view was last detached. */
@@ -515,6 +547,7 @@ class JarvisOrbView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        stillness = JarvisUi.reducedMotion(context)
         // The clock is torn down on detach; a view that comes back (a popup
         // reused by singleTask, a re-added overlay) must start turning again.
         if (wasRunning) startClock()
@@ -552,13 +585,10 @@ class JarvisOrbView @JvmOverloads constructor(
         val chromeA = boot?.chromeAlpha ?: a
 
         if (scrimEnabled) drawScrim(canvas, cx, cy, a)
-        if (chromeEnabled) drawBrackets(canvas, chromeA)
-        // It is chrome: a rounded rectangle traced around the VIEW is exactly
-        // the box every report of one has meant, so it goes wherever the
-        // brackets and the wordmark go — including through the handoff fade,
-        // which it used to be excluded from. (The boot draws its own scan line
-        // and the edge SWEEP would fight it; beginBoot marks the sweep done, so
-        // only the resting edge can appear here while a boot is driving.)
+        // It is chrome, so it goes wherever the wordmark goes — including
+        // through the handoff fade. What it draws now is Reactor II's field:
+        // three faint circles behind the instrument, not a rounded rectangle
+        // traced around the view, which was the box every report of one meant.
         if (chromeEnabled) drawEdgeLight(canvas, chromeA)
 
         val f = frameSpec
@@ -567,13 +597,27 @@ class JarvisOrbView @JvmOverloads constructor(
         f.radius = base * scale
         f.alpha = a
         f.level = smoothedAmplitude
+        f.time = timeSeconds
         f.phase = orbitPhase
         f.spinDeg = spinDeg
         f.blobs = blobColors
         f.core = coreColor
         f.rim = currentColor
+        f.idle = mode == Mode.IDLE
+        f.rimAlpha = if (mode == Mode.LISTENING || mode == Mode.SPEAKING) {
+            ReactorOrb.RIM_ALPHA_LIT
+        } else {
+            ReactorOrb.RIM_ALPHA_REST
+        }
         f.maxRadius = min(width, height) / 2f
         f.turbulence = mode == Mode.THINKING && boot == null
+        f.workSweep = if (lastWorkAt < 0f) 0f else (1f - (timeSeconds - lastWorkAt) / sweepSeconds).coerceIn(0f, 1f)
+        f.cadence = if (mode == Mode.SPEAKING) {
+            1f - ReactorOrb.CADENCE_DEPTH * (0.5f - 0.5f * cos(ReactorOrb.TWO_PI * timeSeconds / speakSeconds))
+        } else {
+            1f
+        }
+        f.looking = looking
         if (boot == null) {
             f.settleRings()
         } else {
@@ -594,8 +638,8 @@ class JarvisOrbView @JvmOverloads constructor(
             cx, cy, max(width, height) * 0.7f,
             intArrayOf(
                 withAlpha(currentColor, (26 * a).toInt()),
-                0xE60A0E14.toInt(),
-                0xF204070C.toInt()
+                JarvisTokens.Color.SCRIM,
+                JarvisTokens.Color.SCRIM_APPROVAL
             ),
             floatArrayOf(0f, 0.45f, 1f),
             Shader.TileMode.CLAMP
@@ -603,61 +647,47 @@ class JarvisOrbView @JvmOverloads constructor(
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
     }
 
-    private fun drawBrackets(canvas: Canvas, a: Float) {
-        bracketPaint.color = withAlpha(currentColor, (90 * a).toInt())
-        val m = dp(18f)
-        val len = dp(28f)
-        val w = width.toFloat(); val h = height.toFloat()
-        // top-left
-        canvas.drawLine(m, m, m + len, m, bracketPaint)
-        canvas.drawLine(m, m, m, m + len, bracketPaint)
-        // top-right
-        canvas.drawLine(w - m, m, w - m - len, m, bracketPaint)
-        canvas.drawLine(w - m, m, w - m, m + len, bracketPaint)
-        // bottom-left
-        canvas.drawLine(m, h - m, m + len, h - m, bracketPaint)
-        canvas.drawLine(m, h - m, m, h - m - len, bracketPaint)
-        // bottom-right
-        canvas.drawLine(w - m, h - m, w - m - len, h - m, bracketPaint)
-        canvas.drawLine(w - m, h - m, w - m, h - m - len, bracketPaint)
-    }
-
+    /**
+     * The field: Reactor II's three faint circles behind the instrument — one
+     * just outside the bezel, a dashed one further out, a plain one further
+     * still. They are what the reactor sits IN, and they are hairlines, so
+     * they cannot read as a box however the view is cut.
+     *
+     * Scaled by the chrome opacity, because the boot hands this view over
+     * mid-fade: anything drawn at full strength the instant `bootDrive` goes
+     * null snaps on around the screen while everything beside it is still
+     * fading up. The entrance sweep fades them in the same way.
+     */
     private fun drawEdgeLight(canvas: Canvas, chromeA: Float) {
-        val shader = edgeShader ?: return
-        if (!edgeSweepDone) {
-            // The sweep is a one-shot flourish at activation and is NOT scaled:
-            // it runs only from startEntrance, which finishes fading the view up
-            // (260 ms) before the sweep ends (350 ms), so there is nothing here
-            // for the chrome opacity to say.
-            edgeMatrix.setRotate(edgeSweepProgress * 360f - 90f, width / 2f, height / 2f)
-            shader.setLocalMatrix(edgeMatrix)
-            edgePaint.shader = shader
-            edgePaint.alpha = (255 * (1f - 0.3f * edgeSweepProgress)).toInt()
-        } else {
-            // The resting edge IS scaled, because the boot hands this view over
-            // mid-fade. Unscaled it was suppressed for the whole sequence and
-            // then appeared whole on the frame the handoff ended — a rounded
-            // rectangle the size of the screen snapping on, which is the "box
-            // around the orb" this app has already been reported for.
-            if (chromeA <= 0f) return
-            edgePaint.shader = null
-            edgePaint.color = currentColor
-            edgePaint.alpha = ((30 + 80 * smoothedAmplitude) * chromeA).toInt().coerceIn(0, 255)
-        }
-        canvas.drawPath(edgePath, edgePaint)
+        val entrance = if (edgeSweepDone) 1f else edgeSweepProgress
+        val a = entrance * chromeA
+        if (a <= 0f) return
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = restingOuterRadius()
+        if (r <= 0f) return
+        fieldPaint.pathEffect = null
+        fieldPaint.color = withAlpha(JarvisTokens.Color.LINE_HAIR, (255 * a).toInt())
+        canvas.drawCircle(cx, cy, r * FIELD_NEAR, fieldPaint)
+        canvas.drawCircle(cx, cy, r * FIELD_FAR, fieldPaint)
+        fieldPaint.pathEffect = DashPathEffect(floatArrayOf(dp(FIELD_DASH_DP), dp(FIELD_GAP_DP)), 0f)
+        canvas.drawCircle(cx, cy, r * FIELD_MID, fieldPaint)
+        fieldPaint.pathEffect = null
     }
 
     private fun drawText(canvas: Canvas, cx: Float, cy: Float, a: Float) {
         if (a <= 0f) return
-        wordmarkPaint.color = withAlpha(currentColor, (235 * a).toInt())
-        wordmarkPaint.textSize = dp(WORDMARK_DP)
-        wordmarkPaint.letterSpacing = WORDMARK_SPACING
-        canvas.drawText("JARVIS", cx, wordmarkBaselineY(), wordmarkPaint)
-
-        captionPaint.color = withAlpha(currentColor, (200 * a).toInt())
-        captionPaint.textSize = dp(13f)
-        captionPaint.letterSpacing = 0.4f
-        val botY = min(height - dp(56f), cy + restingOuterRadius() + dp(56f))
+        // The caption: the one line under the instrument that says which of
+        // five things Jarvis is doing. The console's `.cap`: the chrome face
+        // at the `--jv-fs-2xs` step, wide tracking, ALWAYS the accent at rest
+        // — the instrument above it carries the state's colour, and a caption
+        // that changed colour with it said the same thing twice. It was tinted
+        // per state and sized in dp, which does not follow the user's text
+        // size.
+        captionPaint.color = withAlpha(JarvisTokens.Color.ACCENT_DEEP, (255 * a).toInt())
+        captionPaint.textSize = JarvisUi.sp(context, JarvisUi.Type.LABEL)
+        captionPaint.letterSpacing = JarvisUi.TRACK_WIDE
+        val botY = min(height - dp(CAPTION_MARGIN_DP), cy + restingOuterRadius() + dp(CAPTION_MARGIN_DP))
         canvas.drawText(stateLabel, cx, botY, captionPaint)
     }
 
@@ -686,15 +716,18 @@ class JarvisOrbView @JvmOverloads constructor(
     /**
      * The outer boundary radius with the breathing and the mic level taken out.
      * The chrome is positioned against this rather than the live radius so the
-     * wordmark and the caption stay put while the orb breathes — and so the
-     * boot animation can land its own wordmark on exactly this baseline.
+     * caption stays put while the orb breathes — and so the boot animation can
+     * resolve its wordmark against the instrument's real bezel.
      */
     private fun restingOuterRadius(): Float = baseRadius() * ReactorOrb.OUTER_FACTOR
 
     /**
-     * Baseline of the JARVIS wordmark. [JarvisBootAnimation] calls this so the
-     * letters it resolves in finish exactly where the idle wordmark lives —
-     * there is no jump at the handoff because there is nowhere to jump to.
+     * Baseline of the wordmark [JarvisBootAnimation] resolves above the
+     * instrument during the power-on. This view no longer paints one of its
+     * own — the brand is the bar's, as on the console — so the boot's letters
+     * fade with the rest of its chrome at the handoff; they are placed off the
+     * bezel here so that they sit where the wordmark did, above the reactor
+     * and clear of it, whatever the screen.
      */
     fun wordmarkBaselineY(): Float =
         max(dp(72f), height / 2f - restingOuterRadius() - dp(48f))
@@ -752,7 +785,12 @@ class JarvisOrbView @JvmOverloads constructor(
         const val RING_GAUGE = ReactorOrb.RING_GAUGE
         const val RING_COUNT = ReactorOrb.RING_COUNT
 
-        /** Wordmark metrics, shared with [JarvisBootAnimation]. */
+        /**
+         * Wordmark metrics, for [JarvisBootAnimation]'s letters. Kept here
+         * because the boot resolves its wordmark against this view's geometry
+         * and `boot_timeline_test.py` pins the spacing to the timeline's end
+         * value; the view itself draws no wordmark since M64.
+         */
         const val WORDMARK_DP = 26f
         const val WORDMARK_SPACING = 0.55f
 
@@ -780,7 +818,16 @@ class JarvisOrbView @JvmOverloads constructor(
          */
         private const val AMPLITUDE_GAIN = 4f
 
-        private const val EDGE_STROKE_DP = 3f
+        /** The field lines' stroke and dash, in dp, and their radii as multiples of the bezel's. */
+        private const val FIELD_STROKE_DP = 1f
+        private const val FIELD_DASH_DP = 1f
+        private const val FIELD_GAP_DP = 10f
+        private const val FIELD_NEAR = 1.18f
+        private const val FIELD_MID = 1.62f
+        private const val FIELD_FAR = 2.2f
+
+        /** The caption's distance from the bezel, in dp. Its size is the label step. */
+        private const val CAPTION_MARGIN_DP = 56f
 
         /**
          * Period of the ticker. Nothing reads its value — every quantity is

@@ -136,16 +136,19 @@ Two things about this class are worth knowing before editing it:
 
 Every button on `MainActivity` and `SettingsActivity` opens something or says
 why it cannot. The two that matter are AUTOMATIONS and AUDIT LOG: both point at
-`ai.jarvis.app.automation.ui.*` activities that are **declared in the manifest**
-and **not implemented in this build**. That combination does not throw
-`ActivityNotFoundException` — the intent resolves, and the app dies later with
-"Unable to instantiate activity". The test asserts the *toast*, which is the
-only positive evidence that `JarvisScreens.isPresent` ran, rather than merely
-"nothing crashed", which would also pass on a build where the crash happens one
-frame later.
+`ai.jarvis.app.automation.ui.*` activities that are **declared in the
+manifest** and launched by class name. They are implemented, so these cases
+assert the screen actually reaches the foreground.
 
-If the automation module ever lands, these cases notice and assert that the
-screen opens instead.
+The branch matters anyway. A build that strips the automation module keeps the
+manifest entries, and that combination does not throw
+`ActivityNotFoundException` — the intent resolves, and the app dies later with
+"Unable to instantiate activity". So when the class is absent the test asserts
+the *toast*, which is the only positive evidence that `JarvisScreens.isPresent`
+ran, rather than merely "nothing crashed", which would also pass on a build
+where the crash happens one frame later. `assertUnimplementedScreenIsHandled`
+picks the branch by asking whether the class exists, so neither version of the
+build reports the other's behaviour as a defect.
 
 ### `SettingsPersistenceTest`
 

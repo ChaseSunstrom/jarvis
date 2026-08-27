@@ -1,0 +1,32 @@
+name: sensors-compare
+capability: sensors
+gated-on: M92
+intent: >
+  "Which room is the coldest?" is a comparison across sensors, which no
+  snapshot in the prompt can stand in for — it is the sensor_compare tool
+  (M57) or a guess. The demo house's garage is the cold one.
+variants: [voice, text]
+setup:
+  # The garage temperature is the rig's own sensor, announced here over MQTT
+  # as a bridge would — sensors-discovered used to be the only scenario that
+  # made it, and this one passed or failed on whether that had run first.
+  mqtt_publish:
+    - topic: homeassistant/sensor/jarvis_test_garage_temp/config
+      retain: true
+      payload:
+        name: Garage Temperature
+        unique_id: jarvis_test_garage_temp
+        state_topic: jarvis-test/garage/temperature
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+    - topic: jarvis-test/garage/temperature
+      retain: true
+      payload: "12.5"
+turns:
+  - say: "Which room is the coldest right now?"
+    expect:
+      capability: sensors
+      # "The garage, Sir — 12.5 °C" IS the answer to "which is coldest?"; the
+      # eighteenth house's judge wanted the word "coldest" said back.
+      reply_means: "answers that it is the garage, with its temperature (it need not repeat the word coldest; it may add that it is the only room with a reading)"

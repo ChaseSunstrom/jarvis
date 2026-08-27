@@ -1,0 +1,30 @@
+{
+  "name": "jarvis-desktop-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The Jarvis console in a native shell: tray, notifications, push-to-talk.",
+  "main": "dist/main/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "npm run build && electron .",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "dist:dir": "npm run build && electron-builder --dir"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1",
+    "@types/node": "22.10.2",
+    "electron": "33.3.1",
+    "electron-builder": "25.1.8",
+    "typescript": "5.7.2",
+    "vitest": "2.1.8"
+  },
+  "build": {
+    "appId": "ai.jarvis.desktop",
+    "productName": "Jarvis",
+    "files": ["dist/**/*", "src/renderer/**/*", "package.json"],
+    "directories": { "output": "dist-app" },
+    "linux": { "target": ["dir"], "category": "Utility" }
+  }
+}

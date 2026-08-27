@@ -1,0 +1,41 @@
+name: explain-yourself
+capability: answer
+gated-on: M95
+intent: >
+  "Why did you say that? What did you look at?" was answered by reconstruction
+  — live, an apology for a mistake that had not been made (the agentic audit,
+  27 Aug 2026). explain_last_turn reads the previous turn from the archive:
+  the tools it called and the memory it used, server-authored, never guessed.
+variants: [text]
+setup:
+  # The garage temperature is the rig's own sensor, announced here over MQTT
+  # as a bridge would — sensors-discovered used to be the only scenario that
+  # made it, and this one passed or failed on whether that had run first.
+  mqtt_publish:
+    - topic: homeassistant/sensor/jarvis_test_garage_temp/config
+      retain: true
+      payload:
+        name: Garage Temperature
+        unique_id: jarvis_test_garage_temp
+        state_topic: jarvis-test/garage/temperature
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+    - topic: jarvis-test/garage/temperature
+      retain: true
+      payload: "12.5"
+turns:
+  - say: "What's the temperature in the garage?"
+    expect:
+      # No `capability:` here: the reading is in the house summary the model
+      # is given, and answering from it — no tool — is right (the sixteenth
+      # house, 27 Aug 2026: "The garage is sitting at 12.5 °C, Sir"). The
+      # second turn is the point: what it looked at, from the record.
+      reply_means: "gives the garage temperature as a number"
+  - say: "Why did you say that? What did you look at to answer?"
+    expect:
+      reply_means: >
+        accounts for its own answer from the record: names the sensor reading it
+        used and where it came from — the house summary it is given, or a tool it
+        called ("no tool; the reading was in the summary" is a true account) —
+        and does not apologise for a mistake it did not make

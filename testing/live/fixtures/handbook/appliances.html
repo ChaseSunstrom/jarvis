@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Appliances — The Fixture Handbook</title>
+<h1>Appliances</h1>
+<p>This page's figures are written by JavaScript, exactly as a dashboard's are.
+A fetch that reads the HTML and stops sees the sentence below and nothing
+else — which is the difference this repository's one Chromium exists to make.</p>
+
+<div id="specs">Loading the appliance register…</div>
+
+<noscript>
+  <p>The appliance register needs JavaScript.</p>
+</noscript>
+
+<script>
+  // Written from data rather than markup, and after a tick, so a reader that
+  // does not run scripts cannot see it and one that does not WAIT cannot
+  // either. Both are real failure modes of a page fetcher.
+  const register = [
+    { name: "Dishwasher", model: "Aquila 6", power: "2.2 kW", installed: 2022 },
+    { name: "Washing machine", model: "Corvus 8", power: "2.1 kW", installed: 2020 },
+    { name: "Immersion heater", model: "Vesper IH3", power: "3 kW", installed: 2019 },
+  ];
+  setTimeout(() => {
+    const rows = register
+      .map((a) => `<li><b>${a.name}</b> — ${a.model}, ${a.power}, fitted ${a.installed}</li>`)
+      .join("");
+    document.getElementById("specs").innerHTML =
+      `<p>The register lists <b>three</b> fixed appliances.</p><ul>${rows}</ul>` +
+      `<p>The largest single load is the <b>immersion heater</b> at <b>3 kW</b>.</p>`;
+  }, 120);
+</script>

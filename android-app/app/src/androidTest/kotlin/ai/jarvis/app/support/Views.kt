@@ -75,7 +75,7 @@ object Views {
     /**
      * A case-insensitive UiAutomator text pattern.
      *
-     * Load-bearing, not tidiness. `JarvisUi.pill` and `JarvisUi.ghost` set
+     * Load-bearing, not tidiness. `JarvisUi.primary` and `JarvisUi.button` set
      * `isAllCaps = true`, which is a *display* transformation: the button reads
      * "YES" on screen while `TextView.getText()` — and therefore the
      * accessibility node UiAutomator matches against — still holds the original
@@ -126,13 +126,13 @@ object Views {
 
         // And sideways, because not every off-screen control is below.
         //
-        // The console frame's nav is a HorizontalScrollView — six monospace
-        // labels do not fit a phone's width — and PHONE is the last of them, so
-        // it starts past the right edge on every device this suite runs on.
-        // Scrolling only up and down reported it as "No button labelled PHONE
-        // on screen", which was true and misleading in the same breath: it was
-        // on the screen's strip, one swipe away, and the helper could not
-        // reach it.
+        // The console frame's nav is a HorizontalScrollView. When it held six
+        // monospace labels the last of them, PHONE, started past the right edge
+        // on every device this suite runs on, and scrolling only up and down
+        // reported "No button labelled PHONE on screen" — true and misleading
+        // in the same breath: it was on the strip, one swipe away, and the
+        // helper could not reach it. The strip is the console's five labels
+        // now and PHONE is pinned beside it, but a strip is scrollable by design.
         //
         // Left first for the same reason the vertical pass starts at the top: a
         // strip a previous assertion already scrolled would otherwise be

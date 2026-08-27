@@ -1,0 +1,16 @@
+name: tool-authored-and-listed
+capability: answer
+gated-on: M97
+intent: >
+  When Jarvis makes itself a tool it says so once and the change is on the
+  record: "what's new?" answers from that record, and the Tools screen marks
+  the tool as authored. Here the rig asks what is new after a capability
+  moment has been recorded by the house.
+variants: [text]
+turns:
+  - say: "What's new? What can you do now that you couldn't before?"
+    expect:
+      reply_means: >
+        answers from Jarvis's own record of new capabilities — names what was
+        added (a tool, a skill or a server) or says plainly that nothing new
+        has been added lately; does not invent capabilities

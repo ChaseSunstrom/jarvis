@@ -1,0 +1,19 @@
+name: routine-by-voice
+capability: house
+gated-on: M97
+intent: >
+  "Every weekday at seven, turn on the kitchen lights" is an automation
+  authored by voice (create_automation), and the one thing that lets a person
+  catch a wrong trigger is hearing it read back — "weekdays at 07:00: kitchen
+  lights on" — and being able to list it later.
+variants: [text]
+turns:
+  - say: "Every weekday at seven in the morning, turn on the kitchen lights."
+    expect:
+      reply_means: >
+        confirms the routine and reads it back — weekdays (or Monday to
+        Friday) at seven in the morning, the kitchen lights on — without
+        claiming it has turned anything on now
+  - say: "What routines do I have?"
+    expect:
+      reply_means: "names the weekday kitchen-lights routine (and any others), from the list"

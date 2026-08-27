@@ -1,0 +1,60 @@
+name: sensors-discovered
+capability: sensors
+gated-on: M57
+intent: >
+  Any sensor: a device announces itself over MQTT discovery the way
+  Zigbee2MQTT, ESPHome and rtl_433 do — a config on homeassistant/…/config,
+  then readings on its state topic — and Jarvis can answer a question about
+  it a moment later, with the reading and its unit. The current reading is in
+  the house state the model already holds, so that turn may be answered
+  without a tool and is not scored as a routing; the lowest over the last
+  hour is not in any snapshot, and that turn must reach for the sensor tools
+  (sensor_history) rather than guess. The rig is the device here: it
+  publishes to the stack's own broker. Cleared afterwards by an empty
+  retained config, which is how the protocol removes a device.
+variants: [text]
+turns:
+  - do:
+      mqtt_publish:
+        - topic: homeassistant/sensor/jarvis_test_garage_temp/config
+          retain: true
+          payload:
+            name: Garage Temperature
+            unique_id: jarvis_test_garage_temp
+            state_topic: jarvis-test/garage/temperature
+            unit_of_measurement: "°C"
+            device_class: temperature
+            state_class: measurement
+            device: {identifiers: ["jarvis_test_garage"], name: "Garage sensor (test)", manufacturer: "the live rig"}
+        - topic: jarvis-test/garage/temperature
+          retain: true
+          payload: "11.0"
+    observe: true
+    wait: 2
+    expect: {}
+  - do:
+      mqtt_publish:
+        - topic: jarvis-test/garage/temperature
+          retain: true
+          payload: "12.5"
+    wait: 3
+    say: "What's the temperature in the garage?"
+    expect:
+      reply_contains: "12.5"
+      reply_means: "gives the garage temperature as 12.5 degrees"
+  - say: "What's the lowest the garage has been in the last hour?"
+    expect:
+      capability: sensors
+      reply_contains: "11"
+      reply_means: "says the garage's lowest reading in the last hour was 11 degrees"
+  - do:
+      mqtt_publish:
+        - topic: homeassistant/sensor/jarvis_test_garage_temp/config
+          retain: true
+          payload: ""
+        - topic: jarvis-test/garage/temperature
+          retain: true
+          payload: ""
+    observe: true
+    wait: 1
+    expect: {}

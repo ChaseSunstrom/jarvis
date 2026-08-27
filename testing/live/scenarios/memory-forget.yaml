@@ -1,0 +1,24 @@
+name: memory-forget
+capability: memory
+gated-on: M15
+intent: >
+  Forgetting has to be real, and it has to be visible. A "forget" that only
+  hides an entry from retrieval leaves it on disk, and the user who asked for
+  it to be gone was told a lie — so the last turn checks the store, not the
+  sentence.
+variants: [text]
+setup:
+  clear: [memory]
+turns:
+  - say: "Remember that the shed key is under the second flowerpot."
+    expect:
+      memory: {recalls: "flowerpot"}
+      reply_means: "acknowledges the fact"
+  - say: "Actually, forget what I just told you about the shed key."
+    expect:
+      memory: {forgotten: "flowerpot"}
+      reply_means: "confirms it has forgotten it"
+  - say: "Where did I say the shed key was?"
+    expect:
+      reply_absent: ["flowerpot"]
+      reply_means: "says it does not know or has nothing recorded about that"

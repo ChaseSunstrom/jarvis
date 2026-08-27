@@ -167,12 +167,34 @@ async def test_work_that_did_not_survive_says_so_instead_of_running_for_ever(jar
     assert restored.steps[1].status == STATUS_QUEUED
 
 
-async def test_a_queued_task_also_did_not_survive(jarvis):
+async def test_a_queued_task_survives_because_the_queue_does(jarvis):
+    """This used to assert the opposite, and the opposite used to be right.
+
+    While nothing ran queued work, "queued" in the store meant "recorded, and
+    nobody will ever pick this up", so erroring it on load was the honest
+    answer. The task engine persists its queue alongside this list, so work that
+    was WAITING really is still waiting — and `TaskEngine.load` is what fails a
+    queued task the queue no longer mentions, because it is the only thing that
+    knows.
+    """
     registry = _registry(jarvis)
     task = await registry.async_add("Never started")
     reborn = _registry(jarvis)
     await reborn.async_load()
+    assert reborn.get(task.id).status == STATUS_QUEUED
+
+
+async def test_a_queued_task_nothing_has_any_more_is_failed_by_the_engine(jarvis):
+    from jarvis.taskengine import TaskEngine
+
+    registry = _registry(jarvis)
+    task = await registry.async_add("orphaned")
+    reborn = _registry(jarvis)
+    await reborn.async_load()
+    # No queue entry for it: whatever was going to run it is gone.
+    TaskEngine(jarvis, reborn).load({"queue": []})
     assert reborn.get(task.id).status == STATUS_ERROR
+    assert "nothing has it" in reborn.get(task.id).error
 
 
 async def test_a_finished_task_is_restored_untouched(jarvis):
@@ -285,3 +307,79 @@ def test_a_corrupt_record_is_skipped_rather_than_crashing_the_load():
     assert Task.from_dict({"title": "x"}) is None       # no id
     ok = Task.from_dict({"id": "a", "title": "t", "status": "nonsense"})
     assert ok is not None and ok.status == STATUS_QUEUED
+
+
+async def test_a_task_can_stop_being_open_ended_once_it_knows_its_own_size(jarvis):
+    """The transition a real worker makes, and the point of `open_ended`.
+
+    A research run does not know how many pages it will read until it has
+    searched. Until then a percentage is a guess; the moment the read list is
+    settled it is a fact, and the bar should say so rather than staying vague
+    for the whole run.
+    """
+    registry = _registry(jarvis)
+    task = await registry.async_add("Research", steps=["plan"], open_ended=True)
+    await registry.async_update(task.id, step=0, step_status=STATUS_DONE)
+    assert task.fraction is None
+
+    await registry.async_update(task.id, add_steps=["read a", "read b"], open_ended=False)
+    assert task.fraction == pytest.approx(1 / 3)
+
+
+async def test_a_task_that_finds_more_work_can_go_open_ended_again(jarvis):
+    registry = _registry(jarvis)
+    task = await registry.async_add("Crawl", steps=["a", "b"])
+    assert task.fraction == 0
+    await registry.async_update(task.id, open_ended=True)
+    assert task.fraction is None
+
+
+# --- "how is that going?" -----------------------------------------------------
+#
+# Jarvis could start background jobs and stop them, and could not report on one.
+# Asked "how is that going?" during a coding job it answered, truthfully and
+# uselessly, "I have no way to check on the job's progress from here, Sir".
+# Every screen has had this since M12; the question people actually ask out
+# loud had nothing behind it. Found by the live suite (M19).
+
+
+async def test_task_status_reports_what_is_running(jarvis):
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+
+    task = await jarvis.tasks.async_add("fix the tests", kind="code", steps=["read", "edit"])
+    await jarvis.tasks.async_update(task.id, detail="editing src/app.py")
+
+    answer = await registry.call("task_status", {})
+    assert answer["status"] == "ok"
+    row = answer["tasks"][0]
+    assert row["id"] == task.id
+    assert row["kind"] == "code"
+    assert row["step"] == "editing src/app.py"
+    assert row["steps_total"] == 2
+
+
+async def test_and_the_last_few_when_nothing_is_running(jarvis):
+    """"How did that go?" is the same question one minute later."""
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+
+    task = await jarvis.tasks.async_add("write it up", kind="research")
+    await jarvis.tasks.async_update(task.id, status="done", result="four sources")
+
+    answer = await registry.call("task_status", {})
+    assert [row["result"] for row in answer["tasks"]] == ["four sources"]
+
+
+async def test_an_id_that_does_not_exist_says_so(jarvis):
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+
+    answer = await registry.call("task_status", {"task_id": "nope"})
+    assert answer["status"] == "error"

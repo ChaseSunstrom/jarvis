@@ -69,7 +69,7 @@ describe('buildPaletteItems', () => {
 	it('always offers every console route, even with no backend', () => {
 		const empty = buildPaletteItems({});
 		expect(empty).toHaveLength(PAGE_ITEMS.length);
-		expect(empty.map((i) => i.href)).toContain('/devices');
+		expect(empty.map((i) => i.href)).toContain('/house/devices');
 	});
 
 	it('indexes pages, areas, entities and automations', () => {
@@ -91,9 +91,9 @@ describe('buildPaletteItems', () => {
 	it('sends automations to their own page and entities to devices', () => {
 		const auto = items.find((i) => i.entityId === 'automation.night_mode')!;
 		expect(auto.kind).toBe('automation');
-		expect(auto.href).toBe('/automations?focus=automation.night_mode');
+		expect(auto.href).toBe('/house/automations?focus=automation.night_mode');
 		const light = items.find((i) => i.entityId === 'light.lab_lights')!;
-		expect(light.href).toBe('/devices?focus=light.lab_lights');
+		expect(light.href).toBe('/house/devices?focus=light.lab_lights');
 	});
 
 	it('gives every item a unique id safe to use as a test id', () => {
@@ -154,7 +154,7 @@ describe('filterPalette', () => {
 	});
 
 	it('finds pages by keyword, not just by title', () => {
-		expect(filterPalette(items, 'rooms')[0].href).toBe('/areas');
+		expect(filterPalette(items, 'rooms')[0].href).toBe('/house/areas');
 	});
 
 	it('returns nothing rather than everything when nothing matches', () => {
@@ -202,7 +202,7 @@ describe('actionFor', () => {
 	it('jumps instead when Shift is held', () => {
 		expect(actionFor(light, true)).toEqual({
 			type: 'navigate',
-			href: '/devices?focus=light.lab_lights'
+			href: '/house/devices?focus=light.lab_lights'
 		});
 	});
 

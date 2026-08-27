@@ -71,6 +71,11 @@ class PendingMessage:
     importance: str = "normal"
     created: float = field(default_factory=time.time)
     timeout: float = DEFAULT_ASK_TIMEOUT
+    #: True when the words have already been said to the user by the reply
+    #: they belong to — a question raised by a spoken turn (M66). The device
+    #: shows such a message and does not read it out; a phone that did was how
+    #: the operator heard every question twice.
+    spoken: bool = False
     targets_tried: list[str] = field(default_factory=list)
     future: asyncio.Future | None = None
 
@@ -85,6 +90,7 @@ class PendingMessage:
             "conversation_id": self.conversation_id,
             "importance": self.importance,
             "timeout_s": self.timeout,
+            "spoken": self.spoken,
         }
 
 
@@ -154,6 +160,7 @@ class CompanionManager:
         device_id: str | None = None,
         conversation_id: str | None = None,
         timeout: float | None = None,
+        spoken: bool = False,
     ) -> dict[str, Any]:
         kind = kind if kind in VALID_KINDS else "notify"
         need = (
@@ -169,6 +176,7 @@ class CompanionManager:
             conversation_id=conversation_id,
             importance=importance,
             timeout=timeout or (DEFAULT_ASK_TIMEOUT if kind == "ask" else DEFAULT_NOTIFY_TIMEOUT),
+            spoken=bool(spoken),
         )
         delivery = self.presence.route(need, importance, device_id)
 
@@ -321,6 +329,7 @@ async def async_setup(jarvis: Any, config: Any) -> bool:
             device_id=call.get("device_id"),
             conversation_id=call.get("conversation_id"),
             timeout=float(call.get("timeout", DEFAULT_ASK_TIMEOUT)),
+            spoken=bool(call.get("spoken", False)),
         )
 
     async def presence_report(call: Any) -> dict[str, Any]:
@@ -367,6 +376,14 @@ async def async_setup(jarvis: Any, config: Any) -> bool:
             "question": {"description": "the question", "required": True},
             "options": {"description": "optional list of allowed answers", "required": False},
             "timeout": {"description": "seconds to wait (default 120)", "required": False},
+            "spoken": {
+                "description": (
+                    "true when the words are already being spoken to the user by the "
+                    "reply they belong to; the device shows the question and does not "
+                    "read it out"
+                ),
+                "required": False,
+            },
             "device_id": {"description": "force a specific device", "required": False},
         },
     )

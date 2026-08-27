@@ -409,6 +409,38 @@ def test_a_question_is_read_aloud() -> None:
     assert "askAloud()" in ask_branch, "the ask branch does not speak"
 
 
+def test_a_question_the_reply_already_says_is_not_read_out_again() -> None:
+    """The single voice (M66): a question raised by a spoken turn is carried
+    by the reply, which the surface the user spoke to reads aloud. The phone
+    shows the card and stays silent — it used to speak it as well, and the
+    operator heard both."""
+    protocol = code_of(KOTLIN / "companion" / "CompanionMessage.kt")
+    assert "val spoken: Boolean = false" in protocol, "the wire has no `spoken`"
+    assert 'msg.optBoolean("spoken", false)' in protocol, (
+        "`spoken` is not parsed, or a garbled value is not read as false"
+    )
+
+    handler = code_of(KOTLIN / "companion" / "CompanionMessageHandler.kt")
+    ask_fn = handler[handler.index("private fun ask(app: Context"):][:2200]
+    assert "message.spoken && host != null && host.isForeground" in ask_fn, (
+        "a spoken question over the conversation that is speaking it is presented again"
+    )
+    assert ask_fn.index("message.spoken") < ask_fn.index("host.ask("), (
+        "the spoken check comes after the host has already been asked"
+    )
+    assert ".putExtra(EXTRA_SPOKEN, message.spoken)" in handler, (
+        "the question screen is not told the reply already says it"
+    )
+
+    src = code_of(ASK)
+    ask_branch = src[src.index("MODE_ASK ->"):][:700]
+    assert "if (!spoken) askAloud()" in ask_branch, "the ask branch reads a spoken question out"
+    body = src[src.index("fun askAloud("):][:200]
+    assert "if (spoken || spokeQuestion || answered) return" in body, (
+        "an unlock re-reads a question the reply already said"
+    )
+
+
 def test_it_will_not_say_out_loud_what_it_would_not_print() -> None:
     """Speaking a question is a strictly louder version of putting it on the
     lock screen. CompanionAskGate is already the authority on that, and it has
@@ -452,6 +484,27 @@ def test_a_question_with_options_is_not_answered_by_voice() -> None:
     assert body.index("options.isEmpty()") < body.index("toggleListening()"), (
         "the options check does not guard the microphone"
     )
+
+
+def test_a_held_action_reaches_the_consent_screen_and_answers_on_the_wire() -> None:
+    """M98. A Tier-3 action jarvis-core holds — a lock, a removal, a setting —
+    reached the phone as a strip row with nothing to tap (the Android audit,
+    27 Aug 2026), on the one surface with a keyguard-aware consent screen. Now
+    the bus event raises that screen and the decision goes back as
+    `jarvis/approve` on the assist socket; a held QUESTION still comes through
+    companion.ask, so the event with `answerable` set is left alone."""
+    root = Path(__file__).resolve().parents[1] / "app/src/main/kotlin/ai/jarvis/app"
+    conversation = read(root / "assist/JarvisConversation.kt")
+    bridge = read(root / "ui/ApprovalBridge.kt")
+    client = read(root / "assist/AssistPipelineClient.kt")
+    hook = conversation.index('type == "jarvis_approval_required" && !data.has("answerable")')
+    assert "ApprovalBridge.raiseServerRequest(" in conversation[hook:hook + 900], "the held action is not raised"
+    assert '"jarvis/approve"' in conversation[hook:hook + 1200], "the decision does not go back as jarvis/approve"
+    assert "fun raiseServerRequest(" in bridge and "serverSenders" in bridge
+    deliver = bridge.index("fun deliver(requestId: String, approved: Boolean)")
+    assert "serverSenders.remove(requestId)" in bridge[deliver:deliver + 700], "deliver does not answer a server-held request"
+    assert "pending.isNotEmpty() || serverSenders.isNotEmpty()" in bridge, "a server-held prompt does not count as pending for the headset gate"
+    assert "fun sendCommand(type: String, fields: JSONObject" in client, "the pipeline client cannot send a bare command"
 
 
 def main() -> int:

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · Instrument · Chat</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+@font-face{font-family:"Barlow Condensed";font-weight:500;src:url(fonts/barlow-condensed-500.woff2) format("woff2")}
+@font-face{font-family:"Barlow Condensed";font-weight:600;src:url(fonts/barlow-condensed-600.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:400;src:url(fonts/jetbrains-mono-400.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:500;src:url(fonts/jetbrains-mono-500.woff2) format("woff2")}
+:root{
+  /* ── direction A · INSTRUMENT · tokens (inlined) ───────────────────── */
+  --bg:#04070c; --surface:#070c13; --panel:#0a1219; --inset:#03060a;
+  --line:#17323e; --line-soft:#0f2029; --line-hair:#0b1820;
+  --text:#cfe6ee; --text-bright:#eaf7fb; --dim:#7fa3b0; --faint:#4a6570;
+  --accent:#3fd8ff; --accent-ink:#04121a; --accent-wash:rgba(63,216,255,.10);
+  --amber:#f2b84b; --danger:#ff6b5c; --ok:#7fd6a8;
+  --font-display:"Barlow Condensed",sans-serif; --font-mono:"JetBrains Mono",monospace;
+  --fs-2xs:10px; --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-lg:18px; --fs-xl:26px; --fs-display:44px;
+  --track:.10em; --track-wide:.22em;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px;
+  --r:2px; --dur:160ms; --dur-slow:600ms; --ease:cubic-bezier(.2,.7,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:400 var(--fs-md)/1.5 var(--font-mono);-webkit-font-smoothing:antialiased}
+body{overflow:hidden}
+.app{display:grid;grid-template-rows:40px 1fr 44px;height:100vh}
+/* header */
+.bar{display:grid;grid-template-columns:200px 1fr auto;align-items:center;border-bottom:1px solid var(--line-soft);padding:0 var(--s4);background:var(--surface)}
+.brand{font:600 var(--fs-lg)/1 var(--font-display);letter-spacing:var(--track-wide);color:var(--text-bright)}
+.brand small{color:var(--faint);font-size:var(--fs-2xs);letter-spacing:var(--track);margin-left:var(--s2);font-family:var(--font-mono);font-weight:400}
+nav{display:flex;gap:var(--s5);font:500 var(--fs-sm)/1 var(--font-display);letter-spacing:var(--track-wide);color:var(--dim);text-transform:uppercase}
+nav a{color:inherit;text-decoration:none;padding:var(--s3) 0;border-bottom:1px solid transparent}
+nav a.on{color:var(--text-bright);border-bottom-color:var(--accent)}
+.status{display:flex;gap:var(--s4);font-size:var(--fs-2xs);letter-spacing:var(--track);color:var(--dim);text-transform:uppercase}
+.status i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--faint);margin-right:6px;vertical-align:middle}
+.status i.live{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+/* main grid */
+.main{display:grid;grid-template-columns:1fr 400px;gap:1px;background:var(--line-hair);min-height:0}
+.panel{background:var(--surface);position:relative;min-height:0;display:flex;flex-direction:column}
+.panel>h2{font:500 var(--fs-xs)/1 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;color:var(--dim);padding:var(--s3) var(--s4);border-bottom:1px solid var(--line-hair);display:flex;justify-content:space-between}
+.panel>h2 b{color:var(--faint);font-weight:500}
+.panel.focus::before,.panel.focus::after{content:"";position:absolute;width:10px;height:10px;border-color:var(--accent);border-style:solid;pointer-events:none}
+.panel.focus::before{top:6px;left:6px;border-width:1px 0 0 1px}
+.panel.focus::after{bottom:6px;right:6px;border-width:0 1px 1px 0}
+.stack{display:grid;grid-template-rows:auto auto auto 1fr;gap:1px;background:var(--line-hair);min-height:0}
+/* transcript */
+.log{flex:1;overflow:hidden;padding:var(--s3) 0;display:flex;flex-direction:column;justify-content:flex-end}
+.row{display:grid;grid-template-columns:72px 76px 1fr;gap:var(--s3);padding:var(--s2) var(--s4);align-items:baseline}
+.row .t{color:var(--faint);font-size:var(--fs-xs)}
+.row .who{font:500 var(--fs-xs)/1.6 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;color:var(--dim)}
+.row.jarvis .who{color:var(--accent)}
+.row .msg{max-width:74ch;color:var(--text)}
+.row.jarvis .msg{color:var(--text-bright)}
+.tool{display:grid;grid-template-columns:72px 76px 1fr;gap:var(--s3);padding:2px var(--s4);font-size:var(--fs-xs);color:var(--faint)}
+.tool .msg{border-left:1px solid var(--line-soft);padding-left:var(--s3)}
+.tool .msg em{font-style:normal;color:var(--dim)}
+.tool .msg .ms{float:right;color:var(--faint)}
+.tool .msg .ok{color:var(--ok)}
+.think{grid-column:3;font-size:var(--fs-xs);color:var(--faint);border-left:1px dashed var(--line-soft);padding:0 0 0 var(--s3);margin:var(--s1) 0 0 0}
+.row.live .msg::after{content:"▍";color:var(--accent);animation:blink 1s steps(2) infinite}
+@keyframes blink{to{opacity:0}}
+/* orb */
+.orb{display:grid;place-items:center;padding:var(--s4);height:250px}
+.orb svg{width:200px;height:200px;overflow:visible}
+.orb .readout{position:absolute;bottom:var(--s3);left:var(--s4);right:var(--s4);display:flex;justify-content:space-between;font-size:var(--fs-2xs);letter-spacing:var(--track);color:var(--faint);text-transform:uppercase}
+.orb .readout b{color:var(--accent);font-weight:500}
+@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.02)}}
+.orb .core{transform-origin:100px 100px;animation:breathe 4s var(--ease) infinite}
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:var(--fs-xs)}
+td,th{padding:5px var(--s4);text-align:left;border-bottom:1px solid var(--line-hair);white-space:nowrap}
+th{font:500 var(--fs-2xs)/1 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;color:var(--faint)}
+td.n{text-align:right;font-variant-numeric:tabular-nums;color:var(--text-bright)}
+td .bar{display:inline-block;height:4px;background:var(--line);vertical-align:middle;margin-right:var(--s2)}
+td .bar.live{background:var(--accent)}
+td.dim{color:var(--dim)}
+.k{color:var(--faint)}
+/* footer input */
+.input{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:var(--s3);border-top:1px solid var(--line-soft);padding:0 var(--s4);background:var(--surface)}
+.input .prompt{color:var(--accent);font-weight:500}
+.input .field{color:var(--dim)}
+.input .field span{color:var(--text-bright)}
+.input .hint{display:flex;gap:var(--s4);font-size:var(--fs-2xs);letter-spacing:var(--track);text-transform:uppercase;color:var(--faint)}
+.input kbd{font:inherit;border:1px solid var(--line);padding:1px 5px;border-radius:var(--r);color:var(--dim)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style></head>
+<body><div class="app">
+  <header class="bar">
+    <div class="brand">JARVIS<small>v0.1 · LOCAL</small></div>
+    <nav><a class="on" href="#">Voice</a><a href="#">Devices</a><a href="#">Areas</a><a href="#">Automations</a><a href="#">Tools</a><a href="#">Tasks</a><a href="#">Dashboards</a><a href="#">Code</a><a href="#">Settings</a></nav>
+    <div class="status"><span><i class="live"></i>link</span><span><i class="live"></i>qwen3-8b · llama-swap</span><span><i></i>stt</span><span><i></i>tts</span><span><i></i>wake</span></div>
+  </header>
+
+  <main class="main">
+    <section class="panel focus">
+      <h2>Transcript · kitchen <b>SESSION 0413 · 02:38–02:41</b></h2>
+      <div class="log">
+        <div class="row"><span class="t">02:38:12</span><span class="who">you</span><span class="msg">What's the temperature in the office?</span></div>
+        <div class="row jarvis"><span class="t">02:38:13</span><span class="who">jarvis</span><span class="msg">21.4 °C, holding. The radiator has been off since one.</span></div>
+        <div class="tool"><span class="t"></span><span class="who"></span><span class="msg"><em>climate.get_state</em> sensor.office_temperature <span class="ms"><span class="ok">ok</span> · 6 ms</span></span></div>
+
+        <div class="row"><span class="t">02:40:02</span><span class="who">you</span><span class="msg">Turn the kitchen lamp to forty percent and remind me at six to take the bread out.</span></div>
+        <div class="row jarvis"><span class="t">02:40:03</span><span class="who">jarvis</span><span class="msg">Kitchen lamp at 40 %. I'll remind you at 18:00 — the bread.</span></div>
+        <div class="tool"><span class="t"></span><span class="who"></span><span class="msg"><em>light.turn_on</em> light.kitchen_lamp · brightness_pct 40 <span class="ms"><span class="ok">ok</span> · 84 ms</span></span></div>
+        <div class="tool"><span class="t"></span><span class="who"></span><span class="msg"><em>schedule.add</em> 18:00 · notify · "take the bread out" <span class="ms"><span class="ok">ok</span> · 12 ms</span></span></div>
+
+        <div class="row"><span class="t">02:41:40</span><span class="who">you</span><span class="msg">And how long has the coding job been running?</span></div>
+        <div class="row jarvis live"><span class="t">02:41:41</span><span class="who">jarvis</span><span class="msg">Two minutes fourteen. It's on step three of five — wiring the socket status into the offline state — and it will ask you before it pushes</span></div>
+        <div class="tool"><span class="t"></span><span class="who"></span><span class="msg"><em>tasks.get</em> task_8f3a <span class="ms"><span class="ok">ok</span> · 2 ms</span></span></div>
+      </div>
+    </section>
+
+    <aside class="stack">
+      <section class="panel orb">
+        <h2 style="position:absolute;top:0;left:0;right:0;border:0">Attention <b>LISTENING</b></h2>
+        <svg viewBox="0 0 200 200" aria-hidden="true">
+          <circle cx="100" cy="100" r="96" fill="none" stroke="#0f2029" stroke-width="1"/>
+          <circle cx="100" cy="100" r="80" fill="none" stroke="#17323e" stroke-width="1" stroke-dasharray="2 6"/>
+          <circle cx="100" cy="100" r="96" fill="none" stroke="#3fd8ff" stroke-width="1.5" stroke-dasharray="120 483" stroke-linecap="round" transform="rotate(-90 100 100)"/>
+          <g class="core"><circle cx="100" cy="100" r="46" fill="#070c13" stroke="#17323e"/><circle cx="100" cy="100" r="30" fill="none" stroke="#3fd8ff" stroke-width="1" opacity=".9"/><circle cx="100" cy="100" r="4" fill="#3fd8ff"/></g>
+          <g font-family="JetBrains Mono" font-size="8" fill="#4a6570" letter-spacing="1"><text x="100" y="196" text-anchor="middle">RUN 0413</text></g>
+        </svg>
+        <div class="readout"><span>level <b>−38 dB</b></span><span>hangover <b>550 ms</b></span><span>mode <b>hands-free</b></span></div>
+      </section>
+
+      <section class="panel">
+        <h2>Pipeline · last turn <b>1 266 ms</b></h2>
+        <table>
+          <tr><th>stage</th><th></th><th style="text-align:right">ms</th></tr>
+          <tr><td>wake</td><td><span class="bar" style="width:8px"></span><span class="k">openwakeword</span></td><td class="n">0</td></tr>
+          <tr><td>stt</td><td><span class="bar" style="width:52px"></span><span class="k">whisper base.en</span></td><td class="n">412</td></tr>
+          <tr><td>llm · first token</td><td><span class="bar live" style="width:80px"></span><span class="k">31 tok/s</span></td><td class="n">640</td></tr>
+          <tr><td>tts</td><td><span class="bar" style="width:26px"></span><span class="k">piper alan</span></td><td class="n">210</td></tr>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>Toolbox · this session <b>4 CALLS</b></h2>
+        <table>
+          <tr><td>light.turn_on</td><td class="dim">tier 1</td><td class="n">84</td></tr>
+          <tr><td>schedule.add</td><td class="dim">tier 1</td><td class="n">12</td></tr>
+          <tr><td>climate.get_state</td><td class="dim">tier 1</td><td class="n">6</td></tr>
+          <tr><td>tasks.get</td><td class="dim">tier 1</td><td class="n">2</td></tr>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>Touched <b>3 ENTITIES</b></h2>
+        <table>
+          <tr><td>light.kitchen_lamp</td><td class="dim">kitchen</td><td class="n">40 %</td></tr>
+          <tr><td>sensor.office_temperature</td><td class="dim">office</td><td class="n">21.4 °C</td></tr>
+          <tr><td>schedule.bread</td><td class="dim">once · 18:00</td><td class="n">armed</td></tr>
+        </table>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="input">
+    <span class="prompt">&gt;</span>
+    <span class="field"><span>say or type</span> — hold to talk, release to send</span>
+    <span class="hint"><span><kbd>space</kbd> push-to-talk</span><span><kbd>⌘K</kbd> palette</span><span><kbd>g t</kbd> tasks</span></span>
+  </footer>
+</div></body></html>

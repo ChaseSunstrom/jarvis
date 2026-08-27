@@ -174,6 +174,27 @@ def _quiet_expected_failures() -> Iterator[None]:
             logger.setLevel(level)
 
 
+#: What a copy of `config/` must leave behind to still mean "a fresh install".
+#:
+#: `.storage/` and the recorder database are RUNTIME state, gitignored and not
+#: shipped: on a developer's machine they hold that person's own rooms,
+#: entities and tokens, and on a box where the stack is running they belong to
+#: the container's uid at mode 600, so copying them is a permission error.
+#: Copying them made "what does a fresh install look like" mean "what does this
+#: machine look like", and the test failed on the box that actually runs
+#: Jarvis while passing everywhere else.
+#:
+#: `packages/` is the same argument one level up: it is where a person adds
+#: their own features — a laundry cycle, a demo house — and the shipped
+#: directory is empty. Asserting "the default invents no devices" against a
+#: directory somebody has since added devices to tests their choices, not the
+#: default. It also collided outright: the worked example ships a `demo:` block
+#: and an operator's own demo package redefines it.
+SHIPPED_ONLY = shutil.ignore_patterns(
+    ".storage", "*.db", "*.db-wal", "*.db-shm", "*.db-*", "packages",
+)
+
+
 @pytest.fixture
 def config_copy(tmp_path: Path) -> Path:
     """The shipped config, copied so a boot cannot dirty the repo.
@@ -182,7 +203,7 @@ def config_copy(tmp_path: Path) -> Path:
     would leave those behind for the next developer to wonder about.
     """
     target = tmp_path / "config"
-    shutil.copytree(CONFIG, target)
+    shutil.copytree(CONFIG, target, ignore=SHIPPED_ONLY)
     return target
 
 
@@ -201,6 +222,9 @@ def _overlay_example(target: Path) -> Path:
     for name in ("configuration.yaml", "automations.yaml", "scripts.yaml", "scenes.yaml"):
         shutil.copy(EXAMPLE_HOUSE / name, target / name)
     shutil.copy(EXAMPLE_HOUSE / "example.tool.yaml", target / "tools" / "example.tool.yaml")
+    # `packages/` is not copied from the shipped config (see SHIPPED_ONLY), so
+    # the example's own package needs the directory created here.
+    (target / "packages").mkdir(exist_ok=True)
     shutil.copy(EXAMPLE_HOUSE / "packages-laundry.yaml", target / "packages" / "laundry.yaml")
     return target
 
@@ -209,7 +233,12 @@ def _example_config() -> dict[str, Any]:
     """The worked example's configuration, loaded, with nothing left behind."""
     with tempfile.TemporaryDirectory() as tmp:
         target = Path(tmp) / "config"
-        shutil.copytree(CONFIG, target)
+        # `.storage` is skipped for the same reason `config_copy` skips it: on
+        # a box where the stack is RUNNING, those files belong to the
+        # container's uid and are mode 600, so copying them is a permission
+        # error — and this test is about the YAML, not about the house's live
+        # registries.
+        shutil.copytree(CONFIG, target, ignore=SHIPPED_ONLY)
         return load_config(_overlay_example(target))
 
 
@@ -482,8 +511,8 @@ async def test_the_default_boots_into_an_empty_house_that_is_still_alive(
 
         # Present, because they need nothing but the software itself.
         for entity_id in (
-            "sensor.ollama_loaded_model",
-            "binary_sensor.ollama_up",
+            "sensor.model_server_models",
+            "binary_sensor.model_server_up",
             "sensor.disk_free",
             "sensor.load_average",
             "sensor.jarvis_uptime",
@@ -614,7 +643,7 @@ async def test_unreachable_services_degrade_instead_of_failing(example_copy: Pat
     jarvis = await _boot(example_copy)
     try:
         # The REST block points at Ollama, which is not running here.
-        assert jarvis.states.get("sensor.ollama_loaded_model").state == "unavailable"
+        assert jarvis.states.get("sensor.model_server_models").state == "unavailable"
         # ...and the rest of the house is unaffected.
         assert jarvis.states.get("light.kitchen_lights").state == "on"
     finally:
@@ -1339,6 +1368,23 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         "searxng",
         "mosquitto",
         "jarvis-config-init",
+        # Retrieval (M33). Two containers of one image because the measurement
+        # said so — see `docs/TOOLING_DECISIONS.md` §3.
+        "jarvis-embeddings",
+        "jarvis-reranker",
+        # The alternative voice (M35), behind `--profile kokoro`.
+        "jarvis-tts",
+        # The single internal model endpoint (M40).
+        "jarvis-gateway",
+        # Fixtures for the calendar and mail integrations (M39), behind
+        # `--profile fixtures` — a real CalDAV server and a real mailbox, so
+        # those clients are tested against something other than a mock of
+        # themselves.
+        "jarvis-radicale",
+        "jarvis-mailsink",
+        # Camera ingest (M56), behind `--profile cameras`: go2rtc turns any
+        # camera into the snapshot URL `vision` reads.
+        "go2rtc",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
 
@@ -1407,6 +1453,71 @@ def test_compose_keeps_searxng_behind_the_search_profile(compose: dict[str, Any]
     assert compose["services"]["searxng"]["profiles"] == ["search"]
 
 
+def test_the_orchestrator_is_told_the_same_model_server_as_the_core() -> None:
+    """The root compose hands jarvis-orchestrator LLM_URL, LLM_API_KEY and a
+    planner model that falls back to LLM_MODEL — the names jarvis-core reads.
+
+    Found by the services audit of 27 Aug 2026: the block carried OLLAMA_URL
+    only, so the container pointed at 127.0.0.1:11434, sent no key, and every
+    `delegate_to_agents` call failed behind a green healthcheck.
+    """
+    text = (ROOT.parent / "docker-compose.yml").read_text(encoding="utf-8")
+    block = text.split("  jarvis-orchestrator:", 1)[1].split("\n  jarvis-sandbox:", 1)[0]
+    for line in (
+        "- LLM_URL=${LLM_URL:-}",
+        "- LLM_API_KEY=${LLM_API_KEY:-}",
+        "- PLANNER_MODEL=${PLANNER_MODEL:-${LLM_MODEL:-",
+    ):
+        assert line in block, f"the orchestrator's environment lacks {line!r}"
+    main = (ROOT.parent / "jarvis-orchestrator" / "app" / "main.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("LLM_API_KEY"' in main
+    assert "api_key=LLM_API_KEY" in main
+
+
+def test_the_live_sandbox_is_pinned_where_it_actually_runs() -> None:
+    """The root compose's `jarvis-sandbox` — the one that runs — holds every
+    isolation invariant, not only the commented sketch in the core file that
+    `test_sandbox_sketch_*` reads (the services audit, 27 Aug 2026).
+
+    Never host or LAN networking; an unprivileged user; a read-only root;
+    every capability dropped; no privilege escalation; bounded processes and
+    memory; exactly one mount, the shared workspace, and never the host root
+    or the docker socket.
+    """
+    import yaml
+
+    text = (ROOT.parent / "docker-compose.yml").read_text(encoding="utf-8")
+    compose = yaml.safe_load(text)
+    sandbox = compose["services"]["jarvis-sandbox"]
+    assert sandbox["network_mode"] == "none"
+    assert sandbox["user"] == "10001:10001"
+    assert sandbox["read_only"] is True
+    assert sandbox["cap_drop"] == ["ALL"] and not sandbox.get("cap_add")
+    assert "no-new-privileges:true" in sandbox["security_opt"]
+    assert int(sandbox["pids_limit"]) <= 256
+    assert str(sandbox["mem_limit"]).lower().rstrip("gb") in ("1", "2")
+    assert "agents" in sandbox["profiles"]
+    mounts = [str(v) for v in sandbox.get("volumes") or []]
+    assert len(mounts) == 1 and mounts[0].startswith("./jarvis-workspace:"), mounts
+    assert not any("docker.sock" in m or m.startswith("/:") for m in mounts)
+
+
+def test_searxng_binds_where_the_operator_said_under_the_granian_image(compose: dict[str, Any]) -> None:
+    """The 2026.8 SearXNG image serves through granian and reads GRANIAN_HOST
+    (shipping with `::`); SEARXNG_BIND_ADDRESS alone left it answering on the
+    LAN address (the services audit, 27 Aug 2026)."""
+    env = compose["services"]["searxng"]["environment"]
+    lines = env if isinstance(env, list) else [f"{k}={v}" for k, v in env.items()]
+    assert any(line.startswith("GRANIAN_HOST=${SEARXNG_BIND_ADDRESS:-127.0.0.1}") for line in lines), lines
+
+
+def test_the_console_image_does_not_run_as_root() -> None:
+    dockerfile = (ROOT.parent / "jarvis-web" / "Dockerfile").read_text(encoding="utf-8")
+    runtime = dockerfile.split("AS runtime", 1)[1]
+    assert "\nUSER node\n" in runtime, "the console's runtime stage has no USER"
+    assert runtime.index("USER node") < runtime.index('CMD ["node", "build"]')
+
+
 def test_compose_keeps_the_broker_behind_the_mqtt_profile(compose: dict[str, Any]) -> None:
     """Same argument as SearXNG: most houses already have a broker.
 
@@ -1426,7 +1537,26 @@ def test_only_optional_extras_are_profile_gated(compose: dict[str, Any]) -> None
     gated = {
         name for name, service in compose["services"].items() if service.get("profiles")
     }
-    assert gated == {"searxng", "mosquitto"}
+    # photon joined them, and the reason is the strongest of the three: with no
+    # REGION set the image downloads the WHOLE PLANET index — 58 GB, needing
+    # 152 GB of temp space — checks the disk, refuses and exits, and
+    # `restart: unless-stopped` turns that into a loop. On this host it had run
+    # 2,699 times over two days. A geocoder that needs a deliberate choice of
+    # region is not something `up -d` should start.
+    # jarvis-tts is the fourth, and its reason is a measurement rather than a
+    # disaster: Kokoro and Piper both came back word-perfect through Whisper
+    # and both synthesise faster than real time, so the 3.2 GB image and 1 GB
+    # of resident memory buy a different VOICE and nothing else. That is the
+    # operator's ear to decide (`docs/tts-review/`), not something `up -d`
+    # should spend their disk on.
+    # And the two M39 fixtures, which exist for the tests rather than for the
+    # house: a CalDAV server and a mailbox with nothing real in either.
+    # go2rtc (M56) is a camera restreamer: a box with no cameras has no use
+    # for one, and a box WITH cameras is a decision somebody makes.
+    assert gated == {
+        "searxng", "mosquitto", "photon", "jarvis-tts",
+        "jarvis-radicale", "jarvis-mailsink", "go2rtc",
+    }
 
 
 def test_compose_ships_no_secrets(compose: dict[str, Any]) -> None:
@@ -1567,6 +1697,67 @@ def test_compose_piper_voice_matches_the_default_pipeline() -> None:
     )
 
 
+def test_compose_piper_length_scale_matches_the_example_env() -> None:
+    """The voice's pace is one number in two places, and they agree.
+
+    `--length-scale` is Piper's duration multiplier, taken at start; the
+    compose default and the documented `.env.example` value are the same
+    number so a fresh install and a documented one speak at the same pace
+    (0.9 — "slightly faster", the operator's ask of 26 Aug), and it stays in
+    the range a person can follow.
+    """
+    loaded = _compose_default("PIPER_LENGTH_SCALE")
+    example = re.search(r"^PIPER_LENGTH_SCALE=(.+)$", (ROOT / ".env.example").read_text(encoding="utf-8"), re.M)
+    assert example, ".env.example does not document PIPER_LENGTH_SCALE"
+    assert loaded == example.group(1).strip()
+    assert 0.5 <= float(loaded) <= 1.5, loaded
+    # Every place compose expands it says the same default: Piper's command and
+    # the core's environment (which only reports it, for Settings › Voice). Two
+    # defaults would let the screen name a pace the house does not speak at.
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    defaults = set(re.findall(r"\$\{PIPER_LENGTH_SCALE:-([^}]+)\}", compose))
+    assert defaults == {loaded}, defaults
+    assert re.search(r"^\s+- PIPER_LENGTH_SCALE=\$\{PIPER_LENGTH_SCALE:-", compose, re.M), (
+        "jarvis-core's environment does not carry PIPER_LENGTH_SCALE"
+    )
+
+
+def test_the_image_installs_git_for_coding_jobs():
+    """A coding job's first step after the workspace is `git init`, and the
+    code integration answers "git is not installed" when the image has none —
+    which is what the operator's create_repository hit on 26 Aug 2026 once the
+    workspace itself was writable. The Dockerfile's apt line must name git;
+    that it tolerates an apt outage with a WARN is deliberate and unchanged."""
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    apt_lines = [line for line in dockerfile.splitlines() if "--no-install-recommends" in line]
+    assert apt_lines, "no apt install line in the Dockerfile"
+    assert any(" git" in line.split("#")[0] for line in apt_lines), (
+        "the image does not install git; coding jobs cannot create or clone a repository"
+    )
+
+
+def test_the_coding_workspace_is_the_mounted_crossover() -> None:
+    """A coding job can make a repository where the config says.
+
+    In the image `~` is `/`, so `~/jarvis/workspaces` was `/jarvis/workspaces`
+    and the first coding job the operator asked for died on "Permission
+    denied: '/jarvis'". The config names `/workspace`; compose mounts
+    ../jarvis-workspace there on jarvis-core AND hands it to the config-init
+    one-shot, which chowns it for uid 10003 — the bind mount masks the
+    image's ownership exactly as it does for /config.
+    """
+    workspace = str(load_config(CONFIG)["code"]["workspace"])
+    assert workspace == "/workspace", workspace
+    compose = COMPOSE.read_text(encoding="utf-8")
+    core = compose.split("  jarvis-core:", 1)[1].split("\n  wyoming-", 1)[0]
+    assert "- ../jarvis-workspace:/workspace" in core, "jarvis-core does not mount the workspace"
+    init = compose.split("  jarvis-config-init:", 1)[1].split("\n  jarvis-core:", 1)[0]
+    assert "- ../jarvis-workspace:/workspace" in init and "/workspace" in init.split("chown", 1)[1].split("&&", 1)[0], (
+        "jarvis-config-init does not chown /workspace"
+    )
+    assert (ROOT.parent / "jarvis-workspace").is_dir(), "../jarvis-workspace is not in the checkout"
+
+
 def test_compose_wake_word_matches_the_voice_config() -> None:
     config_wake = load_config(CONFIG)["voice"]["wake"]["model"]
     assert _compose_default("WAKE_WORD") == config_wake
@@ -1644,6 +1835,7 @@ DOC_FILES = (
     "voice.md",
     "security.md",
     "migrating-from-ha.md",
+    "code.md",
 )
 
 
@@ -1687,7 +1879,9 @@ def test_documented_python_compiles(name: str) -> None:
         ast.parse(block)
 
 
-@pytest.mark.parametrize("name", ("configuration.md", "migrating-from-ha.md", "voice.md"))
+@pytest.mark.parametrize(
+    "name", ("configuration.md", "migrating-from-ha.md", "voice.md", "code.md")
+)
 def test_documented_yaml_parses(name: str) -> None:
     for block in _code_blocks((DOCS / name).read_text(encoding="utf-8"), "yaml"):
         yaml.load(block, Loader=_PermissiveLoader)
@@ -1882,7 +2076,11 @@ def test_every_documented_env_var_is_actually_read_by_something(
         match.group(1)
         for line in config_text.splitlines()
         if not line.lstrip().startswith("#")
-        for match in [re.search(r"!env_var\s+([A-Z][A-Z0-9_]*)", line)]
+        # `!env_url` as well as `!env_var`. Its sibling test above already
+        # matched both; this one did not, so a variable read through the newer
+        # tag was reported as "handed over and never read" — which is the exact
+        # opposite of true, and the fix would have been to stop passing it.
+        for match in [re.search(r"!env_(?:var|url)\s+([A-Z][A-Z0-9_]*)", line)]
         if match
     }
     # Some names are read by the application directly rather than through the
@@ -2143,3 +2341,66 @@ def test_the_companion_env_example_documents_what_the_console_reads() -> None:
     declared = set(re.findall(r"^([A-Z][A-Z0-9_]*)=", text, re.M))
     missing = sorted(_console_env_vars() - declared)
     assert not missing, f".env.example does not mention: {missing}"
+
+
+# --- `docker compose watch` has to sync into the directory the code runs from --
+#
+# It did not. Every `develop: watch:` target said `/app/...` while all three
+# Python images have `WORKDIR /srv` — so an edit synced into a directory that
+# does not exist in the container, the service restarted, and it restarted with
+# the old code. A dev loop that silently does nothing is worse than none: you
+# conclude the change had no effect.
+
+def _watch_targets() -> list[tuple[str, str, str]]:
+    """(service, host path, container target) for every watch rule that syncs."""
+    out: list[tuple[str, str, str]] = []
+    for path in (COMPOSE, PARENT_COMPOSE):
+        parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for name, service in (parsed.get("services") or {}).items():
+            for rule in ((service.get("develop") or {}).get("watch") or []):
+                if str(rule.get("action", "")).startswith("sync") and rule.get("target"):
+                    out.append((name, str(rule["path"]), str(rule["target"])))
+    return out
+
+
+def test_every_watch_rule_syncs_into_that_image_workdir() -> None:
+    services = {
+        "jarvis-core": (ROOT / "Dockerfile", "/srv"),
+        "jarvis-browser": (ROOT.parent / "jarvis-browser" / "Dockerfile", "/srv"),
+        "jarvis-orchestrator": (ROOT.parent / "jarvis-orchestrator" / "Dockerfile", "/srv"),
+        "jarvis-web": (ROOT.parent / "jarvis-web" / "Dockerfile", "/app"),
+    }
+    for name, dockerfile_and_workdir in services.items():
+        dockerfile, expected = dockerfile_and_workdir
+        text = dockerfile.read_text(encoding="utf-8")
+        workdirs = [
+            line.split(None, 1)[1].strip()
+            for line in text.splitlines()
+            if line.startswith("WORKDIR ")
+        ]
+        assert workdirs and workdirs[-1] == expected, (name, workdirs)
+
+    for service, _host, target in _watch_targets():
+        _dockerfile, workdir = services[service]
+        assert target.startswith(f"{workdir}/"), (
+            f"{service} syncs into {target}, but its image runs from {workdir} — "
+            "the sync would land in a directory nothing imports"
+        )
+
+
+def test_every_watch_rule_watches_a_path_that_exists() -> None:
+    """A typo in the host path is the same silent no-op from the other end."""
+    for service, host, _target in _watch_targets():
+        base = ROOT if service in ("jarvis-core",) else ROOT.parent
+        # Paths in jarvis-core's compose are relative to jarvis-core/; the root
+        # compose file's are relative to the repository root.
+        candidates = [ROOT / host, ROOT.parent / host, base / host]
+        assert any(candidate.exists() for candidate in candidates), (service, host)
+
+
+def test_the_image_ships_the_environment_catalogue():
+    """M114: the console lists every variable `.env.example` names, read from
+    beside the package — so the image must carry the file, or a container
+    lists nothing while a bare host lists everything."""
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY .env.example ./.env.example" in dockerfile

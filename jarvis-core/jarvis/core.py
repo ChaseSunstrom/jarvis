@@ -19,6 +19,7 @@ from .services import ServiceRegistry
 from .settings import SettingsOverlay
 from .state import StateMachine
 from .store import Store
+from .taskengine import TaskEngine
 from .tasks import STORE_KEY as TASKS_STORE_KEY, TaskRegistry
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,6 +48,12 @@ class Jarvis:
         # integration to find it, nor be ordered after one that might not be
         # configured.
         self.tasks = TaskRegistry(self, Store(self.config_dir, TASKS_STORE_KEY))
+        # And the thing that actually runs what the registry records. Beside it
+        # for the same reason: every kind of slow work goes through one queue,
+        # and a worker should not have to find an integration to be run by it.
+        # `llm.max_concurrent` sets the width; the engine is built with the
+        # default and re-sized when that integration sets up.
+        self.taskengine = TaskEngine(self, self.tasks)
         # An attribute beside the registries rather than a `data` key: the
         # reload services have to reach it without importing an integration,
         # and it has the same lifecycle as the rest of the core infrastructure.
@@ -98,6 +105,84 @@ class Jarvis:
                 return device.area_id
         return None
 
+    # --- taking things out of the house (M69) -------------------------------
+    async def async_remove_entity(
+        self, entity_id: str, context: Context | None = None
+    ) -> dict[str, Any]:
+        """Take one entity out of the house: its live object, its state, its
+        registry entry. The one delete path.
+
+        The console's `config/entity_registry/remove`, its REST twin and the
+        assistant's `remove_entities` all come here, so "removed" cannot mean
+        three different things: the platform's live object is told and
+        dropped (so polling cannot write the state back), the state machine
+        fires `state_changed` with no new state (so every surface drops the
+        row live and a dashboard tile says it is gone), and the registry entry
+        is gone and saved gone — which is what takes it out of the exposure
+        list and the house summary the model reads, both of which are derived.
+
+        What it does NOT do: keep an integration that recreates the entity on
+        its next update from doing so. A thing that keeps publishing comes
+        back, under a fresh registry entry; remove its device, or the
+        integration, to keep it gone. And automations that name the id are
+        not edited — they keep naming something that no longer answers, which
+        the automation check reports.
+        """
+        entity_id = str(entity_id or "").strip().lower()
+        had_state = self.states.get(entity_id) is not None
+        outcome: dict[str, Any] = {
+            "entity_id": entity_id,
+            "object": False,
+            "state": False,
+            "registry": False,
+        }
+        entity = self.entity_object(entity_id)
+        if entity is not None:
+            remover = getattr(getattr(entity, "platform", None), "async_remove_entity", None)
+            if callable(remover):
+                await remover(entity_id)
+            else:
+                self.data.get("entity_objects", {}).pop(entity_id, None)
+            outcome["object"] = True
+        # After the object, so a platform that removed the state itself is
+        # not double-counted and one that did not still loses it here.
+        outcome["state"] = had_state and (
+            self.states.remove(entity_id, context) or self.states.get(entity_id) is None
+        )
+        outcome["registry"] = await self.entities.remove(entity_id)
+        outcome["removed"] = bool(outcome["object"] or outcome["state"] or outcome["registry"])
+        if outcome["removed"]:
+            _LOGGER.info("Removed %s from the house", entity_id)
+        return outcome
+
+    async def async_remove_device(
+        self, device_id: str, context: Context | None = None
+    ) -> dict[str, Any]:
+        """Take a device out of the house, and every entity that hangs off it.
+
+        Entities first, through `async_remove_entity`, then the device record
+        — the other order would leave entities naming a device that is gone.
+        """
+        device_id = str(device_id or "").strip()
+        device = self.devices.devices.get(device_id)
+        if device is None:
+            return {"device_id": device_id, "removed": False, "entities": []}
+        entity_ids = sorted(
+            entry.entity_id
+            for entry in list(self.entities.entities.values())
+            if entry.device_id == device_id
+        )
+        for entity_id in entity_ids:
+            await self.async_remove_entity(entity_id, context)
+        await self.devices.remove(device_id)
+        _LOGGER.info("Removed device %s (%s) and %d entities", device_id, device.name, len(entity_ids))
+        return {
+            "device_id": device_id,
+            "name": device.name,
+            "removed": True,
+            "entities": entity_ids,
+        }
+
     # --- lifecycle --------------------------------------------------------
     async def async_install_config(
         self, config: dict[str, Any], package_provenance: dict[str, str] | None = None
@@ -128,6 +213,10 @@ class Jarvis:
         # setup finds a loaded list — and so a task interrupted by the last
         # shutdown is marked as such before a surface can read it half-loaded.
         await self.tasks.async_load()
+        # The queue lives in the same store as the tasks, so work that was
+        # WAITING when the process died is still waiting. Work that was running
+        # is only resumed if it said it was idempotent (see taskengine.py).
+        self.taskengine.load(await self.tasks.store.load() or {})
         # Rebinding the local on purpose — see async_install_config. Both the
         # areas loop below and async_setup_integrations must see the overlay.
         config = await self.async_install_config(config, package_provenance)
@@ -148,12 +237,19 @@ class Jarvis:
     async def async_start(self) -> None:
         self.is_running = True
         await self.bus.async_fire(EVENT_JARVIS_START)
+        # The pump starts with the house, not with the first submission: a
+        # queue restored by `taskengine.load` at setup sat "queued — picked
+        # back up after a restart" on the nineteenth house (27 Aug 2026) for
+        # eight minutes, because only `submit` ever started it. By now every
+        # integration has registered its kinds, so what was restored can run.
+        self.taskengine.start()
         _LOGGER.info("Jarvis started with %d entities", len(self.states.all()))
 
     async def async_stop(self) -> None:
         if not self.is_running:
             return
         self.is_running = False
+        await self.taskengine.async_stop()
         await self.bus.async_fire(EVENT_JARVIS_STOP)
         for callback in reversed(self._shutdown_callbacks):
             try:

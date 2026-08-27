@@ -1,4 +1,13 @@
 <script lang="ts">
+	/**
+	 * One entity as one hairline row: the name in the body face, the id in
+	 * mono under it, its state as a tag, and its controls — ONE of them lit
+	 * when it is on. Reactor II spends the accent on what is live now, so a
+	 * row of nine lit lights is nine outlines, not nine filled buttons; the
+	 * filled control on a screen is its one primary action, and it is never
+	 * here.
+	 */
+	import { Button } from '$lib/ui';
 	import { domainOf, isOn, type EntityState } from '$lib/jarvisClient';
 	import { staggerStyle } from '$lib/motion';
 
@@ -18,7 +27,7 @@
 	let attrs = $derived(state.attributes ?? {});
 	let unavailable = $derived(state.state === 'unavailable');
 
-	// A light turning on flashes its own pill, so a change you caused (or that
+	// A light turning on flashes its own tag, so a change you caused (or that
 	// arrived from somewhere else) is visible without hunting for it.
 	//
 	// Restarted imperatively rather than by toggling a class: a class the
@@ -60,25 +69,24 @@
 
 	<span
 		bind:this={pill}
-		class="pill"
+		class="state"
 		class:on
+		class:unavailable
 		data-testid="state-{entityId}"
 		aria-label="{name} state">{state.state}</span
 	>
 
 	<div class="ctl">
 		{#if domain === 'light' || domain === 'switch' || domain === 'fan' || domain === 'siren' || domain === 'input_boolean'}
-			<button
-				type="button"
-				class="btn"
-				class:on
+			<Button
+				pressed={on}
 				disabled={unavailable}
-				data-testid="toggle-{entityId}"
+				testid="toggle-{entityId}"
 				aria-label="{on ? 'Turn off' : 'Turn on'} {name}"
 				onclick={() => call(on ? 'turn_off' : 'turn_on')}
 			>
 				{on ? 'TURN OFF' : 'TURN ON'}
-			</button>
+			</Button>
 			{#if domain === 'light'}
 				<label class="slider">
 					<span class="slabel">BRI</span>
@@ -107,11 +115,15 @@
 				</label>
 			{/if}
 		{:else if domain === 'cover'}
-			<button type="button" class="btn" data-testid="open-{entityId}" aria-label="Open {name}" onclick={() => call('open_cover')}>OPEN</button>
-			<button type="button" class="btn ghost" aria-label="Stop {name}" onclick={() => call('stop_cover')}>STOP</button>
-			<button type="button" class="btn" data-testid="close-{entityId}" aria-label="Close {name}" onclick={() => call('close_cover')}>
-				CLOSE
-			</button>
+			<!-- One control where one will do (M55): a cover offers the move it can
+			     make from where it is, and STOP. OPEN and CLOSE side by side were
+			     two buttons for one decision. -->
+			{#if on}
+				<Button testid="close-{entityId}" aria-label="Close {name}" onclick={() => call('close_cover')}>CLOSE</Button>
+			{:else}
+				<Button testid="open-{entityId}" aria-label="Open {name}" onclick={() => call('open_cover')}>OPEN</Button>
+			{/if}
+			<Button aria-label="Stop {name}" onclick={() => call('stop_cover')}>STOP</Button>
 			<label class="slider">
 				<span class="slabel">POS</span>
 				<input
@@ -126,14 +138,14 @@
 			</label>
 		{:else if domain === 'climate'}
 			{#if attrs.current_temperature !== undefined}
-				<span class="muted">now {attrs.current_temperature}°</span>
+				<span class="reading">now {attrs.current_temperature}°</span>
 			{/if}
 			<label class="slider">
 				<span class="slabel">SET</span>
 				<input
 					type="number"
 					step="0.5"
-					style="width:5rem"
+					class="num"
 					value={num(attrs.temperature, 20)}
 					data-testid="setpoint-{entityId}"
 					aria-label="{name} target temperature"
@@ -141,6 +153,7 @@
 				/>
 			</label>
 			<select
+				class="sel"
 				data-testid="hvac-{entityId}"
 				aria-label="{name} HVAC mode"
 				value={state.state}
@@ -151,28 +164,24 @@
 				{/each}
 			</select>
 		{:else if domain === 'media_player'}
-			<button
-				type="button"
-				class="btn ghost"
-				data-testid="prev-{entityId}"
+			<Button testid="prev-{entityId}"
 				aria-label="Previous track on {name}"
 				onclick={() => call('media_previous_track')}
 			>
 				<span aria-hidden="true">‹‹</span>
-			</button>
-			<button type="button" class="btn" data-testid="play-{entityId}" aria-label="Play {name}" onclick={() => call('media_play')}>PLAY</button>
-			<button type="button" class="btn" data-testid="pause-{entityId}" aria-label="Pause {name}" onclick={() => call('media_pause')}>
-				PAUSE
-			</button>
-			<button
-				type="button"
-				class="btn ghost"
-				data-testid="next-{entityId}"
+			</Button>
+			<!-- Play and pause are one control (M55): the one the player can take now. -->
+			{#if state.state === 'playing'}
+				<Button pressed testid="pause-{entityId}" aria-label="Pause {name}" onclick={() => call('media_pause')}>PAUSE</Button>
+			{:else}
+				<Button testid="play-{entityId}" aria-label="Play {name}" onclick={() => call('media_play')}>PLAY</Button>
+			{/if}
+			<Button testid="next-{entityId}"
 				aria-label="Next track on {name}"
 				onclick={() => call('media_next_track')}
 			>
 				<span aria-hidden="true">››</span>
-			</button>
+			</Button>
 			<label class="slider">
 				<span class="slabel">VOL</span>
 				<input
@@ -186,22 +195,22 @@
 				/>
 			</label>
 		{:else if domain === 'lock'}
-			<button type="button" class="btn" data-testid="lock-{entityId}" aria-label="Lock {name}" onclick={() => call('lock')}>LOCK</button>
-			<button type="button" class="btn ghost" data-testid="unlock-{entityId}" aria-label="Unlock {name}" onclick={() => call('unlock')}>
-				UNLOCK
-			</button>
+			<!-- One control (M55): the move the lock can make from where it is. -->
+			{#if state.state === 'locked'}
+				<Button testid="unlock-{entityId}" aria-label="Unlock {name}" onclick={() => call('unlock')}>UNLOCK</Button>
+			{:else}
+				<Button testid="lock-{entityId}" aria-label="Lock {name}" onclick={() => call('lock')}>LOCK</Button>
+			{/if}
 		{:else if domain === 'button' || domain === 'scene' || domain === 'script'}
-			<button
-				type="button"
-				class="btn"
-				data-testid="press-{entityId}"
+			<Button testid="press-{entityId}"
 				aria-label="Run {name}"
 				onclick={() => call(domain === 'button' ? 'press' : 'turn_on')}
 			>
 				RUN
-			</button>
+			</Button>
 		{:else if domain === 'select' || domain === 'input_select'}
 			<select
+				class="sel"
 				data-testid="select-{entityId}"
 				aria-label="{name} option"
 				value={state.state}
@@ -215,7 +224,7 @@
 		{:else if domain === 'number' || domain === 'input_number'}
 			<input
 				type="number"
-				style="width:6rem"
+				class="num wide"
 				min={attrs.min}
 				max={attrs.max}
 				step={attrs.step ?? 1}
@@ -225,39 +234,134 @@
 				onchange={(e) => call('set_value', { value: num(target(e).value) })}
 			/>
 		{:else if domain === 'vacuum'}
-			<button type="button" class="btn" aria-label="Start {name}" onclick={() => call('start')}>START</button>
-			<button type="button" class="btn ghost" aria-label="Send {name} to its dock" onclick={() => call('return_to_base')}>DOCK</button>
+			<!-- One control (M55): a cleaning vacuum offers DOCK, an idle one START. -->
+			{#if state.state === 'cleaning'}
+				<Button pressed aria-label="Send {name} to its dock" onclick={() => call('return_to_base')}>DOCK</Button>
+			{:else}
+				<Button aria-label="Start {name}" onclick={() => call('start')}>START</Button>
+			{/if}
 		{:else if attrs.unit_of_measurement}
-			<span class="muted">{attrs.unit_of_measurement}</span>
+			<span class="reading">{attrs.unit_of_measurement}</span>
 		{/if}
 	</div>
 </div>
 
 <style>
+	.row {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-3);
+		flex-wrap: wrap;
+		min-width: 0;
+		padding: var(--jv-space-3) 0;
+	}
+	.name {
+		flex: 1 1 12rem;
+		min-width: 0;
+		display: grid;
+		gap: var(--jv-space-1);
+	}
+	.name b {
+		font-weight: var(--jv-weight-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text);
+	}
+	.eid {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		color: var(--jv-text-faint);
+		overflow-wrap: anywhere;
+	}
+	/* The state, as a tag: a word on a hairline, lit when the thing is on. */
+	.state {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		color: var(--jv-text-faint);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-sm);
+		padding: 0 var(--jv-space-2);
+		line-height: 1.7;
+		white-space: nowrap;
+		transition: color var(--jv-dur-fast) var(--jv-ease-out), border-color var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.state.on {
+		color: var(--jv-accent);
+		border-color: color-mix(in srgb, var(--jv-accent) 40%, transparent);
+	}
+	.state.unavailable {
+		color: var(--jv-danger-text);
+	}
 	.ctl {
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
+		gap: var(--jv-space-2);
 		flex-wrap: wrap;
 	}
 	.slider {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
+		gap: var(--jv-space-2);
 	}
 	/*
 	 * Tokens, not `--chrome` / `--dim`.
 	 *
-	 * Those two are declared inside `.hud` in the HUD's own page, and this row is
-	 * only ever drawn inside `.console` — so both lookups fell through to nothing
-	 * and every slider label lost its font AND its colour, inheriting the body
-	 * face at the row's text colour. It looked like a design decision.
+	 * Those two were once declared inside the voice screen's own page, and this
+	 * row is only ever drawn inside the console — so both lookups fell through
+	 * to nothing and every slider label lost its font AND its colour. A label
+	 * for a number is data, so it keeps the mono face.
 	 */
 	.slabel {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-chrome);
 		color: var(--jv-text-dim);
-		opacity: 0.7;
+	}
+	.reading {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-dim);
+		white-space: nowrap;
+	}
+	input[type='range'] {
+		accent-color: var(--jv-accent);
+		width: calc(var(--jv-space-7) * 2.6667);
+	}
+	.num,
+	.sel {
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-1) var(--jv-space-2);
+	}
+	.num {
+		width: calc(var(--jv-space-7) * 1.6667);
+		font-family: var(--jv-font-chrome);
+		font-variant-numeric: tabular-nums;
+	}
+	.num.wide {
+		width: calc(var(--jv-space-7) * 2);
+	}
+	.num:hover,
+	.sel:hover {
+		border-color: var(--jv-line);
+	}
+	@media (max-width: 640px) {
+		.row {
+			align-items: flex-start;
+		}
+		.name {
+			flex: 1 1 100%;
+		}
+		.ctl {
+			width: 100%;
+		}
+		input[type='range'] {
+			width: calc(var(--jv-space-7) * 2);
+		}
 	}
 </style>

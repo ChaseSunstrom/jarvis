@@ -23,6 +23,7 @@ none of this needs a running Ollama.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Callable, Sequence
@@ -37,6 +38,8 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "qwen3:8b"
 DEFAULT_TIMEOUT = 120.0
+#: The floor for a whole-call deadline. See `OllamaClient.call_timeout`.
+CALL_TIMEOUT = 300.0
 
 CHAT_PATH = "/api/chat"
 TAGS_PATH = "/api/tags"
@@ -226,9 +229,25 @@ class ChatStream:
 
     async def _collect(self) -> ChatResult:
         if not self._started:
-            async for _ in self:
-                pass
+            # The whole-call deadline, and this is the only place it can go:
+            # the per-read timeout in httpx is reset by every keepalive byte,
+            # so a stalled server is indistinguishable from a slow one until
+            # something counts the seconds for the call as a whole.
+            deadline = getattr(self._client, "call_timeout", CALL_TIMEOUT)
+            try:
+                await asyncio.wait_for(self._drain(), timeout=deadline)
+            except asyncio.TimeoutError:
+                await self.aclose()
+                raise OllamaError(
+                    f"the model server sent nothing usable within {deadline:.0f}s "
+                    "and the call was abandoned. It accepted the request — this "
+                    "is a stall, not an outage."
+                ) from None
         return self._result
+
+    async def _drain(self) -> None:
+        async for _ in self:
+            pass
 
     def _emit_thinking(self, delta: str) -> None:
         """Push one slice of reasoning at whoever asked for it.
@@ -359,6 +378,20 @@ class OllamaClient:
         self.url = str(url or DEFAULT_URL).rstrip("/")
         self.model = model or DEFAULT_MODEL
         self.timeout = timeout
+        #: The longest ONE model call may take, end to end.
+        #:
+        #: `timeout` is httpx's, and httpx's is per read: every byte resets it.
+        #: A server that sends its headers and then an SSE keepalive comment
+        #: once a second — which llama-swap does while the backend is busy —
+        #: never trips it, so a turn waits forever. Observed, on this hardware:
+        #: a conversation hung for ten minutes with `timeout: 120` configured
+        #: and doing nothing at all, and the person talking to it got no answer
+        #: and no error, only silence.
+        #:
+        #: So there is a second, absolute bound. Generous, because a long
+        #: answer from a 27-B model on CPU legitimately takes minutes — its job
+        #: is to turn "forever" into "a failure somebody can see".
+        self.call_timeout = max(float(timeout), CALL_TIMEOUT)
         self.keep_alive = keep_alive
         self._owns_client = client is None
         self._http = client or httpx.AsyncClient(

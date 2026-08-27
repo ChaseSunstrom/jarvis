@@ -1,7 +1,12 @@
 package ai.jarvis.app.channel
 
 import ai.jarvis.app.BuildConfig
+import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.config.VoiceIdentityClient
 import ai.jarvis.app.automation.AutomationRuntime
+import ai.jarvis.app.tasks.TaskNotifier
+import ai.jarvis.app.tasks.TaskOverlay
+import ai.jarvis.app.tasks.TaskWatch
 import android.content.Context
 import android.util.Log
 
@@ -51,11 +56,50 @@ object DeviceChannelHost {
     @Volatile
     private var channel: JarvisChannel? = null
 
+    /**
+     * The floating chip, and the notification behind it.
+     *
+     * Both live here rather than in an Activity for the same reason the channel
+     * does: the case they exist for is a research run that starts while the
+     * phone is in a pocket, and an Activity is not running then. Neither draws
+     * anything until there is work to draw, so starting them costs a listener.
+     */
+    private var overlay: TaskOverlay? = null
+    private var unlistenTasks: (() -> Unit)? = null
+
     /** The live channel, for the settings screen's status readout. */
     fun channel(): JarvisChannel? = channel
 
     /** True once [start] has built a channel that has not been [stop]ped. */
     val isStarted: Boolean get() = channel != null
+
+    /**
+     * Ask the server for the speaker gate's mode the moment the socket has
+     * registered (M98), and cache it the way the enrolment screen does.
+     *
+     * `speakerGateEnforcing` defaults false and was written only after the
+     * Whose-voice screen asked; a phone that never opened it, against a house
+     * that enforces, sent audio-derived turns the server refused while its
+     * own Settings said "speech is turned into text on this phone" (the
+     * Android audit, 27 Aug 2026). Off the main thread: it is a GET.
+     */
+    private fun refreshSpeakerGate(context: Context) {
+        Thread({
+            try {
+                val config = JarvisConfig(context)
+                when (val result = VoiceIdentityClient(config.serverUrl, config.token).status()) {
+                    is VoiceIdentityClient.Result.Ok -> {
+                        val fresh = result.value
+                        config.speakerGateEnforcing = fresh.mode == "enforce" && fresh.enrolled
+                        Log.i(TAG, "speaker gate: enforcing=${config.speakerGateEnforcing}")
+                    }
+                    else -> Log.w(TAG, "speaker gate mode could not be read; keeping the cached value")
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "speaker gate refresh failed", t)
+            }
+        }, "jarvis-gate-refresh").start()
+    }
 
     /**
      * Build the channel, plug it into the automation seams, and start it.
@@ -70,6 +114,7 @@ object DeviceChannelHost {
             JarvisChannel(
                 context = app,
                 configProvider = { ChannelConfig.from(app, BuildConfig.VERSION_NAME) },
+                afterRegistered = { refreshSpeakerGate(app) },
             )
         } catch (t: Throwable) {
             // A phone that cannot open its command channel must still run its
@@ -89,7 +134,28 @@ object DeviceChannelHost {
             stop()
             return
         }
+        startTaskSurfaces(app)
         Log.i(TAG, "device channel started")
+    }
+
+    /**
+     * Show long work wherever the phone can.
+     *
+     * Two surfaces, deliberately not exclusive. The overlay is the good one and
+     * has two hard limits — it needs SYSTEM_ALERT_WINDOW, and it is never drawn
+     * above the keyguard — and both of them bite in exactly the situation this
+     * is for. The notification has neither limit. Running both means an OEM
+     * that suppresses overlays degrades to something rather than to nothing.
+     */
+    private fun startTaskSurfaces(app: Context) {
+        if (unlistenTasks != null) return
+        val chip = TaskOverlay(app)
+        overlay = chip
+        runCatching { chip.start() }
+            .onFailure { Log.w(TAG, "the task overlay would not start", it) }
+        unlistenTasks = TaskWatch.listen { rows ->
+            TaskNotifier.render(app, rows, TaskWatch.headline())
+        }
     }
 
     /** Close the socket and clear the seams. Safe when there is no channel. */
@@ -99,6 +165,13 @@ object DeviceChannelHost {
         channel = null
         AutomationRuntime.deviceEvents = null
         AutomationRuntime.askJarvis = null
+        unlistenTasks?.invoke()
+        unlistenTasks = null
+        overlay?.stop()
+        overlay = null
+        // The board is not cleared. It is the last true thing anybody knew, and
+        // a reconnect replaces it wholesale with a fresh listing.
+        TaskWatch.onDisconnected()
         runCatching { existing.stop() }
             .onFailure { Log.w(TAG, "device channel stop failed", it) }
     }

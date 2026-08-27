@@ -123,8 +123,8 @@ class AuditLogActivity : Activity() {
     }
 
     private fun unavailableColumn(): LinearLayout {
-        val col = JarvisUi.column(this, padDp = 20)
-        col.addView(JarvisUi.title(this, "AUDIT LOG"))
+        val col = JarvisUi.column(this, padDp = JarvisUi.Space.SCREEN)
+        col.addView(JarvisUi.screenTitle(this, "Audit log", "Every action the phone took for Jarvis, and what allowed it."))
         col.addView(
             JarvisUi.hint(
                 this,
@@ -136,8 +136,8 @@ class AuditLogActivity : Activity() {
     }
 
     private fun listColumn(entries: List<AuditEntry>, total: Int): LinearLayout {
-        val col = JarvisUi.column(this, padDp = 20)
-        col.addView(JarvisUi.title(this, "AUDIT LOG"))
+        val col = JarvisUi.column(this, padDp = JarvisUi.Space.SCREEN)
+        col.addView(JarvisUi.screenTitle(this, "Audit log", "Every action the phone took for Jarvis, and what allowed it."))
         col.addView(
             JarvisUi.hint(
                 this,
@@ -149,17 +149,17 @@ class AuditLogActivity : Activity() {
         )
 
         if (entries.isEmpty()) {
-            col.addView(JarvisUi.spacer(this, 24))
+            col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
             col.addView(
                 TextView(this).apply {
                     text = "Nothing has run yet."
                     setTextColor(JarvisUi.FAINT)
-                    textSize = 14f
+                    textSize = JarvisUi.Type.BODY
                     gravity = Gravity.CENTER
                     typeface = Typeface.MONOSPACE
                 }
             )
-            col.addView(JarvisUi.spacer(this, 24))
+            col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
             return col
         }
 
@@ -173,35 +173,35 @@ class AuditLogActivity : Activity() {
         for (entry in entries) {
             col.addView(
                 rowFor(entry),
-                matchWidth().apply { topMargin = JarvisUi.dp(this@AuditLogActivity, 8) }
+                matchWidth().apply { topMargin = JarvisUi.dp(this@AuditLogActivity, JarvisUi.Space.STEP) }
             )
         }
 
-        col.addView(JarvisUi.spacer(this, 16))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.SECTION))
         col.addView(
-            JarvisUi.ghost(this, "COPY ALL") {
+            JarvisUi.button(this, "COPY ALL") {
                 copy(entries.joinToString("\n") { oneLine(it) })
             },
             matchWidth()
         )
         col.addView(
-            JarvisUi.ghost(this, if (clearArmed) "TAP AGAIN TO CLEAR" else "CLEAR") { clearAll() },
-            matchWidth().apply { topMargin = JarvisUi.dp(this@AuditLogActivity, 8) }
+            JarvisUi.button(this, if (clearArmed) "TAP AGAIN TO CLEAR" else "CLEAR") { clearAll() },
+            matchWidth().apply { topMargin = JarvisUi.dp(this@AuditLogActivity, JarvisUi.Space.STEP) }
         )
-        col.addView(JarvisUi.spacer(this, 24))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
         return col
     }
 
     private fun rowFor(entry: AuditEntry): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        val p = JarvisUi.dp(this@AuditLogActivity, 12)
+        val p = JarvisUi.dp(this@AuditLogActivity, JarvisUi.Space.GAP)
         setPadding(p, p, p, p)
         background = JarvisUi.panel(this@AuditLogActivity)
         addView(
             TextView(this@AuditLogActivity).apply {
                 text = "${entry.actionId}  ·  ${entry.status}"
                 setTextColor(toneFor(entry))
-                textSize = 13f
+                textSize = JarvisUi.Type.MONO
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             }
         )
@@ -210,9 +210,9 @@ class AuditLogActivity : Activity() {
                 text = "${formatTime(entry.timestamp)}  ·  ${entry.tier.name}  ·  " +
                     "${entry.decision.name}  ·  ${entry.source}  ·  ${entry.durationMs}ms"
                 setTextColor(JarvisUi.FAINT)
-                textSize = 11f
+                textSize = JarvisUi.Type.LABEL
                 typeface = Typeface.MONOSPACE
-                setPadding(0, JarvisUi.dp(this@AuditLogActivity, 4), 0, 0)
+                setPadding(0, JarvisUi.dp(this@AuditLogActivity, JarvisUi.Space.TIGHT), 0, 0)
             }
         )
         setOnClickListener {
@@ -229,29 +229,29 @@ class AuditLogActivity : Activity() {
     }
 
     private fun detailColumn(entry: AuditEntry): LinearLayout {
-        val col = JarvisUi.column(this, padDp = 20)
-        col.addView(JarvisUi.title(this, "ENTRY"))
+        val col = JarvisUi.column(this, padDp = JarvisUi.Space.SCREEN)
+        col.addView(JarvisUi.screenTitle(this, "Entry"))
         col.addView(
             TextView(this).apply {
                 text = formatTime(entry.timestamp)
                 setTextColor(JarvisUi.DIM)
-                textSize = 12f
+                textSize = JarvisUi.Type.HINT
                 gravity = Gravity.CENTER
                 typeface = Typeface.MONOSPACE
             }
         )
-        col.addView(JarvisUi.spacer(this, 12))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.GAP))
         col.addView(JarvisUi.mono(this, detailText(entry)), matchWidth())
-        col.addView(JarvisUi.spacer(this, 16))
-        col.addView(JarvisUi.ghost(this, "COPY") { copy(detailText(entry)) }, matchWidth())
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.SECTION))
+        col.addView(JarvisUi.button(this, "COPY") { copy(detailText(entry)) }, matchWidth())
         col.addView(
-            JarvisUi.ghost(this, "BACK TO LIST") {
+            JarvisUi.button(this, "BACK TO LIST") {
                 showing = null
                 refresh()
             },
-            matchWidth().apply { topMargin = JarvisUi.dp(this@AuditLogActivity, 8) }
+            matchWidth().apply { topMargin = JarvisUi.dp(this@AuditLogActivity, JarvisUi.Space.STEP) }
         )
-        col.addView(JarvisUi.spacer(this, 24))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
         return col
     }
 

@@ -1,0 +1,168 @@
+{
+  "_comment": [
+    "One table, two implementations. jarvis-core's `permits()` in",
+    "integrations/code/forges.py decides whether a clone is allowed; the",
+    "console copies the rule into `whyNotProject` so the form can refuse",
+    "without a round trip. A copy that drifts is worse than no copy, because",
+    "the form would accept what the server then rejects and the reader would",
+    "blame the form. Both suites read THIS file, so drift breaks whichever",
+    "side moved."
+  ],
+  "cases": [
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "owner/repo",
+      "permitted": true
+    },
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "owner/other",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "OWNER/REPO",
+      "permitted": true
+    },
+    {
+      "allow": [
+        "Owner/Repo"
+      ],
+      "project": "owner/repo",
+      "permitted": true
+    },
+    {
+      "allow": [
+        "owner/*"
+      ],
+      "project": "owner/anything",
+      "permitted": true
+    },
+    {
+      "allow": [
+        "owner/*"
+      ],
+      "project": "owner",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/*"
+      ],
+      "project": "someone/anything",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/*"
+      ],
+      "project": "owner/group/deep",
+      "permitted": true
+    },
+    {
+      "allow": [
+        "group/sub/repo"
+      ],
+      "project": "group/sub/repo",
+      "permitted": true
+    },
+    {
+      "allow": [
+        "group/sub/repo"
+      ],
+      "project": "group/repo",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "owner/repo/extra",
+      "permitted": false
+    },
+    {
+      "allow": [],
+      "project": "owner/repo",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "/owner/repo/",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "a/b",
+        "c/*"
+      ],
+      "project": "c/d",
+      "permitted": true
+    },
+    {
+      "allow": [
+        "a/b",
+        "c/*"
+      ],
+      "project": "a/b",
+      "permitted": true
+    },
+    {
+      "allow": [
+        "a/b",
+        "c/*"
+      ],
+      "project": "e/f",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "owner/../repo",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "https://x/owner/repo",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "owner\\repo",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "owner/repo"
+      ],
+      "project": "owner /repo",
+      "permitted": false
+    },
+    {
+      "allow": [
+        "a/b/c/d/e/f/g/h/i"
+      ],
+      "project": "a/b/c/d/e/f/g/h/i",
+      "permitted": false
+    }
+  ]
+}

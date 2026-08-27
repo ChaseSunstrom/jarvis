@@ -364,6 +364,70 @@ def check_the_microphone_comes_back_promptly() -> list[str]:
     return failures
 
 
+# =========================================================================
+# 6. The gate's mode reaches the phone when the socket registers (M98)
+# =========================================================================
+CHANNEL = ANDROID / "app/src/main/kotlin/ai/jarvis/app/channel/JarvisChannel.kt"
+HOST = ANDROID / "app/src/main/kotlin/ai/jarvis/app/channel/DeviceChannelHost.kt"
+IDENTITY = ANDROID / "app/src/main/kotlin/ai/jarvis/app/VoiceIdentityActivity.kt"
+
+
+def check_the_gate_mode_is_refreshed_when_the_socket_registers() -> list[str]:
+    """A new phone against an enforcing house refused every turn while its
+    Settings screen said the opposite (the Android audit, 27 Aug 2026):
+    `speakerGateEnforcing` defaulted false and was written only by the
+    Whose-voice screen. Now the channel tells its host when the socket has
+    registered, and the host asks the server for the gate's mode right then —
+    the same GET, the same expression, as the enrolment screen."""
+    failures: list[str] = []
+    channel = CHANNEL.read_text(encoding="utf-8")
+    host = HOST.read_text(encoding="utf-8")
+    identity = IDENTITY.read_text(encoding="utf-8")
+    if "afterRegistered" not in channel:
+        failures.append("JarvisChannel has no afterRegistered hook")
+    registered_at = channel.find("current.registered = true")
+    hook_at = channel.find("afterRegistered?.invoke()")
+    if registered_at == -1 or hook_at == -1 or hook_at < registered_at:
+        failures.append("the hook does not run after `registered = true`")
+    if "fun refreshSpeakerGate(" not in host:
+        failures.append("DeviceChannelHost has no refreshSpeakerGate")
+    if "afterRegistered = { refreshSpeakerGate(app) }" not in host:
+        failures.append("the host does not refresh the gate when the channel registers")
+    expression = 'mode == "enforce" && fresh.enrolled'
+    if expression not in identity:
+        failures.append("the enrolment screen no longer uses the expected expression (update this check)")
+    if 'config.speakerGateEnforcing = fresh.mode == "enforce" && fresh.enrolled' not in host:
+        failures.append("the host does not write speakerGateEnforcing the way the enrolment screen does")
+    if "VoiceIdentityClient(" not in host or ".status()" not in host:
+        failures.append("the host does not ask the server (VoiceIdentityClient.status)")
+    return failures
+
+
+ASSIST = ANDROID / "app/src/main/kotlin/ai/jarvis/app/JarvisAssistActivity.kt"
+
+
+def check_typing_to_jarvis_runs_the_same_pipeline() -> list[str]:
+    """M98: a refused microphone is not a dead app. The voice screen carries a
+    one-line field sent on the keyboard's action; `sendTyped` puts the text on
+    the transcript and hands it to the same intent-stage pipeline a sentence
+    the phone transcribed takes — never a second path."""
+    failures: list[str] = []
+    assist = ASSIST.read_text(encoding="utf-8")
+    convo = CONVO.read_text(encoding="utf-8")
+    if "EditText(this)" not in assist or "IME_ACTION_SEND" not in assist:
+        failures.append("the voice screen has no typed field sent on the keyboard's action")
+    if "convo?.sendTyped(" not in assist:
+        failures.append("the typed field does not reach the conversation")
+    at = convo.find("fun sendTyped(text: String)")
+    if at == -1:
+        failures.append("JarvisConversation has no sendTyped")
+    else:
+        body = convo[at:at + 600]
+        if "ui.onTranscript(" not in body or "speakToServer(" not in body:
+            failures.append("sendTyped does not take the transcribed-sentence path (onTranscript + speakToServer)")
+    return failures
+
+
 def main() -> int:
     for path in (STT, CONVO, MIC, SETTINGS):
         if not path.is_file():
@@ -375,6 +439,8 @@ def main() -> int:
         + check_the_failures_are_told_apart()
         + check_the_settings_do_not_conflate_them()
         + check_the_microphone_comes_back_promptly()
+        + check_the_gate_mode_is_refreshed_when_the_socket_registers()
+        + check_typing_to_jarvis_runs_the_same_pipeline()
     )
     for failure in failures:
         print(f"FAIL  {failure}", file=sys.stderr)
@@ -384,7 +450,7 @@ def main() -> int:
     print(
         "on-device turn: the level mapping, the orb's progress, the five failure "
         "sentences, the settings' two meanings of \"on this phone\" and the "
-        "microphone hand-back all agree"
+        "microphone hand-back all agree; the gate's mode is refreshed when the socket registers; typing runs the same pipeline"
     )
     return 0
 

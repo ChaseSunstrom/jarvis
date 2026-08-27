@@ -1,0 +1,27 @@
+name: resilience-stt-down
+capability: resilience
+# Voice only, and deliberately: the failure being tested is speech recognition
+# going away, and a typed turn does not touch it.
+variants: [voice]
+intent: >
+  Whisper is a container, and containers stop: OOM, an image pull, a host
+  reboot mid-sentence. What must not happen is the failure being swallowed —
+  a HUD that listens forever, or a turn that ends silently and leaves someone
+  repeating themselves at a machine that cannot hear. The promise is a visible,
+  specific failure, and a working assistant again the moment the container is
+  back.
+turns:
+  - say: "Turn on the ceiling lights"
+    kill: wyoming-whisper
+    expect:
+      # No transcript is possible, so no WER: what is asserted is that the
+      # turn ENDED, and ended saying so.
+      transcript_wer: 1.0
+      error: {contains: "stt"}
+      no_service: [light]
+  - say: "Are you back with me?"
+    expect:
+      # The container is restarted at the end of the scenario, so this turn is
+      # the proof that the failure was transient rather than terminal: speech
+      # works again without anything else being restarted.
+      reply_means: "answers as normal — anything conversational counts"

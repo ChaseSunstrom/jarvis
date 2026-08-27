@@ -7,6 +7,7 @@ the actual work here means ``call_service`` over the socket and
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
@@ -15,7 +16,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..bus import Context
-from ..const import EVENT_STATE_CHANGED, VERSION
+from ..const import EVENT_SETTING_CHANGED, EVENT_STATE_CHANGED, VERSION
 from ..services import ServiceNotFound
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -337,6 +338,21 @@ async def async_approve(
     """
     if not request_id:
         raise ApiError("invalid_format", "jarvis/approve needs 'request_id'", 400)
+
+    # A coding job's held edit or command first. Two gates share this command —
+    # the model's (which ends a turn) and Jarvis Code's (which blocks a job
+    # until somebody looks at a diff) — and a request id says nothing about
+    # which one is holding it, so the one that recognises the id answers it.
+    from ..integrations.code import resolve_approval as _resolve_code
+
+    decided = approval_flag(approved)
+    if _resolve_code(jarvis, request_id, decided):
+        return {
+            "status": "executed" if decided else "denied",
+            "request_id": request_id,
+            "tool": "code",
+        }
+
     if not jarvis.services.has_service(LLM_DOMAIN, "approve"):
         raise ApiError(
             "not_supported", "the llm integration is not set up, nothing to approve", 501
@@ -346,7 +362,7 @@ async def async_approve(
         "approve",
         {
             "request_id": request_id,
-            "approved": approval_flag(approved),
+            "approved": decided,
             "answer": answer,
         },
         blocking=True,
@@ -417,20 +433,124 @@ def _changes(payload: dict[str, Any], allowed: tuple[str, ...]) -> dict[str, Any
     return {key: payload[key] for key in allowed if key in payload}
 
 
+def _rewrite_entity_id(value: Any, old: str, new: str) -> tuple[Any, int]:
+    """`old` becomes `new` anywhere inside a nested config. Returns the count.
+
+    Whole strings only, never substrings: `light.kitchen` must not rewrite the
+    `light.kitchen_counter` sitting next to it in the same list.
+    """
+    if isinstance(value, str):
+        return (new, 1) if value == old else (value, 0)
+    if isinstance(value, list):
+        changed = 0
+        out = []
+        for item in value:
+            rewritten, count = _rewrite_entity_id(item, old, new)
+            out.append(rewritten)
+            changed += count
+        return out, changed
+    if isinstance(value, dict):
+        changed = 0
+        out = {}
+        for key, item in value.items():
+            rewritten, count = _rewrite_entity_id(item, old, new)
+            out[key] = rewritten
+            changed += count
+        return out, changed
+    return value, 0
+
+
+async def _follow_rename_into_automations(
+    jarvis: "Jarvis", old: str, new: str
+) -> list[str]:
+    """Point authored automations at the entity's new id. Returns their names.
+
+    Renaming an entity and leaving the automations that drive it pointing at
+    an id nothing answers to is a rename that silently breaks the house. These
+    are configs Jarvis owns and stores, so it can follow them; anything in
+    `configuration.yaml` is the operator's file and is reported instead.
+    """
+    from ..automation.authored import get_authored
+
+    try:
+        store = get_authored(jarvis)
+    except Exception:  # noqa: BLE001 - automations are optional
+        return []
+    touched: list[str] = []
+    for entry in list(store.entries()):
+        entry_id = str(entry.get("id") or "")
+        config = {k: v for k, v in entry.items() if k not in ("created_at", "updated_at")}
+        rewritten, count = _rewrite_entity_id(config, old, new)
+        if not count:
+            continue
+        try:
+            await store.async_update(entry_id, rewritten)
+        except Exception as err:  # noqa: BLE001 - one bad config must not stop the rest
+            _LOGGER.warning(
+                "could not follow the rename of %s into automation %s: %s",
+                old,
+                entry_id,
+                err,
+            )
+            continue
+        touched.append(str(entry.get("alias") or entry_id))
+    # Reload so the running engine picks up the rewritten configs; without it
+    # the file is right and the behaviour is still wrong until a restart. Only
+    # if the integration is loaded at all — automations are optional.
+    if touched and jarvis.services.has_service("automation", "reload"):
+        await jarvis.services.async_call("automation", "reload", {}, blocking=True)
+    return touched
+
+
 async def async_update_entity(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
     entity_id = str(payload.get("entity_id") or "")
     if not entity_id:
         raise ApiError("invalid_format", "entity_id is required", 400)
-    if payload.get("new_entity_id") and payload["new_entity_id"] != entity_id:
-        raise ApiError(
-            "not_supported",
-            "renaming an entity_id is not supported yet; set 'name' instead",
-            400,
-        )
+    wanted = str(payload.get("new_entity_id") or "").strip().lower()
+
     entry = await jarvis.entities.update(entity_id, **_changes(payload, ENTITY_UPDATE_FIELDS))
     if entry is None:
         raise ApiError("not_found", f"unknown entity {entity_id}", 404)
-    return {"entity_entry": entry.as_dict()}
+
+    result: dict[str, Any] = {}
+    if wanted and wanted != entity_id:
+        # After the other fields, so a request that both renames and renames-
+        # the-label does not half-apply when the id turns out to be taken.
+        state = jarvis.states.get(entity_id)
+        try:
+            entry = await jarvis.entities.rename(entity_id, wanted)
+        except ValueError as err:
+            raise ApiError("invalid_format", str(err), 400) from err
+        if entry is None:  # pragma: no cover - update() already found it
+            raise ApiError("not_found", f"unknown entity {entity_id}", 404)
+        if state is not None:
+            # Carried, not recreated: an entity that came back as `unknown`
+            # after a rename would look broken to everything watching it.
+            jarvis.states.set(wanted, state.state, state.attributes)
+            jarvis.states.remove(entity_id)
+        result["renamed_from"] = entity_id
+        result["automations_updated"] = await _follow_rename_into_automations(
+            jarvis, entity_id, wanted
+        )
+    return {"entity_entry": entry.as_dict(), **result}
+
+
+async def async_remove_entity(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    """`config/entity_registry/remove`. One path — `Jarvis.async_remove_entity`
+    — shared with the assistant's `remove_entities`, so the console and the
+    voice cannot disagree about what removing means."""
+    entity_id = str(payload.get("entity_id") or "").strip().lower()
+    if not entity_id:
+        raise ApiError("invalid_format", "entity_id is required", 400)
+    outcome = await jarvis.async_remove_entity(entity_id, api_context())
+    if not outcome["removed"]:
+        raise ApiError("not_found", f"unknown entity {entity_id}", 404)
+    return {
+        "entity_id": entity_id,
+        "removed": True,
+        "had_state": bool(outcome["state"]),
+        "had_registry_entry": bool(outcome["registry"]),
+    }
 
 
 async def async_update_device(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
@@ -441,6 +561,17 @@ async def async_update_device(jarvis: "Jarvis", payload: dict[str, Any]) -> dict
     if entry is None:
         raise ApiError("not_found", f"unknown device {device_id}", 404)
     return entry.as_dict()
+
+
+async def async_remove_device(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    """`config/device_registry/remove`: the device and every entity on it."""
+    device_id = str(payload.get("device_id") or "").strip()
+    if not device_id:
+        raise ApiError("invalid_format", "device_id is required", 400)
+    outcome = await jarvis.async_remove_device(device_id, api_context())
+    if not outcome["removed"]:
+        raise ApiError("not_found", f"unknown device {device_id}", 404)
+    return outcome
 
 
 async def async_create_area(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
@@ -615,6 +746,97 @@ def tool_list_payload(jarvis: "Jarvis") -> list[dict[str, Any]]:
     return rows
 
 
+def tools_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """What the MODEL sees — not what this console can edit.
+
+    Deliberately a different command from `config/tool/list`, which answers
+    "what may be edited here" and marks each row `editable`. The console shows
+    the union of the two, because a backend can answer one and not the other,
+    and because a tool the model can call but nobody can edit still has to
+    appear. This one is the model's toolbox: `jarvis/llm/agent.py` builds its
+    schema from `as_openai_schema()` over this same registry with no filtering,
+    so "listed here" and "offered to the model" are the same set by
+    construction rather than by agreement.
+
+    That equivalence is the point. The reason this command had to exist is that
+    "is the tool the model is failing to call actually registered?" was not a
+    question any surface could answer.
+
+    `needs_approval` and `may_escalate` are computed HERE, from the registry's
+    own rule, rather than re-derived in TypeScript from `tier`. The tier is not
+    the whole rule — a tool in a gated domain is held at any tier, and a tool
+    with a `gate` is held depending on its arguments — and a console that
+    reimplemented that would be a second copy of the security decision.
+    """
+    from ..const import GATED_DOMAINS
+    from ..llm.tools import TIER_APPROVAL
+
+    registry = _tool_registry(jarvis)
+    tools: list[dict[str, Any]] = []
+    for name in registry.names():
+        tool = registry.get(name)
+        if tool is None:  # pragma: no cover - names() came from the same dict
+            continue
+        entry = tool.as_dict()
+        entry["needs_approval"] = bool(
+            tool.tier >= TIER_APPROVAL or (tool.domain and tool.domain in GATED_DOMAINS)
+        )
+        # A gate decides per call, so the listing cannot say yes or no — only
+        # that this one is capable of being held. Saying "no" here for a tool
+        # that will in fact ask would be the worse of the two errors.
+        entry["may_escalate"] = tool.gate is not None
+        tools.append(entry)
+    return {"tools": tools, "count": len(tools)}
+
+
+async def async_call_tool(
+    jarvis: "Jarvis",
+    name: str,
+    arguments: Any = None,
+    *,
+    context: Any = None,
+) -> dict[str, Any]:
+    """Run one tool the way the model would, and answer with what it got.
+
+    Straight through `ToolRegistry.call`, which is the whole design: argument
+    coercion against the declared schema, the unknown-tool message with the
+    list of real names, the approval gate, the `jarvis_tool_called` event. A
+    console test-run that reimplemented any of that would be testing a second
+    code path and reporting it as the first.
+
+    ## This is not a way round the gate
+
+    `registry.call` holds a Tier-3 tool here exactly as it holds it mid-turn:
+    the reply is the approval-required payload and an approval card is raised.
+    That is stricter than the console's existing reach, not looser —
+    `call_service` has always been able to call any service directly and is
+    not tiered at all. A test runner that skipped the gate would have made this
+    page the easiest Tier-3 bypass in the product.
+    """
+    registry = _tool_registry(jarvis)
+    tool_name = str(name or "").strip()
+    if not tool_name:
+        raise ApiError("invalid_format", "a tool call needs a name", 400)
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        raise ApiError(
+            "invalid_format",
+            "tool arguments must be an object, not "
+            f"{type(arguments).__name__}",
+            400,
+        )
+
+    result = await registry.call(tool_name, arguments, context)
+    # `call` answers `{"status": "error", "error": "unknown tool ..."}` rather
+    # than raising, because that shape is what a model reads and acts on. A
+    # REQUEST deserves the HTTP-shaped answer instead, so the console can tell
+    # "no such tool" from "the tool ran and said no".
+    if isinstance(result, dict) and str(result.get("error", "")).startswith("unknown tool"):
+        raise ApiError("not_found", str(result.get("error")), 404)
+    return {"tool": tool_name, "result": result}
+
+
 def _taken_names(jarvis: "Jarvis") -> set[str]:
     """Names held by something that is not the authored store."""
     from ..llm.authored_tools import get_authored_tools
@@ -656,15 +878,34 @@ async def async_create_tool(
     from ..llm.authored_tools import AuthoredToolError, get_authored_tools
 
     _tool_registry(jarvis)  # refuse early rather than storing an unusable tool
+    spec = _tool_spec(payload)
+    if not allow_local_targets and not spec.get("tier"):
+        # A tool the MODEL wrote for itself (M97): approved once at creation
+        # (create_tool is Tier 3) and then background work, never Tier 1 by
+        # silence — "one approval, then Tier 1 forever" was the audit's
+        # finding. The operator lowers it on the Tools screen if they mean to.
+        spec["tier"] = 2
     try:
         entry = await get_authored_tools(jarvis).async_create(
-            _tool_spec(payload),
+            spec,
             _taken_names(jarvis),
             allow_local_targets=allow_local_targets,
         )
     except AuthoredToolError as err:
         raise ApiError("invalid_format", str(err), 400) from err
     _register_authored(jarvis, {k: v for k, v in entry.items() if k not in ("created_at", "updated_at")})
+    # Said once, on the record (M97): the Tools screen marks it authored and
+    # `whats_new` reads it back.
+    try:
+        from ..integrations.notifications import note_capability
+
+        who = "Jarvis wrote itself" if not allow_local_targets else "added on the console"
+        await note_capability(
+            jarvis, f"New tool: {entry.get('name')}",
+            f"{str(entry.get('description') or '')[:200]} ({who}; tier {entry.get('tier')})",
+        )
+    except Exception:  # noqa: BLE001 - the tool exists either way
+        _LOGGER.debug("Could not record the new tool", exc_info=True)
     return {"tool": entry}
 
 
@@ -720,6 +961,11 @@ def _tool_spec(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 # --- settings ---------------------------------------------------------------
+#: How long the voice catalogue (Piper's voices, openWakeWord's models) is
+#: reused before the services are asked again. See `async_refresh_choices`.
+CATALOGUE_TTL = 60.0
+_CATALOGUE_STAMP = "voice_catalogue_refreshed_at"
+
 async def async_refresh_choices(jarvis: "Jarvis") -> None:
     """Re-ask the services what they offer, before the settings page is built.
 
@@ -737,6 +983,21 @@ async def async_refresh_choices(jarvis: "Jarvis") -> None:
     refresh = getattr(voice, "async_refresh_catalogue", None)
     if refresh is None:
         return
+    # At most once a minute. Piper answers `describe` with every voice it can
+    # serve — 83 KB on this install — and a settings page that polls asked for
+    # all of it on every render. Worse, a probe abandoned mid-read (the box is
+    # busy recognising speech; the read times out) makes Piper log a
+    # twenty-frame ConnectionResetError, so a settings screen left open turned
+    # into a stream of ERROR lines from a service that was perfectly fine.
+    #
+    # A minute is chosen against what the answer is FOR: the voice list changes
+    # when someone restarts a container with different models, and being a
+    # minute out of date about that has never mattered to anyone.
+    now = time.monotonic()
+    last = float(jarvis.data.get(_CATALOGUE_STAMP) or 0.0)
+    if last and now - last < CATALOGUE_TTL:
+        return
+    jarvis.data[_CATALOGUE_STAMP] = now
     try:
         await refresh()
     except Exception:  # pragma: no cover - the page must still render
@@ -794,13 +1055,28 @@ def _apply_now(jarvis: "Jarvis", key: str, value: Any) -> bool:
         return False
 
 
-def _setting_result(jarvis: "Jarvis", key: str, value: Any, applied: bool) -> dict[str, Any]:
+#: Every change to a setting, whoever made it. Its own logger, like
+#: `jarvis.vision.audit`, so an operator can route "what changed the wake word
+#: at 03:00" to a file without turning the rest of the API up to INFO. One
+#: line per write, from the ONE write path — a second line from the tool
+#: would be a second place to forget.
+_SETTINGS_AUDIT = logging.getLogger("jarvis.settings.audit")
+
+
+def _setting_result(
+    jarvis: "Jarvis", key: str, value: Any, applied: bool, previous: Any = None
+) -> dict[str, Any]:
     from ..settings import APPLY_LIVE, SETTINGS_BY_KEY
 
     spec = SETTINGS_BY_KEY[key]
     return {
         "key": key,
+        "label": spec.label,
         "value": value,
+        # What it was before this write, so a reply can say "from X to Y"
+        # rather than only "now Y" — a person who did not ask for a change
+        # needs the old value to know what to put back.
+        "previous": previous,
         "applied": applied,
         "apply": spec.apply,
         # The honest answer to "do I need to restart", which is the question
@@ -811,7 +1087,80 @@ def _setting_result(jarvis: "Jarvis", key: str, value: Any, applied: bool) -> di
     }
 
 
-async def async_set_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+def current_setting_value(jarvis: "Jarvis", key: str) -> Any:
+    """What `key` is right now: the overlay's value, else the merged config's.
+
+    The same answer `settings_payload` puts in the row's `value`, read from the
+    same two places, so a "from" in an audit line and a value on the console
+    cannot disagree.
+    """
+    from ..settings import SETTINGS_BY_KEY
+
+    spec = SETTINGS_BY_KEY[key]
+    if key in jarvis.settings.values:
+        return jarvis.settings.values[key]
+    return _dig_config(jarvis.config or jarvis.raw_config or {}, spec.path)
+
+
+def _record_setting_change(
+    jarvis: "Jarvis",
+    key: str,
+    previous: Any,
+    value: Any,
+    result: dict[str, Any],
+    context: Any,
+    action: str,
+) -> None:
+    """The audit line and the bus event, once, for every path that writes.
+
+    `origin` is the context's — `api` for the console and REST, `llm` for the
+    model's `change_setting` — so the line says WHO as well as what. A change
+    the model made under approval and a change a person made on the console
+    look identical in the store; this is the only place they are told apart.
+    """
+    # `api` for the console and REST (`api_context`), `llm` for the model's
+    # tool; a caller with no context at all is written down as such rather
+    # than credited to somebody.
+    origin = getattr(context, "origin", None) or "unknown"
+    user = getattr(context, "user_id", None)
+    _SETTINGS_AUDIT.info(
+        "%s %s: %r -> %r (by %s%s; %s)",
+        action,
+        key,
+        previous,
+        value,
+        origin,
+        f" {user}" if user else "",
+        "applied live" if result["applied"] else "takes effect after a restart",
+    )
+    jarvis.bus.fire(
+        EVENT_SETTING_CHANGED,
+        {
+            "key": key,
+            "label": result["label"],
+            "previous": previous,
+            "value": value,
+            "applied": result["applied"],
+            "restart_required": result["restart_required"],
+            "origin": origin,
+            "action": action,
+        },
+        context if isinstance(context, Context) else None,
+    )
+
+
+async def async_set_setting(
+    jarvis: "Jarvis", payload: dict[str, Any], context: Any = None
+) -> dict[str, Any]:
+    """Change one editable setting. THE write path.
+
+    The console's `config/settings/set`, `POST /api/config/settings/set` and
+    the model's `change_setting` tool all end here, and nothing else writes
+    the overlay: the allowlist check, the validator, the re-merge, the live
+    apply, the audit line and `jarvis_setting_changed` are one sequence, so a
+    door that skipped one of them cannot be added without bypassing this
+    function by name. `test_settings_tool.py` holds the tool to it.
+    """
     from ..settings import SETTINGS_BY_KEY, SettingsError
 
     key = str(payload.get("key") or "").strip()
@@ -824,6 +1173,7 @@ async def async_set_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[s
     # differently: one is a typo in the request, the other is a field to fix.
     if key not in SETTINGS_BY_KEY:
         raise ApiError("not_found", f"{key} is not an editable setting", 404)
+    previous = current_setting_value(jarvis, key)
     try:
         value = await jarvis.settings.async_set(key, payload["value"])
     except SettingsError as err:
@@ -832,10 +1182,14 @@ async def async_set_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[s
     # Re-merge so `jarvis.config` — which everything reads — matches the store
     # immediately, rather than only after the next restart.
     await jarvis.async_install_config(jarvis.raw_config, jarvis.package_provenance)
-    return _setting_result(jarvis, key, value, _apply_now(jarvis, key, value))
+    result = _setting_result(jarvis, key, value, _apply_now(jarvis, key, value), previous)
+    _record_setting_change(jarvis, key, previous, value, result, context, "set")
+    return result
 
 
-async def async_reset_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+async def async_reset_setting(
+    jarvis: "Jarvis", payload: dict[str, Any], context: Any = None
+) -> dict[str, Any]:
     """Drop an override so the file's value shows through again."""
     from ..settings import SETTINGS_BY_KEY
 
@@ -846,13 +1200,18 @@ async def async_reset_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict
     if spec is None:
         raise ApiError("not_found", f"{key} is not an editable setting", 404)
 
+    previous = current_setting_value(jarvis, key)
     await jarvis.settings.async_reset(key)
     merged = await jarvis.async_install_config(jarvis.raw_config, jarvis.package_provenance)
     # Whatever the file (or a default) says now, pushed live the same way a set
     # would be — otherwise a reset appears to work and changes nothing.
     reverted = _dig_config(merged, spec.path)
     applied = _apply_now(jarvis, key, reverted) if reverted is not None else False
-    return _setting_result(jarvis, key, reverted, applied)
+    result = _setting_result(jarvis, key, reverted, applied, previous)
+    # A reset is a change too — the wake word going back to the file's value
+    # at 03:00 is exactly the line somebody will want to find.
+    _record_setting_change(jarvis, key, previous, reverted, result, context, "reset")
+    return result
 
 
 def _dig_config(config: dict[str, Any], path: tuple[str, ...]) -> Any:
@@ -862,6 +1221,32 @@ def _dig_config(config: dict[str, Any], path: tuple[str, ...]) -> Any:
             return None
         node = node.get(part)
     return node
+
+
+# --- the models the servers actually serve ---------------------------------
+#: The last answer, for anything that wants it without another round of probes.
+DATA_MODEL_CATALOGUE = "llm_models"
+
+
+async def async_llm_models_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """`jarvis/llm/models` and `GET /api/llm/models`: what is served, resolved.
+
+    Reads through the shared model-server client when the llm integration
+    built one (`jarvis.data["llm_client"]`), which is also how tests hand in
+    a fake transport. Never raises — the page this feeds has to render on a
+    stack that is half up, which is when somebody opens it.
+    """
+    from ..llm.catalogue import async_describe
+
+    # Duck-typed rather than `isinstance(httpx.AsyncClient)`: this module
+    # deliberately has no httpx import, and a closed pool (mid-shutdown) is
+    # worth exactly as little as none.
+    client = jarvis.data.get("llm_client")
+    if client is None or getattr(client, "is_closed", True) or not callable(getattr(client, "get", None)):
+        client = None
+    payload = await async_describe(jarvis, client=client)
+    jarvis.data[DATA_MODEL_CATALOGUE] = payload
+    return payload
 
 
 # --- automations ------------------------------------------------------------
@@ -1067,3 +1452,923 @@ async def async_dispatch_webhook(
     if inspect.isawaitable(result):
         result = await result
     return int(result or 0)
+
+
+# --- the task list ----------------------------------------------------------
+#
+# Read-only plus two destructive verbs, and no "create" on purpose. A task is
+# created by whatever is going to do the work — the assistant accepting a job,
+# a research run, a schedule firing — because a task nothing is driving is the
+# empty seam this registry was built to close. Letting a client mint one would
+# put that hole back, one level out.
+
+
+def _task_registry(jarvis: "Jarvis") -> Any:
+    registry = getattr(jarvis, "tasks", None)
+    if registry is None:
+        raise ApiError("unavailable", "this server has no task list", 503)
+    return registry
+
+
+def task_list_payload(
+    jarvis: "Jarvis", kind: str | None = None, active_only: bool = False
+) -> dict[str, Any]:
+    """Every tracked job, newest first.
+
+    Whole tasks rather than summaries, unlike the conversation list: a task is
+    a few hundred bytes and its steps ARE the interesting part — a list that
+    made you fetch each row to draw its progress bar would be one request per
+    visible task, on every update.
+    """
+    registry = _task_registry(jarvis)
+    return {"tasks": registry.listing(kind=kind, active_only=active_only)}
+
+
+def task_get_payload(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
+    task = _task_registry(jarvis).get(str(task_id or ""))
+    if task is None:
+        raise ApiError("not_found", f"no task {task_id!r}", 404)
+    return {"task": task.as_dict()}
+
+
+async def async_retry_task(jarvis: Any, task_id: str) -> dict[str, Any]:
+    """Put a finished task back on the queue.
+
+    The button somebody presses after fixing whatever broke — a model server
+    that was down, a repository that was dirty. Only work whose kind the engine
+    can rebuild is retryable; anything else would be a button that does nothing,
+    so it says so instead.
+    """
+    engine = getattr(jarvis, "taskengine", None)
+    if engine is None:
+        raise ApiError("unsupported", "this backend has no task engine", 501)
+    task = _task_registry(jarvis).get(str(task_id or ""))
+    if task is None:
+        raise ApiError("not_found", f"no task {task_id!r}", 404)
+    if not task.finished:
+        raise ApiError("invalid_format", "that task has not finished", 400)
+    if not engine.retry(task.id):
+        raise ApiError(
+            "unsupported",
+            f"nothing on this server knows how to run {task.kind!r} work again",
+            400,
+        )
+    return {"task": task.as_dict(), "queued": True}
+
+
+async def async_delete_task(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
+    """Forget one task. Does not stop it — see the note on cancel below."""
+    registry = _task_registry(jarvis)
+    if not await registry.async_remove(str(task_id or "")):
+        raise ApiError("not_found", f"no task {task_id!r}", 404)
+    return {"removed": task_id}
+
+
+async def async_clear_finished_tasks(jarvis: "Jarvis") -> dict[str, Any]:
+    return {"removed": await _task_registry(jarvis).async_clear_finished()}
+
+
+async def async_cancel_task(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
+    """Ask for a task to stop, and be honest that asking is all this does.
+
+    The registry is a record, not a scheduler: nothing here can reach into the
+    coroutine doing the work. Marking a task `cancelled` is a REQUEST that the
+    worker is expected to notice, and a worker that ignores it will keep going
+    and keep reporting. Saying "cancelled" while the work continues would be
+    the same class of lie as the seam this registry replaced, so the payload
+    says which of the two happened.
+    """
+    registry = _task_registry(jarvis)
+    task = registry.get(str(task_id or ""))
+    if task is None:
+        raise ApiError("not_found", f"no task {task_id!r}", 404)
+    if task.finished:
+        return {"task": task.as_dict(), "cancelled": False, "reason": "already finished"}
+    from ..tasks import STATUS_CANCELLED
+
+    updated = await registry.async_update(
+        task.id, status=STATUS_CANCELLED, detail="cancelled from a client"
+    )
+    return {
+        "task": updated.as_dict() if updated else task.as_dict(),
+        "cancelled": True,
+        "note": (
+            "marked cancelled; a worker that does not check for this may still "
+            "be running"
+        ),
+    }
+
+
+# --- MCP servers -------------------------------------------------------------
+#
+# Read, add, remove, reconnect. What is deliberately NOT here is a way to turn
+# `allow_stdio` on: that is the line between "Jarvis fetches a URL" and "Jarvis
+# starts a program", and it is set in configuration.yaml precisely so that no
+# request — from a browser, a phone, a model or a forged one — can cross it.
+
+
+
+def task_log_payload(jarvis: Any, task_id: str, limit: int = 200) -> dict[str, Any]:
+    """One task's replayable history.
+
+    The watching events (tool calls, output) are fire-and-forget: a client that
+    opens a task's page two minutes into a job has missed every one of them.
+    This is how it catches up, and it is a separate command rather than part of
+    the task payload because the task payload is sent on every single update.
+    """
+    registry = getattr(jarvis, "tasks", None)
+    if registry is None:
+        return {"task_id": task_id, "log": []}
+    return {"task_id": task_id, "log": registry.log_entries(task_id, limit=limit)}
+
+
+# ---------------------------------------------------------------------------
+# dashboards + metrics
+# ---------------------------------------------------------------------------
+
+
+def _dashboard_store(jarvis: Any) -> Any:
+    store = getattr(jarvis, "data", {}).get("dashboards")
+    if store is None:
+        raise ApiError("unsupported", "this backend has no dashboards integration", 501)
+    return store
+
+
+def dashboards_list_payload(jarvis: Any, owner: str) -> dict[str, Any]:
+    """This token's dashboards, plus the shared ones. Never somebody else's."""
+    store = _dashboard_store(jarvis)
+    return {"dashboards": store.visible_to(owner), "owner": owner}
+
+
+async def async_dashboard_save(jarvis: Any, raw: Any, owner: str) -> dict[str, Any]:
+    store = _dashboard_store(jarvis)
+    try:
+        board = await store.async_put(raw, owner)
+    except ValueError as err:
+        raise ApiError("invalid_format", str(err), 400) from err
+    return {"dashboard": board}
+
+
+async def async_dashboard_delete(jarvis: Any, dashboard_id: str, owner: str) -> dict[str, Any]:
+    store = _dashboard_store(jarvis)
+    if not await store.async_delete(dashboard_id, owner):
+        raise ApiError("not_found", f"no dashboard {dashboard_id!r} you own", 404)
+    return {"deleted": dashboard_id}
+
+
+async def async_metrics_sources(jarvis: Any) -> dict[str, Any]:
+    from ..integrations.dashboards import async_sources
+
+    return {"sources": await async_sources(jarvis)}
+
+
+async def async_metrics_query(jarvis: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """One widget's numbers.
+
+    A source that is down answers with an error per series rather than raising:
+    a dashboard with six widgets and one dead source should draw five graphs and
+    one honest "cannot reach it", not a page-wide failure.
+    """
+    from ..integrations.dashboards import async_query, window_for
+
+    keys = [str(k) for k in (payload.get("series") or []) if str(k).strip()][:20]
+    if not keys:
+        raise ApiError("invalid_format", "name at least one series", 400)
+    window = window_for(payload)
+    series = await async_query(
+        jarvis,
+        str(payload.get("source") or "internal"),
+        keys,
+        window,
+        str(payload.get("aggregate") or ""),
+    )
+    return {
+        "series": series,
+        "start": window.start,
+        "end": window.end,
+        "step": window.resolved_step(),
+    }
+
+
+# --- what the house widgets read (M63) -------------------------------------
+#
+# Three read-only commands behind the dashboard's non-graph widgets. Each one
+# answers rather than raises when the integration behind it is not set up:
+# a dashboard with five widgets and no cameras should draw four and one
+# honest "no camera is configured", not a page-wide error, and the widget's
+# sentence about how to get the thing is written from `configured: false`.
+
+
+def sensors_readings_payload(jarvis: "Jarvis", area: str = "", limit: int = 0) -> dict[str, Any]:
+    """Every sensor's newest reading, with its room and age; `area` filters."""
+    from ..integrations.sensors import readings
+
+    rows = readings(jarvis, area=area, limit=limit)
+    return {
+        "readings": rows,
+        "count": len(rows),
+        "area": str(area or ""),
+        # The rows come from the state machine, so a house with any sensor at
+        # all has readings; what this says is whether the sensors integration
+        # is there to bring new ones in over MQTT or the webhook.
+        "configured": jarvis.data.get("sensors") is not None,
+    }
+
+
+async def async_sky_summary(jarvis: "Jarvis") -> dict[str, Any]:
+    """The next pass of the first tracked satellite and the moon tonight.
+
+    Honest about what is not there: without `sky:` the answer is
+    `configured: false`; with it but before the elements or the ephemeris
+    have been fetched, each half carries `state: unknown` and the `reason`
+    the integration gives — never a guessed time.
+    """
+    from ..integrations.sky import get_sky
+
+    data = get_sky(jarvis)
+    if data is None:
+        return {"configured": False, "satellite": "", "pass": None, "moon": None}
+    satellite = data.satellites[0] if data.satellites else ""
+
+    def compute() -> tuple[dict[str, Any], dict[str, Any]]:
+        # skyfield is CPU work — milliseconds, but on the event loop it would
+        # be milliseconds in which every socket waits.
+        return data.next_pass_snapshot(satellite), data.moon_snapshot()
+
+    next_pass, moon = await asyncio.to_thread(compute)
+    return {
+        "configured": True,
+        "satellite": satellite,
+        "now": data.now().isoformat(),
+        "pass": next_pass,
+        "moon": moon,
+    }
+
+
+async def async_vision_still(
+    jarvis: "Jarvis", camera: str = "", reason: str = "", requester: str = "api"
+) -> dict[str, Any]:
+    """One frame as a JPEG data URL, or the refusal.
+
+    Goes through `VisionManager.still`, which is `camera.snapshot` with the
+    bytes attached: the camera's consent, the rate limit and the audit row are
+    all the same as a look's. A `never` camera answers `denied`; an `ask`
+    camera asks the person the way a look would. No camera at all answers
+    `configured: false` so the widget can say how one is added.
+    """
+    store = jarvis.data.get("vision")
+    manager = store.get("manager") if isinstance(store, dict) else None
+    if manager is None or not getattr(manager, "sources", None):
+        return {
+            "status": "unconfigured",
+            "configured": False,
+            "cameras": [],
+            "message": "no camera is configured",
+        }
+    result = await manager.still(camera, reason or "a dashboard still", requester=requester)
+    return {"configured": True, "cameras": manager.names(), **result}
+
+
+def _mcp(jarvis: "Jarvis") -> Any:
+    from ..integrations.mcp import get_manager
+
+    manager = get_manager(jarvis)
+    if manager is None:
+        raise ApiError("unavailable", "this server has no MCP integration", 503)
+    return manager
+
+
+def _briefing(jarvis: "Jarvis") -> Any:
+    manager = jarvis.data.get("briefing")
+    if manager is None:
+        raise ApiError("not_configured", "the briefing integration is not set up", 400)
+    return manager
+
+
+def briefing_settings_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    return {"briefing": _briefing(jarvis).settings()}
+
+
+def briefing_configure(jarvis: "Jarvis", changes: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return {"briefing": _briefing(jarvis).configure(changes)}
+    except ValueError as err:
+        raise ApiError("invalid_format", str(err), 400) from err
+
+
+def _notifications(jarvis: "Jarvis") -> Any:
+    store = jarvis.data.get("notifications")
+    if store is None:
+        raise ApiError("not_configured", "the notifications integration is not set up", 400)
+    return store
+
+
+def notifications_payload(jarvis: "Jarvis", unread_only: bool = False,
+                          limit: int = 100) -> dict[str, Any]:
+    store = _notifications(jarvis)
+    return {
+        "notifications": store.listing(unread_only=unread_only, limit=limit),
+        "unread": store.unread,
+    }
+
+
+async def async_notification_read(jarvis: "Jarvis", entry_id: str = "",
+                                  everything: bool = False) -> dict[str, Any]:
+    return await _notifications(jarvis).async_mark_read(
+        entry_id=entry_id, everything=everything
+    )
+
+
+async def async_notification_dismiss(jarvis: "Jarvis", entry_id: str = "",
+                                     everything: bool = False) -> dict[str, Any]:
+    return await _notifications(jarvis).async_dismiss(
+        entry_id=entry_id, everything=everything
+    )
+
+
+def conversation_search_payload(jarvis: "Jarvis", query: str,
+                                limit: int = 20) -> dict[str, Any]:
+    """Threads containing `query`, with the line that matched.
+
+    The match is what makes it useful: a person searching for "blue tin" wants
+    the sentence, and the conversation it belongs to is what they click.
+    """
+    agent = jarvis.data.get("llm")
+    archive = getattr(agent, "archive", None)
+    if archive is None:
+        raise ApiError("not_configured", "there is no conversation archive", 400)
+    return {"query": query, "results": archive.search(query, limit=limit)}
+
+
+def _notes(jarvis: "Jarvis") -> Any:
+    store = jarvis.data.get("notes")
+    if store is None:
+        raise ApiError("not_configured", "the notes integration is not set up", 400)
+    return store
+
+
+def notes_list_payload(jarvis: "Jarvis", tag: str = "", query: str = "",
+                       limit: int = 200) -> dict[str, Any]:
+    store = _notes(jarvis)
+    rows = store.search(query, tag, limit) if query else store.listing(tag=tag, limit=limit)
+    return {"notes": rows, "total": len(store.notes), "query": query, "tag": tag}
+
+
+def note_payload(jarvis: "Jarvis", key: str) -> dict[str, Any]:
+    note = _notes(jarvis).get(str(key or ""))
+    if note is None:
+        raise ApiError("not_found", f"no note {key!r}", 404)
+    return {"note": note.as_dict(body=True)}
+
+
+async def async_note_create(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    store = _notes(jarvis)
+    result = store.create(
+        title=str(data.get("title") or ""),
+        body=str(data.get("body") or data.get("text") or ""),
+        tags=data.get("tags"),
+        overwrite=bool(data.get("overwrite")),
+    )
+    if not result.get("created"):
+        raise ApiError("invalid_format", str(result.get("error") or "could not create"), 400)
+    return result
+
+
+async def async_note_update(jarvis: "Jarvis", key: str, data: dict[str, Any]) -> dict[str, Any]:
+    result = _notes(jarvis).update(
+        key,
+        body=data.get("body"),
+        title=data.get("title"),
+        tags=data.get("tags"),
+    )
+    if not result.get("updated"):
+        raise ApiError("not_found", str(result.get("error") or "no such note"), 404)
+    return result
+
+
+async def async_note_append(jarvis: "Jarvis", key: str, text: str) -> dict[str, Any]:
+    result = _notes(jarvis).append(key, text)
+    if not result.get("appended"):
+        raise ApiError("not_found", str(result.get("error") or "no such note"), 404)
+    return result
+
+
+async def async_note_delete(jarvis: "Jarvis", key: str) -> dict[str, Any]:
+    result = _notes(jarvis).delete(key)
+    if not result.get("deleted"):
+        raise ApiError("not_found", str(result.get("error") or "no such note"), 404)
+    return result
+
+
+def _memory(jarvis: "Jarvis") -> Any:
+    store = jarvis.data.get("memory")
+    if store is None:
+        raise ApiError("not_configured", "the memory integration is not set up", 400)
+    return store
+
+
+def memory_list_payload(jarvis: "Jarvis", tag: str = "", query: str = "",
+                        limit: int = 200, person: str | None = None) -> dict[str, Any]:
+    """Everything Jarvis remembers, newest first — or the matches for a query.
+
+    The whole store, not a page of it: the point of this route is that a person
+    can read what is held about them, and a listing that made that take three
+    clicks would be a promise kept badly.
+    """
+    store = _memory(jarvis)
+    entries = (
+        store.search(query=query, tags=tag or None, limit=limit)
+        if query
+        else store.all(tag=tag or None, limit=limit)
+    )
+    if person is not None:
+        # Whose facts (M100): a name, or "" for the house's own. None is everybody's.
+        who = " ".join(str(person).split())
+        entries = [entry for entry in entries if str(getattr(entry, "person", "") or "") == who]
+    return {
+        "entries": [entry.as_dict() for entry in entries],
+        "total": len(store.entries),
+        "query": query,
+        "tag": tag,
+    }
+
+
+async def async_memory_list_payload(
+    jarvis: "Jarvis", tag: str = "", query: str = "", limit: int = 200, person: str | None = None
+) -> dict[str, Any]:
+    """The same listing, with semantic recall and the reranker in front of it.
+
+    The synchronous version above is the fallback for callers that cannot
+    await, and it is keyword-only by construction — an embedding call and a
+    cross-encoder are both HTTP. Every route that CAN await uses this one, so
+    what a person sees in the console is what the assistant sees.
+    """
+    store = _memory(jarvis)
+    if not query:
+        return memory_list_payload(jarvis, tag=tag, query=query, limit=limit, person=person)
+    entries = await store.async_search(query=query, tags=tag or None, limit=limit)
+    if person is not None:
+        who = " ".join(str(person).split())
+        entries = [entry for entry in entries if str(getattr(entry, "person", "") or "") == who]
+    return {
+        "entries": [entry.as_dict() for entry in entries],
+        "total": len(store.entries),
+        "query": query,
+        "tag": tag,
+    }
+
+
+def _recorder(jarvis: "Jarvis") -> Any:
+    return jarvis.data.get("observability")
+
+
+def traces_payload(jarvis: "Jarvis", limit: int = 50, kind: str = "") -> dict[str, Any]:
+    """Recent traces, newest first. An install with no recorder answers `[]`.
+
+    Not an error: `observability:` is optional configuration, and a console
+    that showed a red banner because tracing is off would be describing a
+    choice as a fault.
+    """
+    recorder = _recorder(jarvis)
+    if recorder is None:
+        return {"traces": [], "recording": False}
+    return {"traces": recorder.listing(limit=limit, kind=kind), "recording": True}
+
+
+def trace_payload(jarvis: "Jarvis", trace_id: str = "", task_id: str = "") -> dict[str, Any]:
+    """One trace, by its id or by the task it covers.
+
+    `task_id` is what the UI's "view trace" link has: a task knows its own id
+    and nothing about contexts, so the lookup belongs here rather than in the
+    console.
+    """
+    recorder = _recorder(jarvis)
+    if recorder is None:
+        return {"trace": None, "recording": False}
+    if not trace_id and task_id:
+        trace_id = recorder.for_task(task_id)
+    return {"trace": recorder.get(trace_id) if trace_id else None, "recording": True}
+
+
+def memory_export_payload(jarvis: "Jarvis", fmt: str = "json") -> dict[str, Any]:
+    return _memory(jarvis).export(fmt)
+
+
+async def async_memory_forget(jarvis: "Jarvis", entry_id: str = "", query: str = "",
+                              everything: bool = False) -> dict[str, Any]:
+    store = _memory(jarvis)
+    if everything:
+        return await store.async_wipe()
+    if not entry_id and not query:
+        raise ApiError("invalid_format", "say which memory: entry_id or query", 400)
+    return await store.async_forget(entry_id=entry_id, query=query)
+
+
+async def async_memory_add(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    store = _memory(jarvis)
+    return await store.async_add(
+        text=str(data.get("text") or ""),
+        tags=data.get("tags"),
+        source=str(data.get("source") or "user"),
+        pinned=bool(data.get("pinned")),
+        # The console is the user typing, so it may store what the model may
+        # not: this is the "yes, I know where it came from" switch.
+        allow_untrusted=bool(data.get("allow_untrusted")),
+    )
+
+
+async def async_memory_pin(jarvis: "Jarvis", entry_id: str, pinned: bool) -> dict[str, Any]:
+    store = _memory(jarvis)
+    entry = store.get(str(entry_id or ""))
+    if entry is None:
+        raise ApiError("not_found", f"no note {entry_id!r}", 404)
+    entry.pinned = bool(pinned)
+    await store.async_save()
+    return {"entry": entry.as_dict()}
+
+
+def skills_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """Every loaded skill, and every one that could not be loaded.
+
+    The errors are half the value: a skill somebody dropped in and mistyped is
+    otherwise simply absent, and "it does not appear" is the least diagnosable
+    failure a folder-based feature can have.
+    """
+    store = jarvis.data.get("skills")
+    if store is None:
+        return {"skills": [], "errors": [], "enabled": False}
+    return {
+        "skills": store.listing(),
+        "errors": list(store.errors),
+        "enabled": True,
+        "path": str(store.root),
+    }
+
+
+def skill_payload(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    """One skill, body included. What the console shows when you open one."""
+    store = jarvis.data.get("skills")
+    skill = store.get(name) if store is not None else None
+    if skill is None:
+        raise ApiError("not_found", f"no skill named {name!r}", 404)
+    return {"skill": skill.as_dict(body=True)}
+
+
+async def async_reload_skills(jarvis: "Jarvis") -> dict[str, Any]:
+    store = jarvis.data.get("skills")
+    if store is None:
+        raise ApiError("not_configured", "the skills integration is not set up", 400)
+    return {"loaded": store.load(), "errors": list(store.errors)}
+
+
+async def extensions_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """Everything extensible, with health, in one call.
+
+    Health is included rather than left to a second round trip: the page is a
+    list of things that are either working or not, and a list that paints
+    without that is a list that changes under the reader a moment later.
+    """
+    registry = jarvis.data.get("extensions")
+    if registry is None:
+        return {"extensions": [], "errors": [], "enabled": False}
+    await registry.health()
+    state = jarvis.data.get("extensions_state")
+    rows = registry.listing()
+    if state is not None:
+        for row in rows:
+            row["last_used"] = state.last_used.get(row["key"])
+    return {
+        "extensions": rows,
+        "errors": list(registry.errors),
+        "enabled": True,
+        "permissions": list(_extension_permissions()),
+        "counts": {
+            kind: len([r for r in rows if r["kind"] == kind])
+            for kind in ("skill", "mcp", "plugin")
+        },
+    }
+
+
+def _extension_permissions() -> tuple[str, ...]:
+    from ..integrations.extensions.manifest import PERMISSIONS
+
+    return PERMISSIONS
+
+
+async def async_set_extension(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    """Enable/disable, or narrow the permission scope. Applied before it returns."""
+    if jarvis.data.get("extensions") is None:
+        raise ApiError("not_configured", "the extension registry is not set up", 400)
+    result = await jarvis.services.async_call(
+        "extensions", "set", dict(data), blocking=True, return_response=True
+    )
+    if isinstance(result, dict) and result.get("error"):
+        raise ApiError("invalid", str(result["error"]), 400)
+    return result or {}
+
+
+async def async_scaffold_skill(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    if jarvis.data.get("extensions") is None:
+        raise ApiError("not_configured", "the extension registry is not set up", 400)
+    result = await jarvis.services.async_call(
+        "extensions", "scaffold", dict(data), blocking=True, return_response=True
+    )
+    if isinstance(result, dict) and result.get("error"):
+        raise ApiError("invalid", str(result["error"]), 400)
+    return result or {}
+
+
+async def extensions_browse_payload(jarvis: "Jarvis", msg: dict[str, Any]) -> dict[str, Any]:
+    return await jarvis.services.async_call(
+        "extensions",
+        "browse",
+        {"query": msg.get("query") or "", "kind": msg.get("kind") or ""},
+        blocking=True,
+        return_response=True,
+    ) or {}
+
+
+def _entry_id(msg: dict[str, Any]) -> str:
+    """The catalog entry's id, from `entry` and never from `id`.
+
+    `id` is the WEBSOCKET ENVELOPE's message id. Reading the entry out of it
+    worked in every test that called the service directly and failed the moment
+    a browser sent a real frame, because by then `id` was the integer the
+    protocol uses to match a reply to a request.
+    """
+    return str(msg.get("entry") or msg.get("entry_id") or "")
+
+
+async def extensions_plan_payload(jarvis: "Jarvis", msg: dict[str, Any]) -> dict[str, Any]:
+    return await jarvis.services.async_call(
+        "extensions",
+        "plan",
+        {
+            "source": msg.get("source") or "",
+            "id": _entry_id(msg),
+            "sha256": msg.get("sha256") or "",
+            "refs": msg.get("refs") or [],
+        },
+        blocking=True,
+        return_response=True,
+    ) or {}
+
+
+async def async_install_extension(jarvis: "Jarvis", msg: dict[str, Any]) -> dict[str, Any]:
+    result = await jarvis.services.async_call(
+        "extensions",
+        "install",
+        {
+            "source": msg.get("source") or "",
+            "id": _entry_id(msg),
+            "approved": msg.get("approved"),
+        },
+        blocking=True,
+        return_response=True,
+    )
+    if isinstance(result, dict) and result.get("error"):
+        raise ApiError("invalid", str(result["error"]), 400)
+    return result or {}
+
+
+def mcp_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    manager = _mcp(jarvis)
+    return {
+        "servers": manager.listing(),
+        # So the console can say WHY the stdio fields are disabled rather than
+        # merely refusing the form after it is filled in.
+        "allow_stdio": manager.allow_stdio,
+        "default_tier": manager.default_tier,
+    }
+
+
+def mcp_inspect_payload(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    """One server in full: its schemas, its protocol version, its last error."""
+    manager = _mcp(jarvis)
+    try:
+        return {"server": manager.inspect(str(name or ""))}
+    except KeyError as err:
+        raise ApiError("not_found", f"no MCP server named {name!r}", 404) from err
+
+
+async def async_add_mcp_server(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    from ..integrations.mcp import async_add_server
+
+    result = await async_add_server(_mcp(jarvis), data or {})
+    if result.get("status") == "error":
+        raise ApiError("invalid_format", str(result.get("error") or "could not add it"), 400)
+    return result
+
+
+async def async_remove_mcp_server(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    from ..integrations.mcp import async_remove_server
+
+    result = await async_remove_server(_mcp(jarvis), str(name or ""))
+    if result.get("status") == "error":
+        raise ApiError("not_found", str(result.get("error") or "no such server"), 404)
+    return result
+
+
+async def async_reconnect_mcp(jarvis: "Jarvis", name: str = "") -> dict[str, Any]:
+    """Bring a server back, or all of them, and refresh what they offer.
+
+    The refresh is the point as much as the reconnect: a server that gained a
+    tool since Jarvis started is invisible until something asks it again.
+    """
+    manager = _mcp(jarvis)
+    from ..integrations.mcp.catalog import safe_server_name
+
+    key = safe_server_name(name)
+    if not key:
+        await manager.async_connect_all()
+        return {"reconnected": "all", **mcp_list_payload(jarvis)}
+    spec = manager.servers.get(key)
+    if spec is None:
+        raise ApiError("not_found", f"no MCP server called {name!r}", 404)
+    connected = await manager.async_connect(spec)
+    return {"reconnected": key, "connected": connected, **mcp_list_payload(jarvis)}
+
+
+# --- Jarvis Code -------------------------------------------------------------
+
+
+def _code(jarvis: "Jarvis") -> Any:
+    from ..integrations.code import get_config
+
+    cfg = get_config(jarvis)
+    if cfg is None:
+        raise ApiError("unavailable", "this server has no code integration", 503)
+    return cfg
+
+
+def code_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """Repositories, jobs, and whether checks run behind a wrapper."""
+    from ..integrations.code import listing_payload
+
+    _code(jarvis)
+    return listing_payload(jarvis)
+
+
+def code_result_payload(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
+    from ..integrations.code import result_payload
+
+    _code(jarvis)
+    found = result_payload(jarvis, str(task_id or ""))
+    if found is None:
+        raise ApiError("not_found", "no finished coding job with that id", 404)
+    return found
+
+
+async def async_create_code_repository(
+    jarvis: "Jarvis", data: dict[str, Any]
+) -> dict[str, Any]:
+    """Make a repository from the console.
+
+    Same authority as starting a job and the same asymmetry with the model:
+    this request carried a bearer token. Unlike the model's `create_repository`
+    tool it is not tiered at all — but it also cannot reach outside the
+    workspace root, because the confinement is in `RepoStore`, not in the
+    caller.
+    """
+    from ..integrations.code import async_create_repository
+
+    _code(jarvis)
+    payload = data or {}
+    entry, why = await async_create_repository(
+        jarvis,
+        str(payload.get("name") or ""),
+        description=str(payload.get("description") or ""),
+        environment=str(payload.get("environment") or ""),
+    )
+    if entry is None:
+        raise ApiError("invalid_format", why, 400)
+    return {"repository": entry.as_dict(), **code_list_payload(jarvis)}
+
+
+async def async_forget_code_repository(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    """Drop it from the registry. The files stay — Jarvis does not delete."""
+    from ..integrations.code import get_repos
+
+    cfg = _code(jarvis)
+    repos = get_repos(jarvis)
+    if repos is None:
+        raise ApiError("unavailable", "this server has no code integration", 503)
+    gone, note = await repos.async_forget(str(name or ""))
+    if not gone:
+        raise ApiError("not_found", note, 404)
+    cfg.repositories.pop(str(name), None)
+    return {"forgotten": name, "note": note, **code_list_payload(jarvis)}
+
+
+async def async_clone_code_repository(
+    jarvis: "Jarvis", data: dict[str, Any]
+) -> dict[str, Any]:
+    """Clone a permitted repository from a forge.
+
+    The allow-list is enforced in the integration, not here — the console has
+    exactly the same reach as the model on this one, because the constraint is
+    the operator's configuration rather than who is asking.
+    """
+    from ..integrations.code import async_clone_repository
+
+    _code(jarvis)
+    payload = data or {}
+    entry, why = await async_clone_repository(
+        jarvis,
+        str(payload.get("forge") or ""),
+        str(payload.get("project") or ""),
+        name=str(payload.get("name") or ""),
+        environment=str(payload.get("environment") or ""),
+    )
+    if entry is None:
+        raise ApiError("invalid_format", why, 400)
+    return {"repository": entry.as_dict(), **code_list_payload(jarvis)}
+
+
+async def async_push_code_branch(
+    jarvis: "Jarvis", data: dict[str, Any]
+) -> dict[str, Any]:
+    """Push a `jarvis/…` branch back to its forge."""
+    from ..integrations.code import async_push_branch
+
+    _code(jarvis)
+    payload = data or {}
+    ok, note = await async_push_branch(
+        jarvis, str(payload.get("repo") or ""), str(payload.get("branch") or "")
+    )
+    if not ok:
+        raise ApiError("invalid_format", note, 400)
+    return {"pushed": True, "note": note}
+
+
+async def async_start_code_job(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    """Start a coding job from an authenticated caller.
+
+    Not approval-gated, unlike the model's `start_coding_job` tool. Same asymmetry and
+    same reason as `async_add_scheduled`: a request that reached here carried a
+    bearer token, whereas a tool call may have been shaped by a page the model
+    read.
+    """
+    from ..integrations.code import async_start
+
+    _code(jarvis)
+    payload = data or {}
+    started = await async_start(
+        jarvis,
+        str(payload.get("repo") or ""),
+        str(payload.get("instruction") or ""),
+        source=str(payload.get("source") or "console"),
+        # Per task, from a caller holding a bearer token — a person in the
+        # console choosing how much this particular job may do without asking.
+        # Never from the model: `start_coding_job` does not forward it, for the
+        # same reason the model does not pick its own environment.
+        mode=str(payload.get("mode") or ""),
+    )
+    if isinstance(started, str):
+        raise ApiError("invalid_format", started, 400)
+    return {"task_id": started.id, "title": started.title, "task": started.as_dict()}
+
+
+# --- scheduled jobs ----------------------------------------------------------
+
+
+def _schedule(jarvis: "Jarvis") -> Any:
+    from ..integrations.schedule import get_manager
+
+    manager = get_manager(jarvis)
+    if manager is None:
+        raise ApiError("unavailable", "this server has no scheduler", 503)
+    return manager
+
+
+def schedule_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    return {"jobs": _schedule(jarvis).listing()}
+
+
+async def async_add_scheduled(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    """Add a job from an authenticated caller.
+
+    `allow_service=True`, unlike the model's tool. A request that reached here
+    carried a bearer token; a tool call may have been shaped by a web page the
+    model read, which is why the two doors are different widths.
+    """
+    result = await _schedule(jarvis).async_add(data or {}, allow_service=True)
+    if result.get("status") == "error":
+        raise ApiError("invalid_format", str(result.get("error") or "could not add it"), 400)
+    return result
+
+
+async def async_remove_scheduled(jarvis: "Jarvis", job_id: str) -> dict[str, Any]:
+    result = await _schedule(jarvis).async_remove(str(job_id or ""))
+    if result.get("status") == "error":
+        raise ApiError("not_found", str(result.get("error") or "no such job"), 404)
+    return result
+
+
+async def async_enable_scheduled(
+    jarvis: "Jarvis", job_id: str, enabled: bool
+) -> dict[str, Any]:
+    result = await _schedule(jarvis).async_set_enabled(str(job_id or ""), enabled)
+    if result.get("status") == "error":
+        raise ApiError("not_found", str(result.get("error") or "no such job"), 404)
+    return result

@@ -7,6 +7,50 @@ For the per-capability claims register — what is proven, by which command —
 see [`docs/verification.md`](docs/verification.md). This file is for the
 judgement calls behind it.
 
+## Phone automation is scaffolded and off, not built
+
+The plan called for Jarvis to drive the phone's other apps — read their screens
+through an accessibility service, read notifications, tap and type. What ships
+is the *interface* for that (`automation/phone/PhoneAutomation.kt`), behind a
+compile-time flag that is false in every build, with the two Android services
+standing down while it is off, the bridge refusing the actions, and the runtime
+master switch now defaulting off as well.
+
+Four refusals for one feature, because the failure is not recoverable. An
+accessibility service sees banking apps, messages and password autofill, with
+no way to be selective and no way for the user to know afterwards what was
+read; an injected tap is indistinguishable from a finger to the app receiving
+it. What is missing before it could ship is not code — it is a per-app consent
+scope, a record of what was read (the audit log covers actions, and a screen
+read is not one), and a refusal path for sensitive fields that Android does not
+mark. `android-app/docs/phone-automation.md` says all of that, and
+`docs/ANDROID_DEVICE_TESTS.md` carries the four checks that would need a phone.
+
+The master switch changing from ON to OFF is the other half of the judgement:
+it defaulted on with the argument that a fresh install should be useful and the
+per-action tiers keep it safe — and they do. What changed is what the switch
+governs now that the phone interfaces exist beside the house ones.
+
+## The Gradle wrapper's jar is committed
+
+`android-app/gradle/wrapper/gradle-wrapper.jar` and `gradlew` are in the
+repository. They were ignored, with a line in the README telling people to run
+`gradle wrapper` once — which means the build needs a Gradle installation
+before it can have one, and nobody could clone this repository and build the
+app. That is what "the Android build has never run here" was made of.
+
+Upstream Gradle recommends committing the wrapper for exactly this reason. The
+jar is 43 KB, it is not built from this repository, and what it does is
+download the distribution pinned in `gradle-wrapper.properties`
+(`gradle-8.10-bin.zip`) and verify it against `distributionSha256Sum` when one
+is set. `tools/bootstrap-toolchain.sh` installs everything else — JDK 17 and
+the SDK — under `$HOME`, with no root, which is the same constraint every other
+tool in this project is built to.
+
+The alternative — a wrapper that must be generated — costs a working build on a
+fresh clone and buys nothing that reviewing one 43 KB binary once does not.
+
+
 ## 1. Hardware-gated tests were not executed in this environment
 
 This repository was built in a cloud container with **no GPU, no Ollama, no
@@ -74,8 +118,11 @@ If it fails:
 
 * leave the orchestrator running — `code_task` and the command broker are
   independent of decomposition quality;
-* drop `delegate_to_agents` from what the model can see, by excluding it in
-  the `llm: expose:` block;
+* drop `delegate_to_agents` from what the model can see, by removing the
+  `orchestrator:` block from `configuration.yaml` — that integration is what
+  registers the tool. (`llm: expose:` will not do it: that block filters
+  **entities**, not tools, and setting it there narrows nothing while looking
+  as though it has.)
 * tiers 1 and 2 ship regardless and are reliable.
 
 Coder quality scales with the model: `CODER_MODEL` defaults to
@@ -112,8 +159,8 @@ will not.
 
 ## 7. The orchestrator and sandbox are opt-in, and start disabled
 
-They are commented out in `jarvis-core/docker-compose.yml` and their
-credentials default to empty. jarvis-core registers `delegate_to_agents`,
+They live in the root `docker-compose.yml` behind `--profile agents` (the core file keeps a
+commented sketch for a standalone install) and their credentials default to empty. jarvis-core registers `delegate_to_agents`,
 `code_task` and `execute_command` regardless, so the model is told the truth
 about its toolbox, and they return "not configured" until you set
 `ORCHESTRATOR_TOKEN` and `APPROVAL_SECRET` and start the services.
@@ -234,6 +281,221 @@ shortened list.
 
 The chars-per-token divisor is an estimate, deliberately pessimistic for JSON. A
 real tokeniser will report more, not less.
+
+## 12. The design system is generated from one file, with three deliberate seams
+
+`design/tokens.json` is the only place a colour, size, font, radius, shadow or
+duration is typed; `design/build.py` generates the CSS, the TypeScript, the
+desktop palette, the Android `JarvisTokens.kt`, a Compose `JarvisTheme.kt` and
+the XML resources, and `scripts/verify/token_lint.py` refuses a hard-coded value
+in app code. Three places knowingly stop short of "generated":
+
+**The orb palette is drift-checked, not rewritten.** `SiriPalette.kt` and the
+palette comments in `Orb.svelte`'s shader are declared as `color.orb.*` in the
+JSON, and `build.py --check` fails if either differs — but neither file is
+generated. `android-app/tools/reactor_orb_test.py` (1,400 lines) already pins
+those two files to each other and to the shader's arithmetic; regenerating them
+would mean rewriting that spec for no gain in truth.
+
+**The phone keeps its own type and spacing scales.** `type.android` (sp) and
+`space.android` (dp) sit beside the console's rem scales in the same file.
+`tools/type_scale_test.py` pins the phone's numbers as "a rename, not a
+redesign" and the console's floor is 0.7 rem; one shared scale would move one
+surface or the other visibly, which is a decision for M03/M08, not a side
+effect of moving the source of truth.
+
+**Compose is enabled without a local compiler.** `JarvisTheme.kt` needs
+Compose, so `compose = true`, the Kotlin Compose plugin and the BOM are in the
+Gradle build — and this host has no JDK, so nothing here has compiled it. The
+configuration is the standard one for Kotlin 2.0.21 / AGP 8.7.3; the first
+`./gradlew assembleDebug` is milestone M08's job, and until then the theme file
+is claimed as "generated", not "compiles".
+
+**The lint ratchets rather than fails outright.** 340 legacy hard-coded values
+in 38 files are recorded in `design/token-lint.baseline.json`; a file may not
+exceed its count and a new file may have none. Failing the whole tree on day
+one would have made the milestone unmergeable until M03 and M08 finished; the
+ratchet keeps the rule enforceable now and makes "baseline empty" the
+finishing line those milestones check.
+
+## 13. The browser container trades Docker's syscall filter for chromium's sandbox
+
+`jarvis-browser` runs with `security_opt: [no-new-privileges:true,
+seccomp:unconfined]`. That is a real reduction and it buys back exactly one
+thing: `clone(CLONE_NEWUSER)`, which chromium's own sandbox needs and which
+Docker's default seccomp profile blocks.
+
+The choice is between two layers and you cannot have both here:
+
+* **Docker's default seccomp**, a broad filter over ~44 syscalls, written for
+  containers in general.
+* **Chromium's sandbox**, written for exactly this service's job — opening
+  pages nobody in this house wrote, in a renderer that is assumed to be
+  exploitable.
+
+Keeping the first meant setting `BROWSER_CHROMIUM_NO_SANDBOX=1`, and a renderer
+with no sandbox parsing hostile HTML is the worse of the two. Measured on this
+host, the alternative was not theoretical: with the default profile chromium
+refused to start at all (`No usable sandbox!`) and every fetch failed.
+
+Everything else stays: uid 10003, `cap_drop: [ALL]`, `no-new-privileges`, `/tmp`
+on tmpfs, no host mounts, and chromium's sandbox ON.
+
+The better answer is a chromium-specific seccomp profile — Docker's default
+plus the clone/unshare flags, which is what Docker's own `chrome.json` example
+is. This repository does not carry one because it is a thousand lines of JSON
+that drifts with every Docker release, and a stale copy of a syscall allowlist
+is worse than a documented absence. If you maintain one, point `security_opt`
+at it; nothing else has to change.
+
+## 14. The reactor is an instrument, and the voice screen is a tab
+
+The chosen direction (C · Reactor II, `docs/design/README.md`) draws the arc reactor as a
+flat instrument — bezel, blades, coil, level arc, lens — and draws the voice screen under the
+same top bar as every other screen, with VOICE as its first tab. Two things in the repository
+disagreed with that: the GLSL glass sphere (`Orb.svelte` on the web, `ReactorOrb.kt` on the
+phone), a considerable piece of work that M01 deliberately kept and pinned; and the M48
+decision that the voice screen "owns the viewport and paints its own chrome", reached by
+the console through a floating CONSOLE pill.
+
+M49 follows the direction on both counts, because that is what "the chosen visual direction"
+means and because a reactor that looks different from the reference on the one screen that
+carries the product is the deviation, not the fix. The sphere's proportions, lighting and
+seam tests go with it; what replaces them is a geometry contract both surfaces read. The
+phone's own instrument lands in M51 — until then the phone still draws the sphere, and
+`reactor_orb_test.py` says so in a note rather than failing a milestone that has not started.
+
+Five tabs is the cap M48's verify script set, and VOICE uses the fifth. On the phone the voice
+screen is native, so `console_parity_test.py` binds the phone's strip to the four console
+front doors (`nav && !hud`) rather than to all five.
+
+## 15. Forgetting takes the words out of the transcript; a reminder is a moment first
+
+Two calls the live suite forced on the night of 26 August, neither in the
+original spec.
+
+**Forgetting.** "Forget what I told you about the shed key" removed the
+memory entry and left the sentence in the conversation, and the model read
+it back a turn later — truthfully: it *was* still there. The spec says a
+forgotten fact is gone; a transcript that still carries it is a second store
+the user did not ask for. So the agent now blanks the user turn that stated
+the fact and the assistant turn that acknowledged it, in the live history
+and in the archive the console redraws, leaving a placeholder that says a
+fact was forgotten there. The request to forget stays: it names the subject,
+not the fact. The cost is a transcript with a hole in it; the alternative is
+a Jarvis that "forgets" and then quotes you.
+
+**Reminders.** The schedule delivered a fired reminder through the phone
+channel only. In a house with no phone paired it became a task result and a
+log line, which is not a reminder. A reminder now lands in the notifications
+inbox — kind `reminder`, kept until read, on every console — and goes to the
+phone second. Someone with a phone gets it twice, in two places that both
+show it as read once it is read; someone without gets it at all.
+## 16. The image is no longer pure-Python: the sky brings numpy
+
+`jarvis-core/requirements.txt` opens with "deliberately short and pure-Python: every one of
+these installs from a wheel with no compiler". M58 adds `skyfield`, which brings `numpy`,
+`sgp4` and `jplephem` — the first compiled wheels in the file, and ~30 MB of image. The
+research (`docs/research/sky-satellites-and-radio.md` §1) recommended an optional
+requirements file for exactly this reason; the milestone brief asked for the pin in
+`requirements.txt`, and that is what shipped.
+
+What still holds: the "no compiler" half. All three publish manylinux wheels for amd64 and
+arm64, so the Dockerfile's build stage is unchanged and a Pi builds it as before. What no
+longer holds: "pure-Python". What limits the cost: the import is lazy — `jarvis` starts
+without touching numpy on a box that has no `sky:` block — and the module never imports
+numpy itself (test_packaging's "every third-party import is declared" check would have
+caught it; skyfield's arrays are numpy without the name appearing in the tree). The
+alternative, `astral`, is pure Python but has no planets and no satellites; once skyfield is
+in for satellites, one dependency beats two.
+
+If the image size matters more than the sky on some install, the line to move is one
+requirement into an optional file; nothing in the integration would change.
+
+## 17. A player row keeps three transport controls (M55)
+
+The rule is "one control per row where one will do". On a media player one
+will not: previous, play/pause and next are what the row is for, and a person
+skipping a track should not open anything to do it. The row lost one control
+(PLAY and PAUSE became the one the player can take now) and keeps three; the
+menu inventory caps a Devices row at four (transport plus Edit) and says why.
+A cover keeps STOP beside OPEN-or-CLOSE for the same reason — a door halfway
+is a real state. Everything else on the four destinations is one control and
+a disclosure.
+
+## 18. Early sentences are synthesised twice until the phone plays chunks (M60)
+
+`tts-chunk` sends each finished sentence while the model writes the next;
+`tts-end` still sends the whole reply, because the phone plays only that
+today. The early sentences are therefore synthesised twice — once as chunks,
+once inside the whole — and the whole delays `run-end` by its own synthesis.
+Piper on `base` voices runs many times faster than real time, so the cost is
+tens of milliseconds a sentence, and it buys the console its first word at
+the first sentence rather than the last. M61 teaches the phone to play chunks
+and the remainder, after which the whole-reply clip goes.
+
+## 19. A spoken turn keeps its reasoning block, and the switch to drop it is measured (M60)
+
+Qwen3 reasons before it answers unless told not to, and the block is
+generated at full cost and stripped before the ear. `voice: think: false`
+skips it for spoken turns only, and the live suite measured the trade on
+26 August: the full-mode median round trip fell from 5.90 s to 3.07 s, and
+intent accuracy fell from 93 % to 87 % and routing from 95 % to 85 % — a
+lookup that asked which handbook instead of searching, a plan that read the
+sensors instead of delegating. The brief puts intelligence before speed, so
+the shipped default is `think: true`; the switch stays, with both numbers
+beside it in `configuration.yaml`, for a house that wants the first word
+sooner and knows the price.
+
+## 20. The bar has six tabs, not five (M62)
+
+M48 cut eleven destinations to four plus the voice screen and pinned the number
+in its gate ("no more than five top-level destinations… reducing this is the
+milestone, not a side effect"). M62 raises the cap to six, for one tab: the
+dashboard. It was a section of HOUSE — the second of four, behind the device
+list — and it is the thing a person opens the console to look at; on the phone
+it was three taps from the home screen. The operator asked for it to be "a main
+thing", and a main thing is a tab. The cap stays a cap: the gate still refuses
+a seventh, the phone's strip still mirrors the bar exactly, and the four M48
+destinations are unchanged. What was given up is the round number, not the
+reason for it.
+
+## 21. The catalogue ships one source, and it is not a URL (M65)
+
+M47 decided there would be no default catalogue source: "shipping one would
+mean every install trusts whoever owns those URLs, forever, without anybody
+choosing to." That held, and the result was a browse button that opened on
+nothing — the operator's report was "no way to browse". M65 adds one source
+by code, named `bundled`, and it is the package's own skill folders
+(`jarvis/integrations/skills/bundled/index.json`, read as `file://` from
+wherever the package is — `/srv/jarvis` in the image, the checkout on a bare
+host). Nothing is fetched for it and nobody's server is trusted: every entry
+is code that is already in this repository and already running, which whoever
+runs Jarvis has trusted by running it. `DEFAULT_SOURCES` stays empty, the M47
+gate still asserts it, and the refusal it stands for is unchanged as written —
+there is no shipped list of *remote* origins. The built-in goes through the
+same index reader, the same "stay inside the catalogue" rule, the same
+quarantine and the same plan-then-approve install as a stranger's folder, so
+it is not a special case downstream; and it never overrides a person: a
+source called `bundled` in `configuration.yaml` replaces it, and
+`enabled: false` on that line turns it off. What was given up is the letter of
+"nothing by default"; what was kept is the reason for it.
+
+## 22. Enrolment has no tool and no socket command (M71)
+
+The obvious shape for "teach Jarvis a voice" is a Tier-3 tool with an approval
+card, like every other durable write. It is not one, and will not become one.
+An approval pins the arguments a human is shown; an enrolment's argument is a
+recording, and a card cannot show a voice — a human tapping APPROVE would be
+approving a sample they have not heard, on the word of the turn that asked.
+So enrolment is a REST write with a credential a person holds (the phone's
+token, the console password), the model has no way to reach it, and the name
+the gate attaches to a recognised turn is context in the prompt, never
+authority. `docs/security.md` has the rule, `test_speaker_gate.py` pins the
+three absences (tool, command, service).
+
+The cost: a spoken "Jarvis, learn my voice" cannot start enrolment. The
+screens are one tap away and say so.
 
 ## Licensing notes
 

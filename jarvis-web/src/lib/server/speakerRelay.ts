@@ -37,7 +37,7 @@ import { resolveBackend, backendProblem } from './backend';
 export async function relaySpeakerWrite(
 	request: Request,
 	fetcher: typeof globalThis.fetch,
-	path: 'enrol' | 'verify',
+	path: 'enrol' | 'verify' | 'enrolling',
 	/**
 	 * True when the caller unlocked the console with its password.
 	 *

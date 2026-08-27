@@ -17,7 +17,7 @@ from .const import (
     EVENT_DEVICE_REGISTRY_UPDATED,
     EVENT_ENTITY_REGISTRY_UPDATED,
 )
-from .state import slugify
+from .state import slugify, split_entity_id, valid_entity_id
 from .store import Store
 
 
@@ -187,6 +187,18 @@ class DeviceRegistry:
         await self.save()
         return device
 
+    async def remove(self, device_id: str) -> bool:
+        """Forget a device. The entities that hang off it are the caller's to
+        remove first (`Jarvis.async_remove_device` does); this only drops the
+        record, or an entity would keep naming a device that is not there."""
+        if self.devices.pop(device_id, None) is None:
+            return False
+        self._bus.fire(
+            EVENT_DEVICE_REGISTRY_UPDATED, {"action": "remove", "device_id": device_id}
+        )
+        await self.save()
+        return True
+
 
 class EntityRegistry:
     def __init__(self, bus: EventBus, store: Store) -> None:
@@ -272,6 +284,57 @@ class EntityRegistry:
                 setattr(entry, key, value)
         self._bus.fire(
             EVENT_ENTITY_REGISTRY_UPDATED, {"action": "update", "entity_id": entity_id}
+        )
+        await self.save()
+        return entry
+
+    async def rename(self, entity_id: str, new_entity_id: str) -> "EntityEntry | None":
+        """Give an entity a new `entity_id`. Returns the entry, or None.
+
+        Raises `ValueError` with a sentence when the new id is unusable —
+        malformed, already taken, or in a different domain. That last one is
+        not fussiness: the domain is what decides which services an entity
+        accepts, so `light.x` renamed to `switch.x` would be an entity whose
+        id promises `switch.turn_on` and whose platform does not implement it.
+
+        The state moves too. A registry entry under a new id whose state is
+        still under the old one is an entity that exists twice and works
+        neither way.
+        """
+        entry = self.entities.get(entity_id)
+        if entry is None:
+            return None
+        new_entity_id = str(new_entity_id or "").strip().lower()
+        if new_entity_id == entity_id:
+            return entry
+        if not valid_entity_id(new_entity_id):
+            raise ValueError(
+                f"{new_entity_id!r} is not a valid entity_id — it has to be "
+                "`domain.object_id`, lowercase, with letters, digits and "
+                "underscores."
+            )
+        if new_entity_id in self.entities:
+            raise ValueError(f"{new_entity_id} already exists.")
+        old_domain, _ = split_entity_id(entity_id)
+        new_domain, _ = split_entity_id(new_entity_id)
+        if old_domain != new_domain:
+            raise ValueError(
+                f"an entity cannot move between domains: {entity_id} is a "
+                f"{old_domain}, and {new_entity_id} would be a {new_domain}."
+            )
+
+        del self.entities[entity_id]
+        entry.entity_id = new_entity_id
+        self.entities[new_entity_id] = entry
+        self._bus.fire(
+            EVENT_ENTITY_REGISTRY_UPDATED,
+            {
+                "action": "update",
+                "entity_id": new_entity_id,
+                # Named so a listener can follow the move rather than seeing
+                # one entity vanish and an unrelated one appear.
+                "old_entity_id": entity_id,
+            },
         )
         await self.save()
         return entry

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · Instrument · Task</title>
+<style>
+@font-face{font-family:"Barlow Condensed";font-weight:500;src:url(fonts/barlow-condensed-500.woff2) format("woff2")}
+@font-face{font-family:"Barlow Condensed";font-weight:600;src:url(fonts/barlow-condensed-600.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:400;src:url(fonts/jetbrains-mono-400.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:500;src:url(fonts/jetbrains-mono-500.woff2) format("woff2")}
+:root{
+  --bg:#04070c; --surface:#070c13; --panel:#0a1219; --inset:#03060a;
+  --line:#17323e; --line-soft:#0f2029; --line-hair:#0b1820;
+  --text:#cfe6ee; --text-bright:#eaf7fb; --dim:#7fa3b0; --faint:#4a6570;
+  --accent:#3fd8ff; --accent-ink:#04121a; --accent-wash:rgba(63,216,255,.10);
+  --amber:#f2b84b; --danger:#ff6b5c; --ok:#7fd6a8;
+  --font-display:"Barlow Condensed",sans-serif; --font-mono:"JetBrains Mono",monospace;
+  --fs-2xs:10px; --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-lg:18px; --fs-xl:26px; --fs-display:44px;
+  --track:.10em; --track-wide:.22em; --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px;
+  --r:2px; --dur:160ms; --ease:cubic-bezier(.2,.7,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:400 var(--fs-md)/1.5 var(--font-mono)}
+body{overflow:hidden}
+.app{display:grid;grid-template-rows:40px 1fr;height:100vh}
+.bar{display:grid;grid-template-columns:200px 1fr auto;align-items:center;border-bottom:1px solid var(--line-soft);padding:0 var(--s4);background:var(--surface)}
+.brand{font:600 var(--fs-lg)/1 var(--font-display);letter-spacing:var(--track-wide);color:var(--text-bright)}
+.brand small{color:var(--faint);font-size:var(--fs-2xs);letter-spacing:var(--track);margin-left:var(--s2);font-family:var(--font-mono);font-weight:400}
+nav{display:flex;gap:var(--s5);font:500 var(--fs-sm)/1 var(--font-display);letter-spacing:var(--track-wide);color:var(--dim);text-transform:uppercase}
+nav a{color:inherit;text-decoration:none;padding:var(--s3) 0;border-bottom:1px solid transparent}
+nav a.on{color:var(--text-bright);border-bottom-color:var(--accent)}
+.status{display:flex;gap:var(--s4);font-size:var(--fs-2xs);letter-spacing:var(--track);color:var(--dim);text-transform:uppercase}
+.status i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--faint);margin-right:6px;vertical-align:middle}
+.status i.live{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+.main{display:grid;grid-template-columns:300px 1fr 340px;gap:1px;background:var(--line-hair);min-height:0}
+.col{display:grid;gap:1px;background:var(--line-hair);min-height:0}
+.panel{background:var(--surface);position:relative;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.panel>h2{font:500 var(--fs-xs)/1 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;color:var(--dim);padding:var(--s3) var(--s4);border-bottom:1px solid var(--line-hair);display:flex;justify-content:space-between}
+.panel>h2 b{color:var(--faint);font-weight:500}
+.panel.focus::before,.panel.focus::after{content:"";position:absolute;width:10px;height:10px;border-color:var(--accent);border-style:solid;pointer-events:none;z-index:1}
+.panel.focus::before{top:6px;left:6px;border-width:1px 0 0 1px}.panel.focus::after{bottom:6px;right:6px;border-width:0 1px 1px 0}
+/* task list */
+.tasks{font-size:var(--fs-xs)}
+.task{display:grid;grid-template-columns:1fr auto;gap:2px var(--s3);padding:var(--s2) var(--s4);border-bottom:1px solid var(--line-hair);color:var(--dim)}
+.task .name{color:var(--text);grid-column:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.task .st{font:500 var(--fs-2xs)/1.6 var(--font-display);letter-spacing:var(--track);text-transform:uppercase;color:var(--faint)}
+.task.run .st{color:var(--accent)}.task.err .st{color:var(--danger)}
+.task .seg{grid-column:1/-1;display:flex;gap:2px;height:3px}
+.task .seg i{flex:1;background:var(--line-soft)}.task .seg i.d{background:var(--dim)}.task .seg i.r{background:var(--accent)}
+.task.on{background:var(--panel)}
+.sub{padding:var(--s2) var(--s4);font:500 var(--fs-2xs)/1 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;color:var(--faint);border-bottom:1px solid var(--line-hair)}
+/* header block */
+.head{padding:var(--s4);border-bottom:1px solid var(--line-hair)}
+.head h1{font:500 var(--fs-xl)/1.1 var(--font-display);letter-spacing:.02em;color:var(--text-bright)}
+.meta{display:flex;gap:var(--s5);margin-top:var(--s2);font-size:var(--fs-xs);color:var(--faint);letter-spacing:var(--track);text-transform:uppercase}
+.meta b{color:var(--dim);font-weight:400}.meta .live{color:var(--accent)}
+.prog{display:grid;grid-template-columns:1fr auto;align-items:center;gap:var(--s3);margin-top:var(--s3)}
+.prog .seg{display:flex;gap:3px;height:6px}
+.prog .seg i{flex:1;background:var(--line-soft)}.prog .seg i.d{background:var(--dim)}.prog .seg i.r{background:var(--accent);box-shadow:0 0 8px var(--accent-wash)}
+.prog .pct{font:600 var(--fs-lg)/1 var(--font-display);color:var(--text-bright);font-variant-numeric:tabular-nums}
+/* steps */
+.steps{list-style:none;font-size:var(--fs-sm)}
+.steps li{display:grid;grid-template-columns:24px 24px 1fr auto;gap:var(--s2);padding:6px var(--s4);border-bottom:1px solid var(--line-hair);align-items:baseline;color:var(--dim)}
+.steps .n{color:var(--faint);font-size:var(--fs-xs)}
+.steps .g{color:var(--faint)}.steps li.d .g{color:var(--ok)}.steps li.r .g{color:var(--accent)}
+.steps li.r{color:var(--text-bright);background:var(--accent-wash)}
+.steps .ms{font-size:var(--fs-xs);color:var(--faint);font-variant-numeric:tabular-nums}
+.steps li.r .ms{color:var(--accent)}
+.steps .detail{grid-column:3;font-size:var(--fs-xs);color:var(--dim)}
+/* calls */
+.calls{font-size:var(--fs-xs)}
+.call{display:grid;grid-template-columns:64px 1fr auto auto;gap:var(--s3);padding:4px var(--s4);border-bottom:1px solid var(--line-hair);color:var(--dim);align-items:baseline}
+.call .t{color:var(--faint)}.call .fn{color:var(--text)}.call .fn em{font-style:normal;color:var(--faint)}
+.call .res{color:var(--ok)}.call .ms{color:var(--faint);font-variant-numeric:tabular-nums}
+.call.r .res{color:var(--accent)}.call.r .fn{color:var(--text-bright)}
+.call.fail .res{color:var(--danger)}
+/* output */
+.out{flex:1;background:var(--inset);padding:var(--s3) var(--s4);font-size:var(--fs-xs);color:var(--dim);overflow:hidden;white-space:pre;line-height:1.6}
+.out .c{color:var(--faint)}.out .ok{color:var(--ok)}.out .cur::after{content:"▍";color:var(--accent);animation:blink 1s steps(2) infinite}
+@keyframes blink{to{opacity:0}}
+/* approval */
+.approval{border-left:2px solid var(--amber);margin:var(--s4);padding:var(--s3) var(--s4);background:var(--panel)}
+.approval .lbl{font:500 var(--fs-2xs)/1 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;color:var(--amber)}
+.approval .what{margin:var(--s2) 0;color:var(--text-bright);font-size:var(--fs-sm)}
+.approval .args{font-size:var(--fs-xs);color:var(--dim);border-left:1px solid var(--line-soft);padding-left:var(--s3);margin:var(--s2) 0}
+.approval .row{display:flex;gap:var(--s2);margin-top:var(--s3);align-items:center}
+.btn{font:500 var(--fs-xs)/1 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;padding:8px 14px;border:1px solid var(--line);color:var(--dim);background:transparent;border-radius:var(--r)}
+.btn.primary{border-color:var(--accent);color:var(--accent)}
+.btn.danger{border-color:var(--line);color:var(--danger)}
+.approval .ttl{margin-left:auto;font-size:var(--fs-2xs);color:var(--faint);letter-spacing:var(--track)}
+/* timeline */
+.tl{padding:var(--s3) var(--s4);font-size:var(--fs-xs);flex:1;overflow:hidden}
+.tl .ev{display:grid;grid-template-columns:44px 12px 1fr;gap:var(--s2);color:var(--dim);position:relative;min-height:24px}
+.tl .ev .t{color:var(--faint)}.tl .ev .dot{width:12px;position:relative}
+.tl .ev .dot::before{content:"";position:absolute;left:5px;top:0;bottom:-8px;width:1px;background:var(--line-soft)}
+.tl .ev .dot::after{content:"";position:absolute;left:3px;top:6px;width:5px;height:5px;border-radius:50%;background:var(--faint)}
+.tl .ev.r .dot::after{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+.tl .ev.a .dot::after{background:var(--amber)}
+.tl .ev.e .dot::after{background:var(--danger)}
+.tl .ev .w{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl .ev .w em{font-style:normal;color:var(--text)}
+.tl .day{color:var(--faint);letter-spacing:var(--track);text-transform:uppercase;font-size:var(--fs-2xs);margin:var(--s2) 0 var(--s1) 0}
+.actions{display:flex;gap:var(--s2);padding:var(--s3) var(--s4);border-top:1px solid var(--line-hair)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style></head>
+<body><div class="app">
+  <header class="bar">
+    <div class="brand">JARVIS<small>v0.1 · LOCAL</small></div>
+    <nav><a href="#">Voice</a><a href="#">Devices</a><a href="#">Areas</a><a href="#">Automations</a><a href="#">Tools</a><a class="on" href="#">Tasks</a><a href="#">Dashboards</a><a href="#">Code</a><a href="#">Settings</a></nav>
+    <div class="status"><span><i class="live"></i>link</span><span><i class="live"></i>2 running</span><span><i></i>1 held</span></div>
+  </header>
+  <main class="main">
+    <aside class="col" style="grid-template-rows:auto 1fr">
+      <section class="panel"><h2>Queue <b>2 RUN · 1 QUEUED</b></h2>
+        <div class="tasks">
+          <div class="task run on"><span class="name">Add an OFFLINE state to the settings screen</span><span class="st">running · 02:14</span><div class="seg"><i class="d"></i><i class="d"></i><i class="r"></i><i></i><i></i></div></div>
+          <div class="task run"><span class="name">Research: whisper-large-v3-turbo on CPU</span><span class="st">running · 00:41</span><div class="seg"><i class="d"></i><i class="r"></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="task"><span class="name">Nightly: purge recorder &gt; 10 d</span><span class="st">queued · 03:00</span><div class="seg"><i></i><i></i></div></div>
+        </div>
+      </section>
+      <section class="panel"><h2>Finished <b>TODAY · 6</b></h2>
+        <div class="tasks">
+          <div class="task"><span class="name">Compare whisper models for the Pi</span><span class="st">done · 14:02</span></div>
+          <div class="task err"><span class="name">Fix pairing QR on Android 15</span><span class="st">error · 13:10</span></div>
+          <div class="task"><span class="name">Morning briefing</span><span class="st">done · 07:00</span></div>
+          <div class="task"><span class="name">Rename light.lamp_3 → light.hall_lamp</span><span class="st">done · 06:51</span></div>
+          <div class="task"><span class="name">Water the balcony (schedule)</span><span class="st">done · 06:30</span></div>
+          <div class="task"><span class="name">Reminder: dentist</span><span class="st">done · 06:00</span></div>
+        </div>
+      </section>
+    </aside>
+
+    <section class="col" style="grid-template-rows:auto auto auto 1fr">
+      <div class="panel focus">
+        <div class="head">
+          <h1>Add an OFFLINE state to the settings screen</h1>
+          <div class="meta"><span>kind <b>code</b></span><span>repo <b>jarvis-web</b></span><span>branch <b>jarvis/2026-08-24-offline-state</b></span><span>elapsed <b class="live">02:14</b></span><span>model <b>qwen2.5-coder-7b</b></span><span>sandbox <b>network none</b></span></div>
+          <div class="prog"><div class="seg"><i class="d"></i><i class="d"></i><i class="r"></i><i></i><i></i></div><span class="pct">61 %</span></div>
+        </div>
+      </div>
+      <section class="panel"><h2>Plan <b>STEP 3 OF 5</b></h2>
+        <ol class="steps">
+          <li class="d"><span class="n">01</span><span class="g">✓</span><span>Read the settings route and its socket wiring</span><span class="ms">18 s</span></li>
+          <li class="d"><span class="n">02</span><span class="g">✓</span><span>Wrap the page in ScreenState with loading, empty and error</span><span class="ms">54 s</span></li>
+          <li class="r"><span class="n">03</span><span class="g">▶</span><span>Wire socket status to the offline state</span><span class="ms">01:02</span><span class="detail">editing src/routes/settings/+page.svelte · +14 −2</span></li>
+          <li><span class="n">04</span><span class="g">·</span><span>Run npm run check and the settings spec</span><span class="ms">—</span></li>
+          <li><span class="n">05</span><span class="g">·</span><span>Write it up: branch, diff, what was not done</span><span class="ms">—</span></li>
+        </ol>
+      </section>
+      <section class="panel"><h2>Tool calls <b>LIVE · 9</b></h2>
+        <div class="calls">
+          <div class="call"><span class="t">+00:03</span><span class="fn">read_file <em>src/routes/settings/+page.svelte</em></span><span class="res">ok</span><span class="ms">12 ms</span></div>
+          <div class="call"><span class="t">+00:09</span><span class="fn">search <em>"ScreenState" in src/lib/ui</em></span><span class="res">3 hits</span><span class="ms">4 ms</span></div>
+          <div class="call"><span class="t">+00:41</span><span class="fn">edit_file <em>+page.svelte · wrap in &lt;ScreenState&gt;</em></span><span class="res">+22 −5</span><span class="ms">2 ms</span></div>
+          <div class="call"><span class="t">+01:12</span><span class="fn">read_file <em>src/lib/connection.ts</em></span><span class="res">ok</span><span class="ms">3 ms</span></div>
+          <div class="call"><span class="t">+01:58</span><span class="fn">edit_file <em>+page.svelte · status → offline</em></span><span class="res">+14 −2</span><span class="ms">2 ms</span></div>
+          <div class="call r"><span class="t">+02:09</span><span class="fn">run_check <em>npm run check</em></span><span class="res">running</span><span class="ms">5.1 s</span></div>
+        </div>
+      </section>
+      <section class="panel"><h2>Output <b>run_check · npm run check</b></h2>
+        <div class="out"><span class="c">$ npm run check</span>
+&gt; jarvis-web@0.1.0 check
+&gt; svelte-kit sync &amp;&amp; svelte-check --tsconfig ./tsconfig.json
+
+<span class="c">Loading svelte-check in workspace: /work</span>
+<span class="c">Getting Svelte diagnostics…</span>
+<span class="ok">✔</span> src/routes/settings/+page.svelte — 0 errors, 0 warnings
+<span class="ok">✔</span> src/lib/ui/ScreenState.svelte — 0 errors
+<span class="cur">Checking 446 files… 312</span></div>
+      </section>
+    </section>
+
+    <aside class="col" style="grid-template-rows:auto 1fr auto">
+      <section class="panel"><h2>Held <b>APPROVAL · 1</b></h2>
+        <div class="approval">
+          <div class="lbl">Tier 3 · asks before it runs</div>
+          <div class="what">Push branch to origin</div>
+          <div class="args">code.push_branch<br>repo: jarvis-web<br>branch: jarvis/2026-08-24-offline-state<br>force: never</div>
+          <div class="row"><button class="btn primary">Approve</button><button class="btn danger">Deny</button><span class="ttl">expires 04:12</span></div>
+        </div>
+      </section>
+      <section class="panel"><h2>Timeline <b>TASK 8F3A</b></h2>
+        <div class="tl">
+          <div class="day">02:39</div>
+          <div class="ev"><span class="t">:39.02</span><span class="dot"></span><span class="w"><em>queued</em> from voice · "add an offline state…"</span></div>
+          <div class="ev"><span class="t">:39.03</span><span class="dot"></span><span class="w"><em>planning</em> 1 model call · 5 steps</span></div>
+          <div class="ev"><span class="t">:39.06</span><span class="dot"></span><span class="w"><em>branch</em> jarvis/2026-08-24-offline-state</span></div>
+          <div class="ev"><span class="t">:39.24</span><span class="dot"></span><span class="w"><em>step 1 done</em> 18 s · 2 calls</span></div>
+          <div class="day">02:40</div>
+          <div class="ev"><span class="t">:40.18</span><span class="dot"></span><span class="w"><em>step 2 done</em> 54 s · 3 calls</span></div>
+          <div class="ev a"><span class="t">:40.51</span><span class="dot"></span><span class="w"><em>held</em> code.push_branch · waiting for you</span></div>
+          <div class="day">02:41</div>
+          <div class="ev r"><span class="t">:41.20</span><span class="dot"></span><span class="w"><em>step 3</em> run_check · npm run check</span></div>
+        </div>
+        <div class="actions"><button class="btn">Cancel task</button><button class="btn">Open diff</button><button class="btn">Forget</button></div>
+      </section>
+    </aside>
+  </main>
+</div></body></html>

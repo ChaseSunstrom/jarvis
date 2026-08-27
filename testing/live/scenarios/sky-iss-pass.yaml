@@ -1,0 +1,23 @@
+name: sky-iss-pass
+capability: sky
+gated-on: M58
+intent: >
+  The most asked-for thing in the sky: "when can I see the space station?"
+  The answer is computed on this box from cached orbital elements (M58), and
+  what this guards is that Jarvis reaches for the sky tool rather than
+  answering from the model's memory — a pass time invented by a language
+  model sends someone into the garden for nothing — and that it answers the
+  way a person needs it: a clock time and a compass direction, not a JSON
+  dump and not a refusal. Whether a pass is visible on the night this runs is
+  the sky's business; a night with none still has to say when the next one
+  is, and how old the elements were.
+variants: [voice, text]
+turns:
+  - say: "When is the space station next visible from here?"
+    expect:
+      capability: sky
+      reply_means: >
+        names a clock time for the next space station pass and a compass
+        direction to look in — or, if no pass is visible in the window, says
+        so and gives the time of the next pass — rather than guessing,
+        refusing, or asking where "here" is

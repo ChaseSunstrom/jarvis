@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · Reactor · Chat</title>
+<style>
+@font-face{font-family:"Space Grotesk";font-weight:300;src:url(fonts/space-grotesk-300.woff2) format("woff2")}
+@font-face{font-family:"Space Grotesk";font-weight:400;src:url(fonts/space-grotesk-400.woff2) format("woff2")}
+@font-face{font-family:"Space Grotesk";font-weight:500;src:url(fonts/space-grotesk-500.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:400;src:url(fonts/jetbrains-mono-400.woff2) format("woff2")}
+:root{
+  /* ── direction C · REACTOR · tokens (inlined) ─────────────────────── */
+  --bg:#020509; --bg-bloom:rgba(79,227,255,.10);
+  --glass:rgba(10,21,32,.55); --glass-line:rgba(79,227,255,.14); --glass-line-soft:rgba(79,227,255,.07);
+  --line:#123040; --line-soft:#0d2330;
+  --text:#d6eef5; --text-bright:#f3fbfe; --dim:#7ea6b3; --faint:#3f5c66;
+  --accent:#4fe3ff; --accent-glow:rgba(79,227,255,.35); --accent-wash:rgba(79,227,255,.10); --accent-ink:#031017;
+  --ok:#6ff2c0; --warn:#f2b84b; --danger:#ff6b5c;
+  --font:"Space Grotesk",sans-serif; --font-mono:"JetBrains Mono",monospace;
+  --fs-2xs:11px; --fs-xs:12px; --fs-sm:13px; --fs-md:15px; --fs-lg:18px; --fs-xl:26px; --fs-2xl:34px; --fs-display:52px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r:12px; --r-pill:999px; --blur:14px; --dur:220ms; --dur-slow:1200ms; --ease:cubic-bezier(.22,.8,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:400 var(--fs-md)/1.5 var(--font);-webkit-font-smoothing:antialiased}
+body{overflow:hidden;background:
+  radial-gradient(ellipse 60% 45% at 50% 34%,var(--bg-bloom),transparent 70%),
+  radial-gradient(ellipse 120% 80% at 50% 120%,#04101a,transparent 60%),var(--bg)}
+.app{position:relative;height:100vh}
+/* rings in the field */
+.field{position:absolute;inset:0;pointer-events:none}
+.field svg{position:absolute;left:50%;top:34%;width:1100px;height:1100px;transform:translate(-50%,-50%);opacity:.5}
+/* top */
+.top{position:absolute;top:var(--s5);left:var(--s6);right:var(--s6);display:flex;align-items:center;justify-content:space-between}
+.brand{font-weight:500;letter-spacing:.3em;color:var(--text-bright);font-size:var(--fs-sm)}
+.pills{display:flex;gap:var(--s1);padding:4px;border:1px solid var(--glass-line-soft);border-radius:var(--r-pill);background:var(--glass);backdrop-filter:blur(var(--blur))}
+.pills a{font-size:var(--fs-xs);color:var(--dim);text-decoration:none;padding:6px 14px;border-radius:var(--r-pill)}
+.pills a.on{color:var(--accent-ink);background:var(--accent)}
+.dots{display:flex;gap:var(--s4);font-size:var(--fs-2xs);color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.dots i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--faint);margin-right:6px}
+.dots i.live{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+/* orb */
+.orb{position:absolute;left:50%;top:34%;transform:translate(-50%,-50%);width:280px;height:280px}
+.orb svg{width:100%;height:100%;overflow:visible}
+.orb .core{transform-origin:140px 140px;animation:breathe 4.5s var(--ease) infinite}
+.orb .spin{transform-origin:140px 140px;animation:spin 40s linear infinite}
+.orb .spin2{transform-origin:140px 140px;animation:spin 70s linear infinite reverse}
+@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.cap{position:absolute;left:50%;top:calc(34% + 160px);transform:translateX(-50%);font-size:var(--fs-2xs);letter-spacing:.3em;text-transform:uppercase;color:var(--accent);white-space:nowrap}
+/* exchange */
+.exchange{position:absolute;left:50%;top:calc(34% + 200px);transform:translateX(-50%);width:760px;text-align:center}
+.exchange .you{color:var(--dim);font-size:var(--fs-lg);font-weight:300}
+.exchange .jarvis{color:var(--text-bright);font-size:var(--fs-xl);font-weight:300;margin-top:var(--s3);line-height:1.35}
+.exchange .jarvis::after{content:"";display:inline-block;width:3px;height:.9em;background:var(--accent);margin-left:4px;vertical-align:-2px;box-shadow:0 0 8px var(--accent);animation:blink 1s steps(2) infinite}
+@keyframes blink{to{opacity:0}}
+.exchange .calls{display:flex;justify-content:center;gap:var(--s2);margin-top:var(--s4);flex-wrap:wrap}
+.chip{font:400 var(--fs-2xs)/1 var(--font-mono);color:var(--dim);padding:7px 12px;border:1px solid var(--glass-line-soft);border-radius:var(--r-pill);background:var(--glass)}
+.chip b{font-weight:400;color:var(--text)}
+.chip .ok{color:var(--ok);margin-left:6px}
+/* glass panels */
+.glass{position:absolute;background:var(--glass);border:1px solid var(--glass-line-soft);border-radius:var(--r);backdrop-filter:blur(var(--blur));box-shadow:0 30px 60px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.03)}
+.glass h2{font-size:var(--fs-2xs);letter-spacing:.22em;text-transform:uppercase;color:var(--dim);padding:var(--s3) var(--s4);border-bottom:1px solid var(--glass-line-soft);display:flex;justify-content:space-between}
+.glass h2 b{color:var(--faint);font-weight:400}
+.transcript{left:var(--s6);top:120px;width:340px}
+.transcript .t{padding:var(--s3) var(--s4);border-bottom:1px solid var(--glass-line-soft);font-size:var(--fs-sm)}
+.transcript .who{font-size:var(--fs-2xs);letter-spacing:.2em;text-transform:uppercase;color:var(--faint);margin-bottom:2px}
+.transcript .t.j .who{color:var(--accent)}
+.transcript .t p{color:var(--dim)}.transcript .t.j p{color:var(--text)}
+.transcript .t.last{background:var(--accent-wash)}
+.now{right:var(--s6);top:120px;width:300px}
+.now .ring{display:grid;grid-template-columns:96px 1fr;gap:var(--s3);padding:var(--s4);align-items:center}
+.now .ring svg{width:96px;height:96px}
+.now .k{font-size:var(--fs-xs);color:var(--faint);display:flex;justify-content:space-between;padding:3px 0}
+.now .k b{font-weight:400;color:var(--text);font-family:var(--font-mono)}
+.now .k b.live{color:var(--accent)}
+.now .chips{display:flex;flex-wrap:wrap;gap:var(--s2);padding:0 var(--s4) var(--s4)}
+/* dock */
+.dock{position:absolute;left:50%;bottom:var(--s6);transform:translateX(-50%);display:flex;align-items:center;gap:var(--s3);padding:var(--s2) var(--s2) var(--s2) var(--s3);background:var(--glass);border:1px solid var(--glass-line);border-radius:var(--r-pill);backdrop-filter:blur(var(--blur));box-shadow:0 20px 50px rgba(0,0,0,.5)}
+.mic{width:56px;height:56px;border-radius:50%;border:1.5px solid var(--accent);display:grid;place-items:center;color:var(--accent);box-shadow:0 0 24px var(--accent-glow),inset 0 0 12px var(--accent-wash);position:relative}
+.mic::before{content:"";width:12px;height:20px;border:1.5px solid currentColor;border-radius:8px}
+.mic::after{content:"";position:absolute;bottom:14px;width:20px;height:8px;border:1.5px solid currentColor;border-top:0;border-radius:0 0 10px 10px}
+.field-in{width:520px;color:var(--faint);font-size:var(--fs-md);font-weight:300}
+.field-in span{color:var(--text)}
+.mode{display:flex;gap:2px;padding:3px;border:1px solid var(--glass-line-soft);border-radius:var(--r-pill)}
+.mode span{font-size:var(--fs-2xs);letter-spacing:.14em;text-transform:uppercase;padding:8px 14px;border-radius:var(--r-pill);color:var(--faint)}
+.mode span.on{color:var(--text-bright);background:rgba(255,255,255,.05)}
+.hint{position:absolute;left:50%;bottom:var(--s3);transform:translateX(-50%);font:400 var(--fs-2xs)/1 var(--font-mono);color:var(--faint);letter-spacing:.06em}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style></head>
+<body><div class="app">
+  <div class="field" aria-hidden="true"><svg viewBox="0 0 1100 1100"><g fill="none" stroke="#123040" stroke-width="1"><circle cx="550" cy="550" r="230"/><circle cx="550" cy="550" r="330" stroke-dasharray="1 9"/><circle cx="550" cy="550" r="470" stroke="#0d2330"/><circle cx="550" cy="550" r="540" stroke="#0d2330" stroke-dasharray="2 14"/></g></svg></div>
+
+  <header class="top">
+    <span class="brand">JARVIS</span>
+    <nav class="pills"><a class="on" href="#">Voice</a><a href="#">Devices</a><a href="#">Areas</a><a href="#">Automations</a><a href="#">Tools</a><a href="#">Tasks</a><a href="#">Dashboards</a><a href="#">Code</a><a href="#">Settings</a></nav>
+    <div class="dots"><span><i class="live"></i>link</span><span><i class="live"></i>qwen3-8b</span><span><i></i>stt</span><span><i></i>tts</span></div>
+  </header>
+
+  <div class="orb" aria-hidden="true"><svg viewBox="0 0 280 280">
+    <defs><radialGradient id="g" cx="50%" cy="45%" r="55%"><stop offset="0" stop-color="#4fe3ff" stop-opacity=".95"/><stop offset=".45" stop-color="#1e8ab0" stop-opacity=".55"/><stop offset="1" stop-color="#020509" stop-opacity="0"/></radialGradient><filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="10"/></filter></defs>
+    <circle cx="140" cy="140" r="70" fill="#4fe3ff" opacity=".35" filter="url(#glow)"/>
+    <g class="spin" fill="none" stroke="#4fe3ff" stroke-opacity=".55" stroke-width="1"><circle cx="140" cy="140" r="118" stroke-dasharray="30 12 4 12"/></g>
+    <g class="spin2" fill="none" stroke="#7ea6b3" stroke-opacity=".5" stroke-width="1"><circle cx="140" cy="140" r="100" stroke-dasharray="2 8"/></g>
+    <circle cx="140" cy="140" r="132" fill="none" stroke="#123040" stroke-width="1"/>
+    <g fill="none" stroke="#4fe3ff" stroke-width="1.5" stroke-linecap="round"><circle cx="140" cy="140" r="132" stroke-dasharray="180 650" transform="rotate(-90 140 140)"/></g>
+    <g class="core"><circle cx="140" cy="140" r="64" fill="url(#g)"/><circle cx="140" cy="140" r="64" fill="none" stroke="#4fe3ff" stroke-opacity=".7" stroke-width="1"/><circle cx="140" cy="140" r="22" fill="#031017"/><circle cx="140" cy="140" r="22" fill="none" stroke="#4fe3ff" stroke-width="1"/><circle cx="140" cy="140" r="5" fill="#4fe3ff"/></g>
+    <g font-family="JetBrains Mono" font-size="9" fill="#3f5c66" letter-spacing="2"><text x="140" y="-2" text-anchor="middle">VAD −38 dB</text></g>
+  </svg></div>
+  <div class="cap">listening · hands-free</div>
+
+  <section class="exchange">
+    <p class="you">And how long has the coding job been running?</p>
+    <p class="jarvis">Two minutes fourteen. It's on step three of five — wiring the socket status into the offline state — and it will ask you before it pushes</p>
+    <div class="calls"><span class="chip"><b>tasks.get</b> task_8f3a<span class="ok">ok · 2 ms</span></span></div>
+  </section>
+
+  <aside class="glass transcript">
+    <h2>Transcript <b>session 0413</b></h2>
+    <div class="t"><div class="who">you · 02:38</div><p>What's the temperature in the office?</p></div>
+    <div class="t j"><div class="who">jarvis</div><p>21.4 °C, holding. The radiator has been off since one.</p></div>
+    <div class="t"><div class="who">you · 02:40</div><p>Turn the kitchen lamp to forty percent and remind me at six to take the bread out.</p></div>
+    <div class="t j"><div class="who">jarvis</div><p>Kitchen lamp at 40 %. I'll remind you at 18:00 — the bread.</p></div>
+    <div class="t last"><div class="who">you · 02:41</div><p>And how long has the coding job been running?</p></div>
+  </aside>
+
+  <aside class="glass now">
+    <h2>This turn <b>1.27 s</b></h2>
+    <div class="ring">
+      <svg viewBox="0 0 96 96" aria-hidden="true"><circle cx="48" cy="48" r="40" fill="none" stroke="#123040" stroke-width="6"/><circle cx="48" cy="48" r="40" fill="none" stroke="#3f5c66" stroke-width="6" stroke-dasharray="82 251" transform="rotate(-90 48 48)"/><circle cx="48" cy="48" r="40" fill="none" stroke="#4fe3ff" stroke-width="6" stroke-dasharray="127 251" stroke-dashoffset="-82" transform="rotate(-90 48 48)" style="filter:drop-shadow(0 0 6px rgba(79,227,255,.6))"/><circle cx="48" cy="48" r="40" fill="none" stroke="#7ea6b3" stroke-width="6" stroke-dasharray="42 251" stroke-dashoffset="-209" transform="rotate(-90 48 48)"/><text x="48" y="52" text-anchor="middle" font-family="Space Grotesk" font-size="14" fill="#f3fbfe">1.27s</text></svg>
+      <div><div class="k"><span>transcribe</span><b>412 ms</b></div><div class="k"><span>first token</span><b class="live">640 ms</b></div><div class="k"><span>speak</span><b>210 ms</b></div><div class="k"><span>throughput</span><b>31 tok/s</b></div></div>
+    </div>
+    <div class="chips"><span class="chip"><b>light.turn_on</b><span class="ok">84 ms</span></span><span class="chip"><b>schedule.add</b><span class="ok">12 ms</span></span><span class="chip"><b>climate.get_state</b><span class="ok">6 ms</span></span></div>
+  </aside>
+
+  <footer class="dock">
+    <div class="mic" aria-label="push to talk"></div>
+    <div class="field-in"><span>Say or type</span> — hold space, release to send</div>
+    <div class="mode"><span class="on">Voice</span><span>Chat</span></div>
+  </footer>
+  <div class="hint">⌘K palette · g t tasks · m mute</div>
+</div></body></html>

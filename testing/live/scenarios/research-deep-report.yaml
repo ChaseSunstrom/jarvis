@@ -1,0 +1,42 @@
+name: research-deep-report
+capability: research
+# Not the stack: its sources must be pages this repository owns.
+ground: fixture
+gated-on: M18
+intent: >
+  Deep research, end to end: several sources actually fetched, a report whose
+  factual claims match the fixture handbook word for word, and a note left
+  behind with citations that resolve. The judge grades only the synthesis; every
+  fact is checked against pages this repository wrote, because a language model
+  will write a confident, well-structured, cited-looking answer to any question
+  from nothing at all.
+
+  It asserts on the REPORT rather than on the task's step count: a research run
+  discovers how many steps it has while it runs, so a step assertion is a race
+  rather than a claim.
+variants: [text]
+turns:
+  # The handbook by its address. "The fixture handbook" alone is a name the
+  # house has no note or memory of, and the model asked which one was meant —
+  # correct, as research-cancel.yaml records, and not what this scenario is
+  # about. `{{handbook}}` is the fixture web's address for this run.
+  - say: >
+      Do some deep research on what the household handbook at {{handbook}}
+      says about heating — the flow temperature and why — and save it as a
+      note.
+    expect:
+      task: {kind: research, within: 60}
+      capability: research
+      reply_means: >
+        says the research is under way and will take a minute or two — it must
+        not present findings it cannot have yet
+  # Long enough for a deep run on this host: several searches, several pages
+  # read, a note taken on each, a lead followed and a write-up, all through a
+  # 27B model. The reply is graded on what was true WHEN IT WAS ASKED, so
+  # asking too early grades a correct "not yet".
+  - say: "Is that research finished?"
+    wait: 240
+    expect:
+      task: {kind: research, status: done, within: 600}
+      note: {title_contains: "research", citations_at_least: 1, within: 120}
+      reply_means: "says the research is finished, or summarises what it found"

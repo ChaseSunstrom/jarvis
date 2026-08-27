@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .browser import BrowserError, PlaywrightBackend
+from .documents import DocumentError, kind_of, to_text
 from .config import Settings, load_settings
 from .crawl import CrawlConfigError, CrawlLimits, crawl
 from .extract import extract
@@ -406,6 +407,103 @@ def _host_of(url: str) -> str:
         return ""
 
 
+async def _document_payload(url: str, s: Settings) -> dict | None:
+    """A PDF or Word file, read as text — or None if it is neither.
+
+    Documents do not go through the browser: chromium cannot hand back a PDF's
+    text, it downloads one. So this fetches the bytes directly, and only for a
+    URL that already looks like a document — a page pays nothing for this.
+
+    The result is fenced exactly like a page's, because it is exactly as
+    untrusted: a PDF somebody emailed is a stranger's text arriving inside a
+    model's context.
+    """
+    kind = kind_of(url)
+    if not kind:
+        return None
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=s.nav_timeout_ms / 1000, follow_redirects=False
+        ) as http:
+            answer = await http.get(url, headers={"user-agent": s.user_agent})
+            answer.raise_for_status()
+            data = answer.content
+    except Exception as err:  # noqa: BLE001 - the fetch failed, say which way
+        raise HTTPException(502, f"could not fetch the document: {type(err).__name__}")
+    # The server's own content type wins over the extension. A `.pdf` that
+    # answers with HTML is an error page or a login wall: hand it back to the
+    # browser, which knows what to do with HTML, rather than reporting a
+    # malformed document.
+    kind = kind_of(url, answer.headers.get("content-type", ""))
+    if not kind:
+        return None
+    if len(data) > s.max_page_bytes:
+        data = data[: s.max_page_bytes]
+    try:
+        text = to_text(data, kind)
+    except DocumentError as err:
+        raise HTTPException(422, str(err))
+    text = text[: s.max_text_chars]
+    return {
+        "final_url": url,
+        "requested_url": url,
+        "title": url.rsplit("/", 1)[-1],
+        "kind": kind,
+        "content_is_untrusted": True,
+        "text": fence(text, source=url),
+        "links": [],
+        "meta": {},
+        "truncated": len(text) >= s.max_text_chars,
+        "char_count": len(text),
+        "status": answer.status_code,
+    }
+
+
+async def _plain_page(app, url: str, s: Settings) -> dict | None:
+    """The page over plain HTTP, extracted — or None, and the browser does it.
+
+    None for anything that is not a 200 HTML answer within `plain_timeout_s`,
+    for a redirect chain that fails the SSRF check on any hop, and for a page
+    whose extracted text is shorter than `plain_min_chars` — the last is what
+    a JavaScript-rendered page looks like without JavaScript, and the browser
+    exists for exactly that page. The browser is also the fallback when this
+    raises: a text-first fetch is a shortcut, never a way to fail a read.
+    """
+    factory = getattr(app.state, "plain_client_factory", None)
+    try:
+        client_cm = (
+            factory()
+            if factory is not None
+            else httpx.AsyncClient(
+                timeout=s.plain_timeout_s,
+                follow_redirects=False,  # every hop is re-checked by hand
+                headers={"User-Agent": s.user_agent, "Accept": "text/html,*/*;q=0.5"},
+            )
+        )
+        async with client_cm as client:
+            resp = await get_with_checked_redirects(client, url, allowlist=s.lan_allowlist)
+    except Exception as exc:  # noqa: BLE001 - the browser is the fallback for every failure here
+        log.debug("plain fetch of %s failed (%s); the browser will try", url, type(exc).__name__)
+        return None
+    if resp is None:
+        return None
+    content_type = resp.headers.get("content-type", "")
+    if "html" not in content_type.lower() and "xml" not in content_type.lower():
+        return None
+    html = resp.text[: s.max_page_bytes]
+    final = _guard_final_url(app, url, str(resp.url) or url)
+    parsed = extract(html, base_url=final, max_chars=s.max_text_chars, max_links=s.max_links)
+    if len(parsed.text.strip()) < s.plain_min_chars:
+        return None
+    payload = _page_payload(html, final, s)
+    payload["status"] = resp.status_code
+    payload["requested_url"] = url
+    payload["fetched"] = "plain"
+    return payload
+
+
 def _page_payload(page_html: str, final_url: str, s: Settings) -> dict:
     """Extract + fence. The single place read content becomes a response."""
     parsed = extract(
@@ -438,11 +536,35 @@ def _page_payload(page_html: str, final_url: str, s: Settings) -> dict:
 def _register_routes(app: FastAPI) -> None:
 
     @app.get("/healthz", dependencies=AUTH)
-    async def healthz():
+    async def healthz(probe: bool = True):
+        """Alive, and — unless asked not to — able to open a page.
+
+        `browser` is here because of what its absence allowed: an image whose
+        chromium could not load its shared libraries answered this route 200
+        for weeks while every /fetch returned 500. "Up" and "able to do the job"
+        are different questions and this route now answers both.
+
+        The probe launches the browser once and the result is cached, so the
+        container's own healthcheck (every 30 s) costs nothing after the first.
+        The status stays `ok` when it fails, deliberately: the security core —
+        auth, the SSRF policy, the approval gate — is unaffected by a missing
+        browser, and the Dockerfile documents building without one. What must
+        not happen is that nobody can TELL.
+        """
         s: Settings = app.state.settings
+        browser = "unknown"
+        if probe:
+            if getattr(app.state, "browser_probe", None) is None:
+                try:
+                    await app.state.backend.start()
+                    app.state.browser_probe = "ok"
+                except Exception as exc:  # noqa: BLE001 - the answer is the message
+                    app.state.browser_probe = str(exc).strip()[:300] or type(exc).__name__
+            browser = app.state.browser_probe
         return {
             "status": "ok",
             "backend": type(app.state.backend).__name__,
+            "browser": browser,
             "sessions": len(app.state.sessions),
             "searxng_configured": bool(s.searxng_url),
             "act_allowlist_size": len(s.act_allowlist),
@@ -453,6 +575,14 @@ def _register_routes(app: FastAPI) -> None:
     async def fetch(body: FetchBody):
         s: Settings = app.state.settings
         url = _guard_read(app, body.url)
+        document = await _document_payload(url, s)
+        if document is not None:
+            audit.info("fetch document url=%s kind=%s", url, document["kind"])
+            return document
+        plain = await _plain_page(app, url, s) if s.plain_fetch else None
+        if plain is not None:
+            audit.info("fetch url=%s plain=1 status=%s", url, plain["status"])
+            return plain
         result = await app.state.backend.fetch(
             url, render=body.render, javascript=s.javascript_enabled
         )

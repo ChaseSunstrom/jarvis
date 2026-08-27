@@ -181,7 +181,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # `cmd_run` calls these by name out of its own module namespace, so this is
     # the whole substitution. Signatures match the originals.
-    entry.build_gateway = lambda headless_deny=False, on_interaction=None: (
+    # `**_ignored` so a new keyword on the real `build_gateway` — `shell=` came
+    # with the Electron shell (M07) — does not break this suite with a
+    # TypeError from inside the agent's own start-up, which is the least
+    # readable place a signature change can surface.
+    entry.build_gateway = lambda headless_deny=False, on_interaction=None, **_ignored: (
         FileConsentGateway(control, on_interaction)
     )
     entry.build_asker = lambda headless=False: FileAsker(control)

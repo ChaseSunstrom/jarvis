@@ -773,3 +773,78 @@ def test_anchors_survive_a_save_and_load():
     restored = VoiceProfile.from_dict(profile.as_dict())
     assert restored.anchors == 5
     assert restored.adapted_samples == 1
+
+
+def test_block_limits_sit_between_the_threshold_and_the_old_ceiling(owner_profile):
+    """M105, the nineteenth house: the veto line per block is the owner's own
+    spread, never below the threshold and never above BLOCK_VETO × it."""
+    from jarvis.voice.speaker import BLOCK_VETO
+
+    from jarvis.voice.speaker import BLOCK_FLOOR, BLOCK_HEADROOM
+
+    limits = owner_profile.block_limits()
+    spreads = owner_profile.block_spreads()
+    assert set(limits) == set(spreads) and len(limits) >= 2
+    for name, limit in limits.items():
+        assert owner_profile.threshold * BLOCK_FLOOR <= limit <= owner_profile.threshold * BLOCK_VETO, (name, limit)
+        assert limit >= min(spreads[name] * BLOCK_HEADROOM, owner_profile.threshold * BLOCK_VETO) - 1e-9
+    # In this cast the pitch line is tighter than the old fixed one: the owner's
+    # pitch barely moves, so a pitch far out is refused sooner than 2× the threshold.
+    assert limits["pitch"] < owner_profile.threshold * BLOCK_VETO
+
+
+def test_the_owner_is_not_refused_by_their_own_spread(owner_profile):
+    """Leave-one-out with the veto on must accept every owner sample the
+    composite accepts: the limits are built from these very samples plus
+    headroom, so a refusal here would be the gate refusing its owner."""
+    from jarvis.voice.speaker import VoiceProfile
+
+    samples = owner_profile.samples
+    assert len(samples) >= 4
+    for index, held_out in enumerate(samples):
+        rest = samples[:index] + samples[index + 1 :]
+        trimmed = VoiceProfile(samples=list(rest), threshold=owner_profile.threshold)
+        plain = trimmed.verify(held_out, veto=False)
+        with_veto = trimmed.verify(held_out)
+        if plain.accepted:
+            assert with_veto.accepted, (index, with_veto.reason, with_veto.blocks, trimmed.block_limits())
+
+
+def test_an_impostor_inside_the_composite_but_outside_one_block_is_refused_by_that_block(owner_profile):
+    """The nineteenth house's case, in the cast: an utterance whose mean of
+    three blocks squeaks under the threshold while one block lies beyond
+    anything the owner ever did. Built rather than found — the cast has no
+    speaker that close — from the owner's own mean with one block pushed out."""
+    from jarvis.voice.speaker import _block_of
+
+    limits = owner_profile.block_limits()
+    dims = len(owner_profile._mean)
+    pitch_dims = [i for i in range(dims) if _block_of(i) == "pitch"]
+    assert pitch_dims, "the cast's embedding has a pitch block"
+    # Start from the owner's centre (score ~0) and push the pitch block out
+    # until it scores between its limit and the old fixed line; the other two
+    # blocks stay at zero, so the composite — a third of the pitch score —
+    # sits under the threshold. Found by bisection, because a block's score
+    # is not linear in the push.
+    target = (limits["pitch"] + owner_profile.threshold * 2.0) / 2
+
+    def pushed(scale: float) -> tuple[float, ...]:
+        vector = list(owner_profile._mean)
+        for i in pitch_dims:
+            vector[i] += (owner_profile._std[i] or 1e-3) * scale
+        return tuple(vector)
+
+    low, high = 0.0, 64.0
+    for _ in range(60):
+        mid = (low + high) / 2
+        if owner_profile.verify(pushed(mid), veto=False).blocks["pitch"] < target:
+            low = mid
+        else:
+            high = mid
+    vector = pushed(high)
+    verdict = owner_profile.verify(vector)
+    assert limits["pitch"] < verdict.blocks["pitch"] < owner_profile.threshold * 2.0, verdict.blocks
+    assert verdict.score <= owner_profile.threshold, (verdict.score, owner_profile.threshold)
+    assert not verdict.accepted and verdict.reason == "pitch-mismatch", verdict
+    # The same vector with the veto off is exactly the nineteenth's false accept.
+    assert owner_profile.verify(vector, veto=False).accepted

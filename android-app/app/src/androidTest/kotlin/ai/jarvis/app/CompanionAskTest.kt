@@ -127,7 +127,7 @@ class CompanionAskTest {
         )
         assertEquals(
             "…and the answer must be the exact option string the server offered, " +
-                "not the button's display text. JarvisUi.pill upper-cases its label " +
+                "not the button's display text. JarvisUi.primary upper-cases its label " +
                 "for display only; sending \"${chosen.uppercase()}\" back would be a " +
                 "different answer to the one the server can match.",
             chosen,
@@ -280,7 +280,7 @@ class CompanionAskTest {
         const val QUESTION = "Deploy the release build to production?"
 
         /**
-         * Lower case on purpose. `JarvisUi.pill` sets `isAllCaps`, which is a
+         * Lower case on purpose. `JarvisUi.primary` sets `isAllCaps`, which is a
          * DISPLAY transformation — the accessibility node still carries the
          * original string — and the answer that goes back on the wire must be
          * the option the server offered, character for character.

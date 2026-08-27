@@ -795,6 +795,66 @@ def test_ws_entity_registry_update(client, jarvis, token):
     assert jarvis.entities.get("light.kitchen_light").area_id == "kitchen"
 
 
+def test_ws_entity_and_device_removal(client, jarvis, token):
+    """`config/entity_registry/remove` and `config/device_registry/remove` (M69):
+    the console's door to the one delete path, over the socket, with the
+    state_changed a subscriber sees on the way."""
+
+    async def seed():
+        device = await jarvis.devices.async_get_or_create(["hue:1"], "Hue Bridge", "hue")
+        for object_id in ("hall", "porch"):
+            entry = await jarvis.entities.async_get_or_create(
+                "light", "demo", f"uid-{object_id}", object_id, device_id=device.id
+            )
+            jarvis.states.set(entry.entity_id, "on")
+        loose = await jarvis.entities.async_get_or_create("light", "demo", "uid-study", "study")
+        jarvis.states.set(loose.entity_id, "off")
+        return device.id
+
+    device_id = asyncio.run(seed())
+
+    with client.websocket_connect("/api/websocket") as ws:
+        handshake(ws, token)
+        ws.send_json({"id": 1, "type": "subscribe_events", "event_type": "state_changed"})
+        assert ws.receive_json()["success"] is True
+
+        ws.send_json({"id": 2, "type": "config/entity_registry/remove", "entity_id": "light.study"})
+        frames = [ws.receive_json(), ws.receive_json()]
+        result = next(f for f in frames if f.get("id") == 2)["result"]
+        event = next(f for f in frames if f.get("type") == "event")["event"]
+        assert result == {
+            "entity_id": "light.study",
+            "removed": True,
+            "had_state": True,
+            "had_registry_entry": True,
+        }
+        assert event["data"]["entity_id"] == "light.study"
+        assert event["data"]["new_state"] is None
+
+        ws.send_json({"id": 3, "type": "config/entity_registry/remove", "entity_id": "light.study"})
+        assert ws.receive_json()["error"]["code"] == "not_found"
+
+        ws.send_json({"id": 4, "type": "config/entity_registry/remove"})
+        assert ws.receive_json()["error"]["code"] == "invalid_format"
+
+        ws.send_json({"id": 5, "type": "config/device_registry/remove", "device_id": device_id})
+        got = [ws.receive_json() for _ in range(3)]
+        outcome = next(f for f in got if f.get("id") == 5)["result"]
+        assert outcome["removed"] is True
+        assert outcome["entities"] == ["light.hall", "light.porch"]
+        assert {f["event"]["data"]["entity_id"] for f in got if f.get("type") == "event"} == {
+            "light.hall",
+            "light.porch",
+        }
+
+        ws.send_json({"id": 6, "type": "config/device_registry/remove", "device_id": device_id})
+        assert ws.receive_json()["error"]["code"] == "not_found"
+
+    assert jarvis.entities.get("light.study") is None
+    assert jarvis.states.get("light.hall") is None
+    assert jarvis.devices.devices.get(device_id) is None
+
+
 def test_ws_conversation_process(client, jarvis, token):
     async def process(call):
         return {
@@ -1598,6 +1658,19 @@ def text_frame(payload):
     return {"type": "websocket.receive", "text": json.dumps(payload)}
 
 
+async def _until(predicate, timeout=2.0, step=0.005):
+    """Yield to the loop until `predicate()` holds, then return.
+
+    Returns rather than raising when it times out: every caller asserts on
+    what it was waiting for straight afterwards, and that assertion says what
+    was missing far better than "timed out" does.
+    """
+    for _ in range(int(timeout / step)):
+        if predicate():
+            return
+        await asyncio.sleep(step)
+
+
 async def test_ws_commands_finish_when_the_client_disconnects(jarvis, auth):
     """A disconnect must not abort a half-executed service call.
 
@@ -1836,3 +1909,233 @@ def test_the_openapi_schema_generates_without_duplicate_operation_ids(jarvis, tm
     duplicates = [str(w.message) for w in caught if "Duplicate Operation ID" in str(w.message)]
     assert duplicates == []
     assert sorted(schema["paths"]["/api/webhook/{webhook_id}"]) == ["get", "post", "put"]
+
+
+# --- the task list over the wire ---------------------------------------------
+#
+# Read plus two destructive verbs, and deliberately NO create. A task is
+# created by whatever is going to do the work; a client-minted one would be a
+# job nothing drives, which is exactly the empty seam the registry replaced.
+
+async def _seed_tasks(jarvis):
+    from jarvis.tasks import STATUS_DONE, STATUS_RUNNING
+
+    live = await jarvis.tasks.async_add(
+        "Read twelve pages", kind="research", steps=["search", "read", "write"]
+    )
+    await jarvis.tasks.async_update(live.id, status=STATUS_RUNNING, step=0, step_status=STATUS_DONE)
+    old = await jarvis.tasks.async_add("Something finished", kind="background")
+    await jarvis.tasks.async_update(old.id, status=STATUS_DONE, result="done")
+    return live, old
+
+
+def test_the_task_list_is_newest_first_and_carries_its_progress(client, jarvis, token):
+    live, old = asyncio.run(_seed_tasks(jarvis))
+    res = client.get("/api/tasks", headers=headers(token))
+    assert res.status_code == 200
+    tasks = res.json()["tasks"]
+    assert [t["id"] for t in tasks] == [old.id, live.id]
+
+    # The steps come WITH the row. A list that made you fetch each task to draw
+    # its bar would be one request per visible task, on every update.
+    running = next(t for t in tasks if t["id"] == live.id)
+    assert running["total_steps"] == 3
+    assert running["done_steps"] == 1
+    assert running["fraction"] == pytest.approx(1 / 3)
+    assert [s["title"] for s in running["steps"]] == ["search", "read", "write"]
+
+
+def test_the_task_list_filters_by_kind_and_by_still_running(client, jarvis, token):
+    live, old = asyncio.run(_seed_tasks(jarvis))
+    only_research = client.get("/api/tasks?kind=research", headers=headers(token)).json()
+    assert [t["id"] for t in only_research["tasks"]] == [live.id]
+
+    active = client.get("/api/tasks?active=1", headers=headers(token)).json()
+    assert [t["id"] for t in active["tasks"]] == [live.id]
+    assert old.id not in [t["id"] for t in active["tasks"]]
+
+
+def test_one_task_can_be_fetched_and_a_missing_one_is_a_404(client, jarvis, token):
+    live, _ = asyncio.run(_seed_tasks(jarvis))
+    ok = client.get(f"/api/tasks/{live.id}", headers=headers(token))
+    assert ok.status_code == 200
+    assert ok.json()["task"]["title"] == "Read twelve pages"
+    assert client.get("/api/tasks/nope", headers=headers(token)).status_code == 404
+
+
+def test_cancelling_says_that_asking_is_all_it_did(client, jarvis, token):
+    """The honesty property, and the reason this endpoint has a `note`.
+
+    The registry is a record, not a scheduler — nothing here can reach into
+    the coroutine doing the work. Reporting a bare "cancelled" while the
+    worker carries on would be the same class of lie as the seam this whole
+    registry replaced.
+    """
+    live, _ = asyncio.run(_seed_tasks(jarvis))
+    res = client.post(f"/api/tasks/{live.id}/cancel", headers=headers(token))
+    assert res.status_code == 200
+    body = res.json()
+    assert body["cancelled"] is True
+    assert body["task"]["status"] == "cancelled"
+    assert "may still be running" in body["note"]
+
+
+def test_cancelling_something_already_finished_changes_nothing(client, jarvis, token):
+    _, old = asyncio.run(_seed_tasks(jarvis))
+    body = client.post(f"/api/tasks/{old.id}/cancel", headers=headers(token)).json()
+    assert body["cancelled"] is False
+    assert body["task"]["status"] == "done"
+
+
+def test_a_task_can_be_deleted_and_finished_ones_cleared(client, jarvis, token):
+    live, old = asyncio.run(_seed_tasks(jarvis))
+    assert client.delete(f"/api/tasks/{old.id}", headers=headers(token)).status_code == 200
+    assert client.delete(f"/api/tasks/{old.id}", headers=headers(token)).status_code == 404
+
+    done = asyncio.run(jarvis.tasks.async_add("another"))
+    asyncio.run(jarvis.tasks.async_update(done.id, status="done"))
+    cleared = client.post("/api/tasks/clear_finished", headers=headers(token)).json()
+    assert cleared["removed"] == 1
+    assert [t.id for t in jarvis.tasks.tasks] == [live.id]
+
+
+def test_the_task_endpoints_need_a_token(client, jarvis):
+    asyncio.run(_seed_tasks(jarvis))
+    assert client.get("/api/tasks").status_code == 401
+    assert client.post("/api/tasks/x/cancel").status_code == 401
+    assert client.delete("/api/tasks/x").status_code == 401
+
+
+def test_there_is_no_way_for_a_client_to_create_a_task(client, jarvis, token):
+    """A task nothing is driving is the bug the registry was built to close."""
+    before = len(jarvis.tasks.tasks)
+    for body in ({"title": "invented"}, {"task": {"title": "invented"}}):
+        res = client.post("/api/tasks", json=body, headers=headers(token))
+        assert res.status_code in (404, 405), res.status_code
+    assert len(jarvis.tasks.tasks) == before
+
+
+def test_tasks_are_readable_over_the_websocket_too(client, jarvis, token):
+    live, _ = asyncio.run(_seed_tasks(jarvis))
+    with client.websocket_connect("/api/websocket") as ws:
+        handshake(ws, token)
+        ws.send_json({"id": 1, "type": "jarvis/tasks/list"})
+        reply = ws.receive_json()
+        assert reply["success"] is True
+        assert live.id in [t["id"] for t in reply["result"]["tasks"]]
+
+        ws.send_json({"id": 2, "type": "jarvis/tasks/get", "task_id": live.id})
+        got = ws.receive_json()
+        assert got["success"] is True
+        assert got["result"]["task"]["kind"] == "research"
+
+
+async def test_a_client_watching_the_bus_sees_a_task_move(jarvis, auth):
+    """What makes a live progress bar possible without polling.
+
+    Driven through `FakeWebSocket` rather than `TestClient` on purpose. The
+    event has to be fired from the SAME event loop the handler is running on;
+    `asyncio.run` inside a `TestClient` block builds a second loop, the app's
+    listeners never see the event, and the test hangs on `receive_json`
+    forever rather than failing. It did.
+    """
+    from jarvis.tasks import EVENT_TASK_UPDATED, STATUS_DONE
+
+    _info, secret = await auth.create_token("ws-tasks")
+    live, _ = await _seed_tasks(jarvis)
+
+    class HoldsTheLineOpen(FakeWebSocket):
+        """Stays connected after its script, the way a real client does.
+
+        `FakeWebSocket.receive` returns a disconnect the moment its frames run
+        out, so a plain one tears the handler down BEFORE the event under test
+        is fired — the subscription is gone and nothing is listening. That is
+        what an empty `sent` list meant the first time round, and it looks
+        exactly like a broken subscription.
+        """
+
+        async def receive(self):
+            if self._incoming:
+                await asyncio.sleep(self._settle)
+                return self._incoming.pop(0)
+            await asyncio.sleep(3600)
+            raise AssertionError("unreachable")  # pragma: no cover
+
+    socket = HoldsTheLineOpen(
+        [
+            text_frame({"type": "auth", "access_token": secret}),
+            text_frame(
+                {"id": 1, "type": "subscribe_events", "event_type": EVENT_TASK_UPDATED}
+            ),
+        ],
+        settle=0.01,
+    )
+    handler = asyncio.create_task(WebSocketHandler(jarvis, socket).run())
+    # `socket.sent` already holds decoded frames — `send_text` parses them.
+    await _until(lambda: any(f.get("id") == 1 and f.get("success") for f in socket.sent))
+
+    await jarvis.tasks.async_update(live.id, status=STATUS_DONE, result="all twelve")
+    await _until(lambda: any(f.get("type") == "event" for f in socket.sent))
+    events = [f for f in socket.sent if f.get("type") == "event"]
+    handler.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await handler
+
+    assert events, "no task event reached the socket; a progress bar would never move"
+    task = events[0]["event"]["data"]["task"]
+    assert task["id"] == live.id
+    assert task["status"] == "done"
+    assert task["fraction"] == 1.0
+
+
+# --- M96: stop means stop --------------------------------------------------------
+def test_a_run_can_be_stopped_at_the_server_and_says_it_was_interrupted(client, jarvis, token):
+    """Barge-in was a client dropping its socket while the model kept
+    generating. `assist_pipeline/stop` cancels the run's task; the run ends
+    with `run-end {interrupted: true}`; a run that is not in progress is
+    `not_found`."""
+    import asyncio as _asyncio
+
+    class SlowVoice(FakeVoice):
+        def async_create_run(self, pipeline=None, **kwargs):
+            async def slow(text, conversation_id=None, **_kw):
+                yield "Let me think about that"
+                await _asyncio.sleep(30)
+                yield " for a long time, Sir."
+
+            return PipelineRun(self.jarvis, stt=None, tts=None, converse=slow, **kwargs)
+
+    jarvis.data["voice"] = SlowVoice(jarvis)
+
+    with client.websocket_connect("/api/websocket") as ws:
+        handshake(ws, token)
+        ws.send_json({"id": 1, "type": "assist_pipeline/run", "start_stage": "intent", "end_stage": "intent",
+                      "input": {"text": "tell me a long story"}})
+        assert ws.receive_json()["type"] == "result"
+        first = ws.receive_json()
+        assert first["event"]["type"] == "run-start"
+        # Let the first delta come, so the run is genuinely mid-answer.
+        event = ws.receive_json()
+        while event.get("type") == "event" and event["event"]["type"] not in ("intent-progress", "intent-start"):
+            event = ws.receive_json()
+        ws.send_json({"id": 2, "type": "assist_pipeline/stop", "run_id": 1})
+        seen = []
+        stopped = None
+        while True:
+            msg = ws.receive_json()
+            if msg.get("id") == 2 and msg.get("type") == "result":
+                stopped = msg
+                if any(e["event"]["type"] == "run-end" for e in seen):
+                    break
+                continue
+            if msg.get("type") == "event":
+                seen.append(msg)
+                if msg["event"]["type"] == "run-end" and stopped is not None:
+                    break
+        assert stopped["success"] is True and stopped["result"] == {"stopped": True, "run_id": 1}
+        end = [e for e in seen if e["event"]["type"] == "run-end"][-1]
+        assert end["event"]["data"] == {"interrupted": True}, end
+        # Nothing to stop now.
+        ws.send_json({"id": 3, "type": "assist_pipeline/stop", "run_id": 1})
+        answer = ws.receive_json()
+        assert answer["success"] is False and answer["error"]["code"] == "not_found"

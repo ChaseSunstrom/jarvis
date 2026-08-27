@@ -44,6 +44,9 @@ break the connection.
 
 from __future__ import annotations
 
+import re
+from collections import deque
+
 import asyncio
 import logging
 import math
@@ -336,6 +339,21 @@ class DeviceLink:
         self.registered_at = time.time()
         self._sender: Sender = sender
         self._pending: dict[str, asyncio.Future] = {}
+        #: The device registry entry this companion is filed under (M99), so
+        #: the Devices page's room picker applies to a phone the way it does to
+        #: a bridge. Set by the register handler; None on a house whose
+        #: registry is not up yet.
+        self.registry_id: str | None = None
+        #: How to read the room: installed by the hub, which knows the house.
+        self.area_facts: Any = None
+
+    @property
+    def area(self) -> str:
+        """The room this companion is filed in, or "" — read live from the
+        registry so an assignment made on the Devices page reaches the very
+        next turn's `device_facts` without a re-register."""
+        facts = self.area_facts() if callable(self.area_facts) else {}
+        return str((facts or {}).get("area") or "")
 
     # --- outbound ---------------------------------------------------------
     def push(self, payload: dict[str, Any]) -> bool:
@@ -494,6 +512,10 @@ class DeviceLink:
             "app_version": self.app_version,
             "action_count": len(self.actions),
         }
+        facts = self.area_facts() if callable(self.area_facts) else {}
+        payload["registry_id"] = self.registry_id
+        payload["area_id"] = (facts or {}).get("area_id")
+        payload["area"] = str((facts or {}).get("area") or "")
         if include_actions:
             payload["actions"] = [a.as_dict() for a in self.actions.values()]
         return payload
@@ -573,6 +595,25 @@ class ConnectedDevices:
             len(manifest),
         )
         return link
+
+    def area_facts_for(self, device_id: str) -> dict[str, Any]:
+        """`{registry_id, area_id, area}` for a companion, from the device registry.
+
+        A phone is filed under `companion:<id>`; its room is whatever the
+        Devices page (or `config/device_registry/update`) assigned, read at
+        the moment of asking. Empty when the registry or the entry is absent.
+        """
+        registry = getattr(self.jarvis, "devices", None)
+        areas = getattr(self.jarvis, "areas", None)
+        entry = registry.get_by_identifier(f"companion:{device_id}") if registry is not None else None
+        if entry is None:
+            return {}
+        area_id = getattr(entry, "area_id", None)
+        area = ""
+        if area_id and areas is not None:
+            found = getattr(areas, "areas", {}).get(area_id)
+            area = str(getattr(found, "name", "") or "")
+        return {"registry_id": entry.id, "area_id": area_id, "area": area}
 
     def disconnect(self, device_id: str, owner: Any = None) -> bool:
         """Drop a device's connection. A stale socket cannot evict a newer one."""
@@ -682,6 +723,36 @@ class UntrustedTurns:
     def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
         self.ttl = ttl
         self._turns: dict[str, float] = {}
+        #: What each turn has been SHOWN — every tool result's text, bounded —
+        #: so an outbound read on a tainted turn can be told apart: a link the
+        #: turn was given (a search result, a page's own links) is followed; a
+        #: URL or a query the model composed from nowhere is held (M109, the
+        #: nineteenth house: "search, then read a result" was held every time).
+        self._seen: dict[str, tuple[float, list[str]]] = {}
+        self.seen_limit = 200_000
+
+    def note_seen(self, context: Any, text: Any) -> None:
+        key = self.key(context)
+        if key is None or not text:
+            return
+        now = time.time()
+        self._seen = {k: v for k, v in self._seen.items() if v[0] > now}
+        expiry, parts = self._seen.get(key) or (now + self.ttl, [])
+        chunk = str(text)
+        if sum(len(p) for p in parts) + len(chunk) > self.seen_limit:
+            chunk = chunk[: max(0, self.seen_limit - sum(len(p) for p in parts))]
+        if chunk:
+            parts.append(chunk)
+        self._seen[key] = (expiry, parts)
+
+    def seen_text(self, context: Any) -> str:
+        key = self.key(context)
+        if key is None:
+            return ""
+        entry = self._seen.get(key)
+        if entry is None or entry[0] <= time.time():
+            return ""
+        return "\n".join(entry[1])
 
     @staticmethod
     def key(context: Any) -> str | None:
@@ -707,6 +778,282 @@ class UntrustedTurns:
             self._turns.pop(key, None)
             return False
         return True
+
+
+#: ``jarvis.data`` key for what the user said this turn.
+DATA_UTTERANCE = "turn_utterances"
+
+
+class TurnUtterances:
+    """What the user actually said, per turn, for the policies that need it.
+
+    One policy needs it and it is a serious one: `remember` writes into the
+    system prompt of every future conversation, and a model that volunteers
+    that for a remark said in passing has turned a sentence into a permanent
+    fact nobody chose. Deciding that needs the user's own words, and the tool
+    handler only gets the model's arguments — which are, by construction, the
+    model's opinion of what was said.
+
+    Same shape and TTL as `UntrustedTurns`: keyed on the context id the agent
+    builds once per turn and hands to every tool it calls.
+    """
+
+    def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
+        self.ttl = ttl
+        self._turns: dict[str, tuple[float, str]] = {}
+
+    def remember(self, context: Any, text: str) -> None:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return
+        now = time.time()
+        self._turns = {k: v for k, v in self._turns.items() if v[0] > now}
+        self._turns[key] = (now + self.ttl, str(text or ""))
+
+    def get(self, context: Any) -> str:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return ""
+        entry = self._turns.get(key)
+        if entry is None or entry[0] <= time.time():
+            self._turns.pop(key, None)
+            return ""
+        return entry[1]
+
+
+def get_turn_utterances(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> TurnUtterances:
+    store = jarvis.data.get(DATA_UTTERANCE)
+    if not isinstance(store, TurnUtterances):
+        store = jarvis.data.setdefault(DATA_UTTERANCE, TurnUtterances(ttl))
+    return store
+
+
+#: How long two listeners' copies of one sentence count as the same turn.
+#: Four seconds: the phone's wake word and the console's VAD end a sentence
+#: within a second of each other; a person repeating themselves takes longer.
+RECENT_LISTENER_WINDOW = 4.0
+
+
+def _listener_words(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", str(text or "").lower()).split())
+
+
+class RecentListeners:
+    """The last few seconds of utterances, by the device that brought them (M78).
+
+    "I asked it to set an alarm, why did it do it twice? and why did I hear
+    jarvis twice": the phone's wake word and the console's always-on
+    microphone each heard the sentence and each ran a turn. One sentence in a
+    room with two listeners is one turn: the second device bringing the same
+    words inside the window yields to the first.
+    """
+
+    def __init__(self, window: float = RECENT_LISTENER_WINDOW) -> None:
+        self.window = window
+        self._recent: deque[tuple[float, str, str]] = deque(maxlen=32)
+
+    def already_heard_from(self, text: str, device: str, now: float | None = None) -> str | None:
+        """The OTHER device that brought these words inside the window, or None.
+
+        The same device repeating itself is not a duplicate — a person may say
+        a thing twice on purpose — so only another device's copy yields.
+        """
+        words = _listener_words(text)
+        if not words:
+            return None
+        now = time.monotonic() if now is None else now
+        for at, who, said in reversed(self._recent):
+            if now - at > self.window:
+                break
+            if said == words and who != device:
+                return who
+        return None
+
+    def heard(self, text: str, device: str, now: float | None = None) -> None:
+        words = _listener_words(text)
+        if words:
+            self._recent.append((time.monotonic() if now is None else now, device, words))
+
+
+def get_recent_listeners(jarvis: "Jarvis") -> RecentListeners:
+    store = jarvis.data.get("recent_listeners")
+    if store is None:
+        store = jarvis.data["recent_listeners"] = RecentListeners()
+    return store
+
+
+def remember_utterance(jarvis: "Jarvis", context: Any, text: str) -> None:
+    """Record what the user said this turn. Called once, by the agent."""
+    get_turn_utterances(jarvis).remember(context, text)
+
+
+def utterance_of(jarvis: "Jarvis", context: Any) -> str:
+    """What the user said this turn, or "" if nobody recorded it."""
+    return get_turn_utterances(jarvis).get(context)
+
+
+#: ``jarvis.data`` key for which conversation a turn belongs to, and whether
+#: its reply is spoken.
+DATA_TURN_FACTS = "turn_facts"
+
+
+class TurnFacts:
+    """Which conversation a turn is, and whether its reply will be spoken.
+
+    Two facts the tool registry needs at the moment it holds a request, and
+    cannot get from the ``Context`` (a fresh one per turn, carrying no
+    conversation) or from the tool's arguments (the model's, not the
+    surface's):
+
+    * the **conversation id**, so a request can be matched against the next
+      thing said in the same conversation (`ConversationAgent._answer_pending`)
+      and never against a turn in some other thread — a "yes" in the kitchen
+      must not approve a door the study asked about;
+    * **spoken**, so a question raised by a turn whose reply is read aloud is
+      not read aloud a second time by the phone (`companion.ask` carries it as
+      ``spoken``): the reply is the model's own sentence and already contains
+      the question, which is how the operator came to hear every question
+      twice.
+
+    Same shape and TTL as `UntrustedTurns`: keyed on the context id the agent
+    builds once per turn. A turn nobody recorded has no conversation and is
+    not spoken, which is the conservative reading of both.
+    """
+
+    def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
+        self.ttl = ttl
+        self._turns: dict[str, tuple[float, str | None, bool]] = {}
+        #: Who the voice gate recognised for the turn (M100), by the same key.
+        self._speakers: dict[str, tuple[float, str]] = {}
+
+    def remember(self, context: Any, conversation_id: str | None, spoken: bool) -> None:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return
+        now = time.time()
+        self._turns = {k: v for k, v in self._turns.items() if v[0] > now}
+        self._turns[key] = (
+            now + self.ttl,
+            str(conversation_id) if conversation_id else None,
+            bool(spoken),
+        )
+
+    def remember_speaker(self, context: Any, speaker: str | None) -> None:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return
+        now = time.time()
+        self._speakers = {k: v for k, v in self._speakers.items() if v[0] > now}
+        name = " ".join(str(speaker or "").split())[:64]
+        if name:
+            self._speakers[key] = (now + self.ttl, name)
+        else:
+            self._speakers.pop(key, None)
+
+    def speaker(self, context: Any) -> str:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return ""
+        entry = self._speakers.get(key)
+        if entry is None or entry[0] <= time.time():
+            self._speakers.pop(key, None)
+            return ""
+        return entry[1]
+
+    def get(self, context: Any) -> tuple[str | None, bool]:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return None, False
+        entry = self._turns.get(key)
+        if entry is None or entry[0] <= time.time():
+            self._turns.pop(key, None)
+            return None, False
+        return entry[1], entry[2]
+
+
+class RequestDevices:
+    """Which connected device each turn came from (M94), keyed like `TurnFacts`.
+
+    The pipeline knows its socket's device; until now that knowledge stopped
+    at the run — the agent, and every tool that picks a device (`tell_user`,
+    `show`, a reminder's chime), could not prefer the room that asked.
+    """
+
+    def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
+        self.ttl = ttl
+        self._devices: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    def remember(self, context: Any, device: dict[str, Any] | None) -> None:
+        key = UntrustedTurns.key(context)
+        if key is None or not device or not str(device.get("id") or ""):
+            return
+        now = time.time()
+        self._devices = {k: v for k, v in self._devices.items() if v[0] > now}
+        self._devices[key] = (now + self.ttl, dict(device))
+
+    def get(self, context: Any) -> dict[str, Any] | None:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return None
+        entry = self._devices.get(key)
+        if entry is None or entry[0] <= time.time():
+            self._devices.pop(key, None)
+            return None
+        return dict(entry[1])
+
+
+DATA_REQUEST_DEVICES = "request_devices"
+
+
+def get_request_devices(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> RequestDevices:
+    store = jarvis.data.get(DATA_REQUEST_DEVICES)
+    if not isinstance(store, RequestDevices):
+        store = jarvis.data.setdefault(DATA_REQUEST_DEVICES, RequestDevices(ttl))
+    return store
+
+
+def remember_device(jarvis: "Jarvis", context: Any, device: dict[str, Any] | None) -> None:
+    """Record the device this turn came from (M94). Called by the agent beside
+    `remember_turn`; None when the turn came from no device (a script, REST)."""
+    get_request_devices(jarvis).remember(context, device)
+
+
+def device_of(jarvis: "Jarvis", context: Any) -> dict[str, Any] | None:
+    """The device this turn came from — `{id, name, platform, area}` — or None."""
+    return get_request_devices(jarvis).get(context)
+
+
+def get_turn_facts(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> TurnFacts:
+    store = jarvis.data.get(DATA_TURN_FACTS)
+    if not isinstance(store, TurnFacts):
+        store = jarvis.data.setdefault(DATA_TURN_FACTS, TurnFacts(ttl))
+    return store
+
+
+def remember_turn(
+    jarvis: "Jarvis", context: Any, conversation_id: str | None, spoken: bool = False
+) -> None:
+    """Record the turn's conversation and whether its reply is spoken. Called
+    once, by the agent, next to `remember_utterance`."""
+    get_turn_facts(jarvis).remember(context, conversation_id, spoken)
+
+
+def remember_speaker(jarvis: "Jarvis", context: Any, speaker: str | None) -> None:
+    """Record who the voice gate recognised for this turn (M100). "" or None
+    for a typed or unverified turn — which then files nothing under a name."""
+    get_turn_facts(jarvis).remember_speaker(context, speaker)
+
+
+def speaker_of(jarvis: "Jarvis", context: Any) -> str:
+    """The person the voice gate recognised for this turn, or "". Read by the
+    memory tools and extraction, as `device_of` is read by `tell_user`."""
+    return get_turn_facts(jarvis).speaker(context)
+
+
+def turn_facts_of(jarvis: "Jarvis", context: Any) -> tuple[str | None, bool]:
+    """``(conversation_id, spoken)`` for this turn; ``(None, False)`` if nobody
+    recorded it."""
+    return get_turn_facts(jarvis).get(context)
 
 
 def get_untrusted_turns(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> UntrustedTurns:
@@ -756,15 +1103,48 @@ def result_is_untrusted(result: Any) -> bool:
 
 
 def mark_untrusted_result(jarvis: "Jarvis", context: Any, result: Any) -> Any:
-    """Taint this turn if ``result`` is fenced content, then pass it through.
+    """Taint this turn if ``result`` is fenced content, strip it, pass it through.
 
-    The one call a tool that returns somebody else's words should make. Fencing
-    tells the *model* the text is data; this is what stops that same turn
-    reaching an action dispatcher without the user being shown the real action
-    — the tier is the control, the wording is not.
+    The one call a tool that returns somebody else's words should make. Three
+    things happen here and they are three different defences:
+
+    * **Fencing** tells the model the text is data. Wording only.
+    * **Stripping** (M43) removes the chat-template control literals that would
+      let that text forge a role boundary — `<|im_start|>system` in a page is
+      indistinguishable from a system message once the serving layer has
+      templated it, and no amount of fencing helps. This is done here rather
+      than in each integration so a new inbound path cannot forget it.
+    * **Tainting** is the one that stops an action: every state-changing tool
+      for the rest of this turn now needs a human, whatever the text asked for.
     """
-    if result_is_untrusted(result):
-        mark_untrusted(jarvis, context)
+    if not result_is_untrusted(result):
+        return result
+    mark_untrusted(jarvis, context)
+    return _strip_control_literals(result)
+
+
+def _strip_control_literals(result: Any, depth: int = 0) -> Any:
+    """Every string in a tool result, with template control tokens removed.
+
+    Walks the payload rather than one known key: a tool result is a dict whose
+    shape belongs to the tool, and the text could be under `text`, `content`,
+    `body`, `summary` or a list of any of them. Depth-bounded, because a result
+    is data from outside and "deeply nested" is a cheap way to spend somebody's
+    stack.
+    """
+    if depth > 6:
+        return result
+    try:
+        from ..security.quarantine import strip_control_tokens
+    except Exception:  # pragma: no cover - a partial install must not break a tool
+        return result
+    if isinstance(result, str):
+        cleaned, _ = strip_control_tokens(result)
+        return cleaned
+    if isinstance(result, dict):
+        return {k: _strip_control_literals(v, depth + 1) for k, v in result.items()}
+    if isinstance(result, list):
+        return [_strip_control_literals(v, depth + 1) for v in result]
     return result
 
 

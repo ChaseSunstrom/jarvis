@@ -1,0 +1,130 @@
+# Hooks — one automation per way something outside can start one.
+#
+# Nothing in here is loaded. Copy an automation into `automations.yaml` (or
+# into the `automation:` block of `configuration.yaml`) and change the entity
+# ids to ones you have. Every trigger below is documented in
+# `docs/hooks.md`, which says what each one fires on and what it does not.
+
+automation:
+  # --- the wake word ------------------------------------------------------
+  #
+  # Fires once per detection, not once per pipeline stage. Written as
+  # `platform: event, event_type: voice_pipeline_event` this ran fourteen
+  # times per "hey Jarvis".
+  - alias: Light the hall when I say the wake word at night
+    trigger:
+      - platform: wake_word
+    condition:
+      - condition: sun
+        after: sunset
+    action:
+      - service: light.turn_on
+        target: {entity_id: light.hall}
+        data: {brightness_pct: 30}
+
+  # Only this satellite, and only this word. `device_id` is the id the
+  # satellite registered with; an empty one means "not a satellite" (a browser
+  # tab, a REST call) and never matches a named device.
+  - alias: Workshop wake word turns the bench light on
+    trigger:
+      - platform: wake_word
+        device_id: workshop
+        wake_word: [hey_jarvis, ok_nabu]
+        # pipeline: night      # optional: only this pipeline
+    action:
+      - service: switch.turn_on
+        target: {entity_id: switch.bench_light}
+
+  # --- background work ----------------------------------------------------
+  #
+  # `started`, `completed`, `failed` and `cancelled` are four distinct events.
+  # A `jarvis_task_updated` listener cannot tell a finish from the ticks that
+  # follow it, which is how "tell me when it is done" became a notification per
+  # progress step.
+  - alias: Say when a research job finishes
+    trigger:
+      - platform: task
+        status: completed
+        kind: research
+    action:
+      - service: notify.persistent
+        data:
+          title: "{{ trigger.title }}"
+          message: "{{ trigger.result }}"
+
+  - alias: Tell me when a job fails, with the reason
+    trigger:
+      - platform: task
+        status: failed
+    action:
+      - service: notify.persistent
+        data:
+          title: "Task failed: {{ trigger.title }}"
+          message: "{{ trigger.error }}"
+
+  # No `status:` means all four. `source:` filters by who asked — "assistant"
+  # is the model, and anything else is you or an automation.
+  - alias: Log every coding job the assistant starts on its own
+    trigger:
+      - platform: task
+        kind: code
+        source: assistant
+    action:
+      - service: logbook.log
+        data:
+          name: Jarvis Code
+          message: "{{ trigger.status }}: {{ trigger.title }}"
+
+  # --- inbound webhooks ---------------------------------------------------
+  #
+  # The id IS the secret: anyone who knows it can POST. Make it long and
+  # random, and set `jarvis: webhook_require_auth: true` in
+  # configuration.yaml if you would rather it also needed a token.
+  #
+  #   curl -X POST http://jarvis.local:8123/api/webhook/8f1c2a-doorbell-2b7e \
+  #        -H 'content-type: application/json' -d '{"pressed": true}'
+  - alias: Doorbell pressed
+    trigger:
+      - platform: webhook
+        webhook_id: 8f1c2a-doorbell-2b7e
+    action:
+      - service: media_player.play_media
+        target: {entity_id: media_player.kitchen}
+        data: {media_content_id: /local/doorbell.mp3, media_content_type: music}
+
+  # --- schedules ----------------------------------------------------------
+  #
+  # `time` for a wall-clock moment, `time_pattern` for "every N". Both read
+  # the zone in `jarvis: time_zone:`, not the process's.
+  - alias: Nightly tidy
+    trigger:
+      - platform: time
+        at: "03:15:00"
+    action:
+      - service: script.turn_on
+        target: {entity_id: script.nightly_tidy}
+
+  - alias: Check the freezer every ten minutes
+    trigger:
+      - platform: time_pattern
+        minutes: "/10"
+    condition:
+      - condition: numeric_state
+        entity_id: sensor.freezer_temperature
+        above: -15
+    action:
+      - service: notify.persistent
+        data: {message: "The freezer is at {{ states('sensor.freezer_temperature') }}°C"}
+
+  # --- any other event, including nested payloads -------------------------
+  #
+  # `event_data` keys may be dotted paths, and a list means "any of these".
+  - alias: React to one carrier only
+    trigger:
+      - platform: event
+        event_type: delivery
+        event_data:
+          parcel.carrier: [royal_mail, dhl]
+    action:
+      - service: notify.persistent
+        data: {message: "A parcel is on its way"}

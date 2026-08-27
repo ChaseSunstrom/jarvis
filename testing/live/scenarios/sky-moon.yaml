@@ -1,0 +1,10 @@
+name: sky-moon
+capability: sky
+gated-on: M92
+intent: "The moon tonight, from the ephemeris (M58), not from the model's memory."
+variants: [voice, text]
+turns:
+  - say: "What's the moon doing tonight?"
+    expect:
+      capability: sky
+      reply_means: "names the moon's phase tonight (and how lit it is, or when it rises or sets)"

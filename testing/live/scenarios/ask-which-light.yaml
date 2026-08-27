@@ -1,0 +1,24 @@
+name: ask-which-light
+capability: house
+gated-on: M92
+intent: >
+  "Turn on the light" in a house with three lights is a question back — the
+  spoken question path (M66): the model asks which, the next turn answers,
+  and the right light comes on. Asserted on the house.
+variants: [voice, text]
+setup:
+  states:
+    light.bed_light: "off"
+    light.ceiling_lights: "off"
+    light.kitchen_lights: "off"
+turns:
+  - say: "Turn on the light."
+    expect:
+      no_service: {domain: light}
+      reply_means: "asks which light is meant, naming some of them, and turns nothing on"
+  - say: "The bed light."
+    expect:
+      service: {domain: light, service: turn_on, entity_id: light.bed_light}
+      state: {light.bed_light: "on"}
+      reply_means: "confirms the bed light is on"
+      capability: house

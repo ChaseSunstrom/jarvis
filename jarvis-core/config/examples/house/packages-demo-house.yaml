@@ -1,0 +1,21 @@
+# A house made of software — drop this into `config/packages/` to switch it on.
+#
+#   cp config/examples/house/packages-demo-house.yaml config/packages/demo-house.yaml
+#   docker compose restart jarvis-core
+#
+# Three lights, two switches, a lock, a thermostat, a cover, a fan, a media
+# player and a vacuum across three areas. Every one implements the real method
+# contract, so `light.turn_on` against a demo light goes through the same
+# service call, the same tier check and the same state machine as one against a
+# real bulb — which is what makes it worth having.
+#
+# Why it is here and not in `configuration.yaml`: a fresh install must not
+# pretend to own devices nobody has. `test_the_default_boots_into_an_empty_house_that_is_still_alive`
+# pins that, and it is right to. This file is the deliberate opposite — a box
+# with no hardware attached yet, where an assistant with nothing to control
+# cannot be talked to at all. The live interaction suite (M29) talks to the
+# running Jarvis, and its house scenarios need a house.
+#
+# Delete the copy in `packages/` the day real devices arrive.
+demo:
+  create_areas: true

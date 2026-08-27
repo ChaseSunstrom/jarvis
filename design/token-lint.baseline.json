@@ -1,0 +1,10 @@
+{
+  "$note": "Per-file allowances for hard-coded values. Only ever goes down. It is EMPTY, and that is the point: every file the linter walks is now clean, so any raw colour, size, type or duration anywhere in app code fails the gate. It was 340 hits across 38 files when the rule was introduced (2026-08-24); those were cleared milestone by milestone, and the allowance was re-measured to zero under M44 rather than left as slack a regression could hide in.",
+  "exceptions": {
+    "jarvis-web/src/lib/components/Orb.svelte": "The reactor is a GLSL fragment shader; a shader cannot read a custom property. Its palette is declared in design/tokens.json (color.orb) and drift-checked by design/build.py --check.",
+    "jarvis-web/src/lib/qr.ts": "SVG fills for a QR code that has to survive being photographed: pure black on pure white, not a palette colour.",
+    "android-app/app/src/main/kotlin/ai/jarvis/app/ui/ReactorOrb.kt": "The reactor renderer; its colours come from SiriPalette and its geometry is pinned to the shader by tools/reactor_orb_test.py.",
+    "android-app/app/src/main/kotlin/ai/jarvis/app/ui/SiriPalette.kt": "The orb's palette, drift-checked against design/tokens.json (color.orb) by design/build.py --check and pinned to the shader by tools/reactor_orb_test.py."
+  },
+  "files": {}
+}

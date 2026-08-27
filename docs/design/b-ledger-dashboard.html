@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · Ledger · Dashboard</title>
+<style>
+@font-face{font-family:"IBM Plex Sans";font-weight:300;src:url(fonts/plex-sans-300.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:400;src:url(fonts/plex-sans-400.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:500;src:url(fonts/plex-sans-500.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:400;src:url(fonts/plex-mono-400.woff2) format("woff2")}
+:root{
+  --bg:#0a0c0f; --surface:#0d1013; --raised:#111519;
+  --line:#1f262c; --line-soft:#161b20; --line-hair:#121619;
+  --text:#d9dde2; --text-bright:#f2f4f6; --dim:#8a939c; --faint:#565e66;
+  --accent:#33c6e8; --accent-wash:rgba(51,198,232,.08);
+  --ok:#8fd3b1; --warn:#d9a441; --danger:#e06a5c;
+  --font-sans:"IBM Plex Sans",sans-serif; --font-mono:"IBM Plex Mono",monospace;
+  --fs-2xs:11px; --fs-xs:12px; --fs-sm:13px; --fs-md:14px; --fs-lg:16px; --fs-xl:22px; --fs-2xl:32px; --fs-display:44px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r:0; --dur:200ms; --ease:cubic-bezier(.3,.6,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:400 var(--fs-md)/1.55 var(--font-sans)}
+body{overflow:hidden}
+.app{display:grid;grid-template-rows:auto auto 1fr auto;height:100vh;padding:0 var(--s7)}
+.mast{display:grid;grid-template-columns:1fr auto 1fr;align-items:baseline;padding:var(--s4) 0 var(--s3);border-bottom:1px solid var(--line);font-size:var(--fs-xs);color:var(--dim)}
+.mast .brand{font-weight:500;letter-spacing:.22em;color:var(--text-bright);font-size:var(--fs-sm)}
+.mast .date{text-align:center;font-family:var(--font-mono)}
+.mast .st{text-align:right}.mast .st i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin:0 6px 1px 0}
+nav{display:flex;gap:var(--s5);padding:var(--s3) 0;border-bottom:1px solid var(--line-hair);font-size:var(--fs-sm);color:var(--dim)}
+nav a{color:inherit;text-decoration:none;padding-bottom:2px;border-bottom:1px solid transparent}
+nav a.on{color:var(--text-bright);border-bottom-color:var(--accent)}
+.title{display:grid;grid-template-columns:1fr auto;align-items:end;padding:var(--s5) 0 var(--s4);border-bottom:1px solid var(--line-hair)}
+.title h1{font:300 var(--fs-2xl)/1.1 var(--font-sans);color:var(--text-bright)}
+.title p{color:var(--dim);font-size:var(--fs-sm);margin-top:var(--s1)}
+.title .ranges{font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint)}
+.title .ranges span{margin-left:var(--s4)}.title .ranges span.on{color:var(--accent);border-bottom:1px solid var(--accent)}
+.title .ranges a{margin-left:var(--s5);color:var(--dim);text-decoration:none;border-bottom:1px solid var(--line);font-family:var(--font-sans);font-size:var(--fs-xs)}
+.cols{display:grid;grid-template-columns:repeat(3,1fr);column-gap:var(--s7);min-height:0;padding-top:var(--s4);overflow:hidden}
+.col{display:flex;flex-direction:column;gap:var(--s4);min-height:0;border-right:1px solid var(--line-hair);padding-right:var(--s7)}
+.col:last-child{border-right:0;padding-right:0}
+.fig{padding:var(--s2) 0 var(--s3);border-bottom:1px solid var(--line-hair)}
+.label{font-size:var(--fs-2xs);letter-spacing:.18em;text-transform:uppercase;color:var(--faint);font-weight:500}
+.label sup{color:var(--faint);font-family:var(--font-mono);letter-spacing:0;margin-left:3px}
+.big{font:300 var(--fs-display)/1 var(--font-sans);color:var(--text-bright);margin-top:var(--s2);font-variant-numeric:tabular-nums}
+.big small{font-size:var(--fs-sm);color:var(--faint);margin-left:var(--s1)}
+.big.live{color:var(--accent)}
+.note{font-size:var(--fs-xs);color:var(--dim);margin-top:2px}
+.fig>svg{width:100%;height:44px;margin-top:var(--s3);overflow:visible}
+.fig td svg{width:64px;height:12px;margin:0;display:block}
+.fig .axis{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);margin-top:var(--s1)}
+table{border-collapse:collapse;width:100%;font-size:var(--fs-xs);margin-top:var(--s2)}
+td{padding:5px 0;border-bottom:1px solid var(--line-hair);color:var(--dim);vertical-align:baseline}
+td.n{text-align:right;font-family:var(--font-mono);color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+td svg{vertical-align:middle}
+td .ok{color:var(--ok)}
+.foot{padding:var(--s3) 0 var(--s4);border-top:1px solid var(--line);font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);display:flex;gap:var(--s6)}
+</style></head>
+<body><div class="app">
+  <header class="mast"><span class="brand">JARVIS</span><span class="date">Sunday 24 August · 02:41</span><span class="st"><i></i>influx homelab reachable · recorder 1.9 GB · refresh 10 s</span></header>
+  <nav><a href="#">Voice</a><a href="#">Devices</a><a href="#">Areas</a><a href="#">Automations</a><a href="#">Tools</a><a href="#">Tasks</a><a class="on" href="#">Dashboards</a><a href="#">Code</a><a href="#">Settings</a></nav>
+
+  <div class="title">
+    <div><h1>Homelab — the last six hours</h1><p>Nine widgets · two sources · yours. Drag a figure to reorder it, pull its rule to resize, ⌘K to add one.</p></div>
+    <div class="ranges"><span>1h</span><span class="on">6h</span><span>24h</span><span>7d</span><a href="#">Edit</a><a href="#">Add a figure</a></div>
+  </div>
+
+  <main class="cols">
+    <div class="col">
+      <section class="fig"><div class="label">Throughput · llama-swap <sup>2</sup></div><div class="big live">31.4<small>tokens / s</small></div><div class="note">qwen3-8b · q4_k_m · 8 k context · first token 640 ms</div><svg data-line="18 22 24 21 27 29 33 31 30 34 36 33 31 29 32 35 31 31" data-live="1" viewBox="0 0 360 56" preserveAspectRatio="none"></svg><div class="axis"><span>−6 h</span><span>−3 h</span><span>now</span></div></section>
+      <section class="fig"><div class="label">Transcription · whisper base.en <sup>2</sup></div><div class="big">412<small>ms · p50</small></div><div class="note">p95 780 ms · 46 runs · four cores, no GPU</div><svg data-line="380 410 395 640 420 780 402 398 455 412 430 470 410 388 402 415 620 405 399 412" viewBox="0 0 360 56" preserveAspectRatio="none"></svg><div class="axis"><span>−6 h</span><span>−3 h</span><span>now</span></div></section>
+      <section class="fig"><div class="label">Tasks <sup>2</sup></div><div class="big">9<small>today</small></div><div class="note">7 done · 1 error · 1 running · median 48 s</div>
+        <table><tr><td>mon 6 · tue 4 · wed 8 · thu 11 · fri 7 · sat 9</td><td class="n">today 9</td></tr><tr><td>longest · research, whisper models</td><td class="n">41 min</td></tr></table></section>
+    </div>
+
+    <div class="col">
+      <section class="fig"><div class="label">GPU · rtx 3090 <sup>1</sup></div><div class="big">61<small>°C</small></div><div class="note">fan 41 % · 14.2 of 24 GB resident · two models</div><svg data-line="58 59 61 63 62 60 59 61 64 66 63 61" viewBox="0 0 360 56" preserveAspectRatio="none"></svg><div class="axis"><span>−6 h</span><span>−3 h</span><span>now</span></div></section>
+      <section class="fig"><div class="label">Power · rack <sup>1</sup></div><div class="big">186<small>W</small></div><div class="note">today 3.9 kWh · €1.12 at the day tariff</div><svg data-line="150 160 172 210 240 230 198 184 178 186 190 186" viewBox="0 0 360 56" preserveAspectRatio="none"></svg><div class="axis"><span>−6 h</span><span>−3 h</span><span>now</span></div></section>
+      <section class="fig"><div class="label">Host <sup>2</sup></div><div class="big">1.84<small>load · 1 min</small></div><div class="note">1.62 · 1.40 · 4 cores · 42 GB free of 79</div>
+        <table><tr><td>jarvis-core · web</td><td class="n"><span class="ok">up</span> 6 d</td></tr><tr><td>whisper · piper · wake</td><td class="n"><span class="ok">up</span> 6 d</td></tr><tr><td>orchestrator · sandbox</td><td class="n"><span class="ok">up</span> 2 d</td></tr></table></section>
+    </div>
+
+    <div class="col">
+      <section class="fig"><div class="label">Rooms <sup>2</sup></div><div class="big">21.4<small>°C · office</small></div><div class="note">holding since one; radiator off</div>
+        <table><tr><td>office</td><td><svg data-line="21.9 21.8 21.6 21.5 21.4 21.4 21.4 21.4" viewBox="0 0 64 12" preserveAspectRatio="none"></svg></td><td class="n">21.4 °C</td></tr><tr><td>kitchen</td><td><svg data-line="19.2 19.6 20.1 20.8 21.2 21.0 20.7 20.5" viewBox="0 0 64 12" preserveAspectRatio="none"></svg></td><td class="n">20.5 °C</td></tr><tr><td>bedroom</td><td><svg data-line="18.4 18.3 18.2 18.2 18.1 18.1 18.0 18.0" viewBox="0 0 64 12" preserveAspectRatio="none"></svg></td><td class="n">18.0 °C</td></tr><tr><td>rack</td><td><svg data-line="27 28 29 31 33 32 31 31" viewBox="0 0 64 12" preserveAspectRatio="none"></svg></td><td class="n">31.0 °C</td></tr></table></section>
+      <section class="fig"><div class="label">Calls by tool · 24 h <sup>2</sup></div>
+        <table><tr><td>light.turn_on</td><td class="n">41</td></tr><tr><td>climate.get_state</td><td class="n">27</td></tr><tr><td>web_search</td><td class="n">12</td></tr><tr><td>schedule.add</td><td class="n">6</td></tr><tr><td>code.run_check</td><td class="n">5</td></tr></table></section>
+    </div>
+  </main>
+  <footer class="foot"><span>¹ InfluxDB · homelab · 192.168.1.20:8086 · v2 · flux</span><span>² Jarvis recorder · states and events · 10-day retention</span><span>layout saved for token “chase-laptop”</span></footer>
+</div>
+<script>
+(function(){const N='http://www.w3.org/2000/svg';
+function pts(d,w,h,p){const mn=Math.min(...d),mx=Math.max(...d),sp=(mx-mn)||1;return d.map((v,i)=>[p+i*(w-2*p)/(d.length-1),h-p-((v-mn)/sp)*(h-2*p)]);}
+document.querySelectorAll('svg[data-line]').forEach(s=>{const d=s.dataset.line.split(' ').map(Number);const [w,h]=s.getAttribute('viewBox').split(' ').slice(2).map(Number);const p=pts(d,w,h,2);const live=s.dataset.live;
+ if(h>20){const base=document.createElementNS(N,'line');base.setAttribute('x1',0);base.setAttribute('x2',w);base.setAttribute('y1',h-1);base.setAttribute('y2',h-1);base.setAttribute('stroke','#1f262c');base.setAttribute('vector-effect','non-scaling-stroke');s.appendChild(base);}
+ const pl=document.createElementNS(N,'polyline');pl.setAttribute('points',p.map(x=>x.join(',')).join(' '));pl.setAttribute('fill','none');pl.setAttribute('stroke',live?'#33c6e8':'#8a939c');pl.setAttribute('stroke-width','1');pl.setAttribute('vector-effect','non-scaling-stroke');s.appendChild(pl);
+ const last=p[p.length-1];const c=document.createElementNS(N,'circle');c.setAttribute('cx',last[0]);c.setAttribute('cy',last[1]);c.setAttribute('r',h>20?2.5:1.5);c.setAttribute('fill',live?'#33c6e8':'#d9dde2');s.appendChild(c);});
+})();
+</script>
+</body></html>

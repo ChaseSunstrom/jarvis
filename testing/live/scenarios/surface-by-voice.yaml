@@ -1,0 +1,41 @@
+name: surface-by-voice
+capability: surface
+gated-on: M92
+intent: >
+  "Show me the garage temperature" puts a panel on the voice screen (M83) and
+  "clear the screen" takes it down — the surface, by voice, asserted on the
+  surface's own list rather than on the sentence.
+variants: [voice, text]
+setup:
+  # The garage temperature is the rig's own sensor, announced here over MQTT
+  # as a bridge would — sensors-discovered used to be the only scenario that
+  # made it, and this one passed or failed on whether that had run first.
+  mqtt_publish:
+    - topic: homeassistant/sensor/jarvis_test_garage_temp/config
+      retain: true
+      payload:
+        name: Garage Temperature
+        unique_id: jarvis_test_garage_temp
+        state_topic: jarvis-test/garage/temperature
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+    - topic: jarvis-test/garage/temperature
+      retain: true
+      payload: "12.5"
+turns:
+  - say: "Show me the garage temperature on the screen."
+    expect:
+      capability: surface
+      surface: {entity: sensor.garage_temperature, within: 20}
+      # "There it is, Sir — the garage is at 12.5 °C" IS the panel going up;
+      # the surface assertion above is the proof, the sentence need not
+      # narrate the screen.
+      reply_means: "gives the garage temperature, and/or says it is on the screen ('there it is' counts)"
+  # "Clear the screen." was heard as "Clean it, sir." by the rig's own ear on
+  # the twentieth house (WER 1.0) — the deed happened, the transcript missed.
+  - say: "Take everything off the screen."
+    expect:
+      capability: surface
+      surface: {count: 0, within: 20}
+      reply_means: "says the screen is cleared"

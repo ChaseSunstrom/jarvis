@@ -1,0 +1,31 @@
+name: resilience-core-restart
+capability: resilience
+intent: >
+  A container restarts — an upgrade, an OOM, a `docker compose up -d` after a
+  config edit — in the middle of a conversation somebody is having. The promise
+  is that the thread survives it: they say "now do the same in the bedroom"
+  afterwards and are understood, rather than being asked what they meant. This
+  is the one scenario that cannot be faked, because a process the rig started
+  and a container the daemon restarts fail differently.
+setup:
+  # Only the light of the first turn: demo entities are rebuilt at their
+  # defaults when the integration reloads, so anything this sets before the
+  # restart is back to its default afterwards. `bed_light` defaults to off,
+  # which is why the second turn uses it.
+  states: {light.ceiling_lights: "off"}
+turns:
+  - say: "Turn on the ceiling lights"
+    expect:
+      service: {domain: light, service: turn_on, entity_id: light.ceiling_lights}
+      state: {light.ceiling_lights: "on"}
+      reply_means: "confirms the ceiling lights are on"
+  - say: "Now do the same in the bedroom, please"
+    restart: true
+    expect:
+      # "The same" is only meaningful if the turn before it survived the
+      # restart — nothing in this sentence says light, or on.
+      service: {domain: light, service: turn_on, entity_id: light.bed_light}
+      state: {light.bed_light: "on"}
+      reply_means: >
+        confirms the bedroom light is on — it must not ask what was meant by
+        "the same"

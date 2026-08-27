@@ -41,6 +41,7 @@ describe('PipelineClient', () => {
 			onDelta: vi.fn(),
 			onResponse: vi.fn(),
 			onTtsUrl: vi.fn(),
+			onTtsChunk: vi.fn(),
 			onError: vi.fn(),
 			onReady: vi.fn(),
 			onRunEnd: vi.fn(),
@@ -157,10 +158,16 @@ describe('PipelineClient', () => {
 		expect(cb.onResponse).toHaveBeenCalledWith('Turning on the lab lights.');
 		expect(client.conversationId).toBe('conv-42');
 
-		client.handleMessage(event(runId, 'tts-start'));
-		client.handleMessage(event(runId, 'tts-end', { tts_output: { url: '/api/tts_proxy/x.mp3' } }));
-		expect(cb.onTtsUrl).toHaveBeenCalledWith('/api/tts_proxy/x.mp3');
+		// A sentence spoken early (M60) reaches its own callback, in order, and is
+		// already "speaking"; tts-end then names the remainder beside the whole.
+		client.handleMessage(event(runId, 'tts-chunk', { index: 0, text: 'Very good.', tts_output: { url: '/api/tts_proxy/c0.wav' } }));
+		expect(cb.onTtsChunk).toHaveBeenCalledWith('/api/tts_proxy/c0.wav', 0, 'Very good.');
 		expect(cb.onState).toHaveBeenCalledWith('speaking');
+		client.handleMessage(event(runId, 'tts-start'));
+		client.handleMessage(
+			event(runId, 'tts-end', { tts_output: { url: '/api/tts_proxy/x.mp3', chunks: 1, remainder_url: '/api/tts_proxy/tail.wav' } })
+		);
+		expect(cb.onTtsUrl).toHaveBeenCalledWith('/api/tts_proxy/x.mp3', '/api/tts_proxy/tail.wav', 1);
 
 		client.handleMessage(event(runId, 'run-end'));
 		expect(cb.onRunEnd).toHaveBeenCalled();

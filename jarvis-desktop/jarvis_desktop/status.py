@@ -82,6 +82,11 @@ class StatusSnapshot:
     #: is not necessarily what a fresh probe would choose now.
     consent_backend: str = ""
     action_count: int = 0
+    #: The loopback port the desktop shell answers consent prompts on, or 0
+    #: when no IPC server is running. Here because the shell is started by a
+    #: person rather than by this process, so an environment variable would
+    #: reach the wrong one.
+    shell_port: int = 0
     #: True only while a session is authenticated and registered. A process that
     #: is up but reconnecting is a real and common state, and reporting it as
     #: "running" without qualification is how people end up debugging the wrong

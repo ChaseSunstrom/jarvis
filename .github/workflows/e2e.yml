@@ -204,8 +204,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           # Same reasoning as android-apk.yml: the repo ships
-          # gradle-wrapper.properties but not the wrapper JAR, so the action
-          # provides Gradle and we call `gradle` directly rather than ./gradlew.
+          # the wrapper JAR too (since 137ed51), but the action provides Gradle
+          # and we call `gradle` directly rather than ./gradlew: one pinned
+          # version, and no wrapper download to fail.
           gradle-version: "8.10"
 
       - uses: actions/setup-python@v5

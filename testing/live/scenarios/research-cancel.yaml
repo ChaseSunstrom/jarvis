@@ -1,0 +1,33 @@
+name: research-cancel
+capability: research
+# Not the stack: its sources must be pages this repository owns.
+ground: fixture
+gated-on: M18
+intent: >
+  Stopping a long job mid-flight, by voice. "Actually, stop that" is the second
+  thing anybody says after asking for one, and until `cancel_task` existed the
+  honest answer was "I have no tool to stop a background task" — which the model
+  said, correctly, while the job ran on.
+
+  Cancelling must leave the task `cancelled` rather than `error`: somebody asked
+  it to stop and it stopped, and reporting that as a failure would page a human
+  about a thing a human just did.
+variants: [text]
+turns:
+  # An external subject, phrased as research. "The fixture handbook" sounded
+  # like something Jarvis should already know, so it searched its notes, found
+  # nothing, and asked which handbook was meant — correct behaviour, and not
+  # the thing this scenario is about.
+  - say: >
+      Research the Vesper 24kW boiler on the web — pressure, flow temperature,
+      everything you can find — and write it all up.
+    expect:
+      task: {kind: research, within: 60}
+  # At once: since M75 (fallback first, text-first reads, three at a time) a
+  # quick run finishes inside the five seconds this used to wait, and "it
+  # had already finished" was the right answer to a scenario that failed it.
+  - say: "Actually, stop that research — I have changed my mind."
+    wait: 0
+    expect:
+      task: {kind: research, status: cancelled, within: 120}
+      reply_means: "confirms it has stopped the research"

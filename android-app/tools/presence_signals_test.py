@@ -347,11 +347,15 @@ class Device:
     """Mirror of CompanionMessageHandler: what actually reaches the socket."""
 
     def __init__(self, *, can_notify: bool = True, can_show: bool = True,
-                 can_speak: bool = False, max_remembered: int = MAX_REMEMBERED) -> None:
+                 can_speak: bool = False, conversation_on_screen: bool = False,
+                 max_remembered: int = MAX_REMEMBERED) -> None:
         self.ledger = Ledger(max_remembered)
         self.can_notify = can_notify
         self.can_show = can_show
         self.can_speak = can_speak
+        #: A conversation surface is in front of the user and speaking — the
+        #: handler's `speechHost.isForeground`.
+        self.conversation_on_screen = conversation_on_screen
         self.sent: list[tuple[str, str, str | None]] = []
         self.prompts: list[str] = []
         self.spoken: list[str] = []
@@ -384,10 +388,21 @@ class Device:
 
         mode = parsed["mode"]
         if mode == "ask":
+            if parsed["spoken"] and self.conversation_on_screen:
+                # The surface on screen is speaking the reply that carries
+                # this question, and takes the answer as its next turn (M66).
+                # Not presented here again; `dismissed` is "not dealt with on
+                # this device", so the server may offer it elsewhere.
+                self._reply(parsed["message_id"], STATUS_DISMISSED)
+                return
             if not self.can_show and not self.can_notify:
                 self._reply(parsed["message_id"], STATUS_UNDELIVERABLE)
                 return
             self.prompts.append(parsed["message_id"])
+            # Read out where it can be, unless the reply already says it —
+            # the operator heard every question twice.
+            if self.can_speak and not parsed["spoken"]:
+                self.spoken.append(parsed["text"])
             return  # waits for answer / dismiss / timeout
         if mode == "speak":
             if self.can_speak:
@@ -483,6 +498,10 @@ def parse_message(msg: dict) -> dict | None:
         "importance": importance,
         "timeout_ms": clamp_timeout(msg.get("timeout_s"),
                                     120_000 if mode == "ask" else 30_000),
+        # A presentation hint like `mode` (M66): the reply already says these
+        # words, so show them and do not read them out. Anything but a real
+        # `true` is false — the louder reading.
+        "spoken": msg.get("spoken") is True,
     }
 
 
@@ -897,6 +916,47 @@ def test_the_timeout_is_clamped_never_trusted():
     ]
     for raw, expected in table:
         assert parse_message(ask(timeout_s=raw))["timeout_ms"] == expected, raw
+
+
+def test_spoken_is_a_presentation_hint_and_defaults_to_false():
+    assert parse_message(ask())["spoken"] is False
+    assert parse_message(ask(spoken=True))["spoken"] is True
+    for garbled in ("true", 1, "yes", None, {"x": 1}):
+        assert parse_message(ask(spoken=garbled))["spoken"] is False, garbled
+
+
+def test_a_question_is_read_out_where_it_can_be():
+    device = Device(can_speak=True)
+    device.handle(ask())
+    assert device.prompts == ["a1b2c3"]
+    assert device.spoken == ["Deploy to production?"]
+    assert device.sent == [], "a question is not settled by being asked"
+
+
+def test_a_spoken_question_is_shown_and_not_read_out_again():
+    """The single voice (M66): the reply already said it."""
+    device = Device(can_speak=True)
+    device.handle(ask(spoken=True))
+    assert device.prompts == ["a1b2c3"], "the card is still there to answer"
+    assert device.spoken == []
+    assert device.sent == []
+    device.answer("a1b2c3", "yes")
+    assert device.sent == [("a1b2c3", STATUS_ANSWERED, "yes")]
+
+
+def test_a_spoken_question_over_the_conversation_that_is_speaking_it_is_not_presented_twice():
+    """The overlay is saying the reply and will take the next thing said as the
+    answer; a second copy here — spoken or silent — is the double."""
+    device = Device(can_speak=True, conversation_on_screen=True)
+    device.handle(ask(spoken=True))
+    assert device.prompts == []
+    assert device.spoken == []
+    assert device.sent == [("a1b2c3", STATUS_DISMISSED, None)]
+    # An UNSPOKEN question over the same surface is still asked: nothing
+    # else is going to say it.
+    device.handle(ask("d4e5f6"))
+    assert device.prompts == ["d4e5f6"]
+    assert device.spoken == ["Deploy to production?"]
 
 
 def test_the_parser_has_no_slot_for_an_action():

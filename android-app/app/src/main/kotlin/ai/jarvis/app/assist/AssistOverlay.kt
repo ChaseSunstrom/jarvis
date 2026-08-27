@@ -7,7 +7,6 @@ import ai.jarvis.app.ui.SiriOrbView
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Build
-import android.graphics.Typeface
 import android.text.TextUtils
 import android.util.Log
 import android.util.TypedValue
@@ -18,6 +17,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.min
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * Jarvis, on screen, over whatever you were doing.
@@ -203,7 +203,6 @@ class AssistOverlay(
     fun setMode(mode: JarvisOrbView.Mode, label: String) {
         orb?.setMode(mode)
         caption?.text = label
-        caption?.setTextColor(mode.color)
     }
 
     fun setAmplitude(level: Float) {
@@ -237,7 +236,7 @@ class AssistOverlay(
     private fun build(): ViewGroup {
         // Generous, because the scrim has to reach zero before the window's
         // edge does — see ReadabilityScrim. Padding is what buys it that room.
-        val pad = JarvisUi.dp(context, 22)
+        val pad = JarvisUi.dp(context, JarvisUi.Size.GUTTER)
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -262,14 +261,17 @@ class AssistOverlay(
             LinearLayout.LayoutParams(JarvisUi.dp(context, ORB_DP), JarvisUi.dp(context, ORB_DP))
         )
 
+        // The console's `.cap`: the chrome face, the smallest step, wide
+        // tracking, always the accent at rest — the reactor above it carries
+        // the state's colour. It was tinted per state and tracked by hand.
         val captionView = TextView(context).apply {
             text = "LISTENING"
-            setTextColor(JarvisOrbView.Mode.LISTENING.color)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            letterSpacing = 0.2f
-            typeface = Typeface.MONOSPACE
+            setTextColor(JarvisTokens.Color.ACCENT_DEEP)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.LABEL)
+            letterSpacing = JarvisUi.TRACK_WIDE
+            typeface = JarvisUi.MONO_FACE
             gravity = Gravity.CENTER
-            setPadding(0, JarvisUi.dp(context, 8), 0, 0)
+            setPadding(0, JarvisUi.dp(context, JarvisUi.Space.STEP), 0, 0)
         }
         caption = captionView
         legible(captionView)
@@ -279,7 +281,7 @@ class AssistOverlay(
         // what it is saying, because the doing is what a person in the room
         // needs to be able to stop.
         val tools = ToolActivityView(context).apply {
-            setPadding(0, JarvisUi.dp(context, 10), 0, 0)
+            setPadding(0, JarvisUi.dp(context, JarvisUi.Space.ROW), 0, 0)
         }
         toolActivity = tools
         column.addView(tools, fullWidth())
@@ -294,7 +296,7 @@ class AssistOverlay(
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
             visibility = View.GONE
-            setPadding(0, JarvisUi.dp(context, 10), 0, 0)
+            setPadding(0, JarvisUi.dp(context, JarvisUi.Space.ROW), 0, 0)
         }
         val responseView = JarvisUi.responseView(context).apply {
             maxLines = 4
@@ -326,10 +328,10 @@ class AssistOverlay(
      */
     private fun legible(view: TextView) {
         view.setShadowLayer(
-            JarvisUi.dp(context, 6).toFloat(),
+            JarvisUi.dp(context, JarvisUi.Space.SNUG).toFloat(),
             0f,
-            JarvisUi.dp(context, 1).toFloat(),
-            0xF0000308.toInt(),
+            JarvisUi.dp(context, JarvisUi.Space.HAIRLINE).toFloat(),
+            JarvisTokens.Color.SCRIM_HEAVY,
         )
     }
 
@@ -343,7 +345,7 @@ class AssistOverlay(
         val screen = context.resources.displayMetrics.widthPixels
         val width =
             if (compact) JarvisUi.dp(context, BADGE_DP)
-            else min(screen - JarvisUi.dp(context, 32), JarvisUi.dp(context, 340))
+            else min(screen - JarvisUi.dp(context, JarvisUi.Size.SHEET), JarvisUi.dp(context, JarvisUi.Size.PANEL_MAX))
         return WindowManager.LayoutParams(
             width,
             WindowManager.LayoutParams.WRAP_CONTENT,

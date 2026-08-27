@@ -90,11 +90,13 @@ class NavigationTest {
 
         // PHONE, not SETTINGS. SETTINGS is one of the console's tabs and is the
         // HOUSE's settings; this one is the mobile half — permissions, the wake
-        // word, which server this device talks to.
+        // word, which server this device talks to. The home screen has a PHONE
+        // button of its own since bc2bfb8, so the tap below waits for the
+        // console frame first: matched on the home screen, this would pass
+        // without the frame's pinned PHONE control existing at all.
         //
         // Configured first, or MANAGE would short-circuit to these settings on
-        // its own (see manageTakesAnUnconfiguredUserSomewhereTheyCanActuallyFixIt)
-        // and this would pass without the tab strip existing at all.
+        // its own (see manageTakesAnUnconfiguredUserSomewhereTheyCanActuallyFixIt).
         TestHooks.configure(
             InstrumentationRegistry.getInstrumentation().targetContext,
             serverUrl = Harness.baseUrl,
@@ -106,6 +108,11 @@ class NavigationTest {
         // listening itself is proved.
         TestHooks.muteMicrophone(InstrumentationRegistry.getInstrumentation().targetContext)
         tap("MANAGE")
+        Waits.until("the console frame to open") {
+            Device.ui.findObject(
+                By.text(Views.textIgnoringCase(ConsoleTab.entries.first().label))
+            ) != null
+        }
         val settings = Activities.expect(SettingsActivity::class.java) {
             tap(ConsoleTab.PHONE_LABEL)
         }
@@ -153,10 +160,12 @@ class NavigationTest {
             ) != null
         }
         // `findScrolling`, not a bare findObject. The strip is a
-        // HorizontalScrollView because six monospace labels do not fit a
-        // phone's width, so the last of them — PHONE — starts past the right
-        // edge on every device this suite runs on. A plain lookup reported it
-        // as absent, which was true of the viewport and false of the screen.
+        // HorizontalScrollView: it holds the console's five labels today and
+        // PHONE is pinned beside it (ConsoleFrame), but when it held six the
+        // last of them started past the right edge on every device this suite
+        // runs on, and a plain lookup reported it as absent — true of the
+        // viewport and false of the screen. The helper scrolls, so a label
+        // past the edge is found rather than reported missing.
         for (label in ConsoleTab.entries.map { it.label } + ConsoleTab.PHONE_LABEL) {
             assertNotNull(
                 "the console frame does not offer \"$label\".\n${Device.windowDump()}",

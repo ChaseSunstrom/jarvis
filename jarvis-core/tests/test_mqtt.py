@@ -1346,3 +1346,153 @@ def test_tls_true_actually_configures_tls_on_the_aiomqtt_backend(monkeypatch):
 
 def test_tls_false_stays_plaintext(monkeypatch):
     assert "tls_context" not in _aiomqtt_kwargs(monkeypatch, tls=False)
+
+
+# --- one broker, two Jarvises ------------------------------------------------
+#
+# Found on the live stack, not here: jarvis-core logged 68 MQTT disconnects in
+# three minutes, each with a twenty-frame traceback, while every suite in this
+# repository was green. The client id was the literal string "jarvis", MQTT
+# allows one session per id, and the second Jarvis on the broker — a dev run, a
+# second box, or this repository's own harness — evicted the first, which
+# reconnected and evicted it back, forever.
+
+def test_the_default_client_id_is_stable_for_one_installation():
+    from jarvis.integrations.mqtt.client import default_client_id
+
+    assert default_client_id("/srv/config") == default_client_id("/srv/config")
+
+
+def test_and_differs_between_two_installations_on_one_host():
+    from jarvis.integrations.mqtt.client import default_client_id
+
+    # The case that matters: with `network_mode: host` the container's hostname
+    # IS the host's, so the hostname alone distinguishes nothing. The config
+    # directory does.
+    assert default_client_id("/srv/config") != default_client_id("/tmp/harness/config")
+
+
+def test_the_default_client_id_is_recognisably_jarvis():
+    from jarvis.integrations.mqtt.client import default_client_id
+
+    # An operator looking at `mosquitto_sub -v '$SYS/broker/clients/#'` should
+    # be able to tell whose client this is.
+    assert default_client_id("x").startswith("jarvis-")
+
+
+async def test_a_configured_client_id_still_wins(tmp_path):
+    from jarvis.integrations.mqtt.client import create_client
+
+    client = create_client({"broker": "127.0.0.1", "client_id": "kitchen-pi", "backend": "fake"})
+    assert client.client_id == "kitchen-pi"
+
+
+async def test_repeated_short_sessions_say_the_thing_the_tracebacks_never_do(caplog):
+    """Three connect-then-drop cycles and the log names the actual cause."""
+    import logging
+
+    from jarvis.integrations.mqtt import client as client_module
+
+    class _Evicted:
+        """A broker that accepts the connection and throws it off at once."""
+
+        def __init__(self, owner):
+            self.owner = owner
+            self.cycles = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        @property
+        def messages(self):
+            raise ConnectionResetError("Disconnected during message iteration")
+
+        async def subscribe(self, *args, **kwargs):
+            return None
+
+    mqtt = client_module.AiomqttClient(broker="127.0.0.1", port=1883, client_id="jarvis")
+    cycles = 0
+
+    def _build():
+        nonlocal cycles
+        cycles += 1
+        if cycles > client_module.COLLISION_SESSIONS:
+            mqtt._closing = True
+        return _Evicted(mqtt)
+
+    mqtt._build_client = _build  # type: ignore[method-assign]
+    sleeps: list[float] = []
+
+    async def _no_sleep(seconds):
+        sleeps.append(seconds)
+
+    caplog.set_level(logging.WARNING)
+    original = client_module.asyncio.sleep
+    client_module.asyncio.sleep = _no_sleep  # type: ignore[assignment]
+    try:
+        await mqtt._runner()
+    finally:
+        client_module.asyncio.sleep = original  # type: ignore[assignment]
+
+    text = caplog.text
+    assert "in use by another Jarvis" in text, text
+    assert "'jarvis'" in text
+    # Exactly one traceback, not one per cycle: the log has to stay readable
+    # for the hour a broker is genuinely down.
+    assert text.count("Traceback (most recent call last)") == 1, text
+    # And it did back off rather than spinning.
+    assert sleeps and sleeps[0] == 1.0
+
+
+async def test_a_broker_still_booting_is_not_called_a_collision(caplog):
+    """Three refusals in a row are a broker that is not up yet, not two Jarvises.
+
+    A refusal is a short session too — it lasts a millisecond — and the
+    collision heuristic counted it. On every `docker compose up` the core, which
+    starts first, was refused by mosquitto three times and logged an ERROR with
+    a traceback saying another Jarvis was evicting it; the live rig's
+    stack-logs-clean check failed on it each time.
+    """
+    import logging
+
+    from jarvis.integrations.mqtt import client as client_module
+
+    class _Refused:
+        async def __aenter__(self):
+            raise ConnectionRefusedError("[Errno 111] Connection refused")
+
+        async def __aexit__(self, *exc):
+            return False
+
+    mqtt = client_module.AiomqttClient(broker="127.0.0.1", port=1883, client_id="jarvis")
+    cycles = 0
+
+    def _build():
+        nonlocal cycles
+        cycles += 1
+        if cycles > client_module.COLLISION_SESSIONS + 1:
+            mqtt._closing = True
+        return _Refused()
+
+    mqtt._build_client = _build  # type: ignore[method-assign]
+
+    async def _no_sleep(seconds):
+        return None
+
+    caplog.set_level(logging.WARNING)
+    original = client_module.asyncio.sleep
+    client_module.asyncio.sleep = _no_sleep  # type: ignore[assignment]
+    try:
+        await mqtt._runner()
+    finally:
+        client_module.asyncio.sleep = original  # type: ignore[assignment]
+
+    text = caplog.text
+    assert "in use by another Jarvis" not in text, text
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR], text
+    assert "Traceback" not in text, "a refusal is one line, not a stack"
+    assert "not reachable" in text and "Connection refused" in text, text
+    assert text.count("not reachable") == 1, "the reason is said once; the retries say the count"

@@ -11,6 +11,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .venv/
+.venv312/
 venv/
 .env
 *.local
@@ -41,3 +42,38 @@ secrets.yaml
 *.db
 *.db-wal
 *.db-shm
+
+# scripts/verify/all.sh writes one log per milestone here. It is output, not
+# source, and a stale log next to a green table would be worse than no log.
+.verify/
+testing/live/voices/
+
+# One installation's own features. `packages/*.yaml` is where a person adds a
+# laundry cycle or the demo house to THEIR Jarvis; the shipped directory is
+# empty on purpose, because a default configuration that invents devices
+# nobody owns is worse than one that controls nothing. The worked examples are
+# tracked, under config/examples/house/.
+jarvis-core/config/packages/
+
+# The embedding and reranker weights TEI downloads on first start (M33), for
+# the same reason as `jarvis-core/wyoming/` above: hundreds of megabytes,
+# fetched once, and never something a checkout should carry.
+jarvis-core/models/
+
+# The Whisper and Piper weights the Wyoming containers download on first start.
+# ~200 MB, and one blob is 139 MB — over GitHub's hard limit, so a push fails
+# outright with them tracked. They were committed by accident in "The console
+# gets a component library"; that commit's history was rewritten before this
+# branch was ever pushed.
+jarvis-core/wyoming/
+
+# Subagent worktrees the harness creates beside the checkout; never part of it.
+.claude/worktrees/
+
+# The trace integration writes one JSONL per day here at runtime — data, not config.
+jarvis-core/config/traces/
+# Pages the live rig rewrites for a scenario (M59): written and removed per run.
+testing/live/fixtures/*/live/
+
+# Kotlin daemon scratch (error logs the compiler drops beside the build)
+android-app/.kotlin/

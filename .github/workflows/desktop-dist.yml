@@ -125,3 +125,61 @@ jobs:
 
           # And importable under its distribution name, not just runnable.
           "$VENV_BIN/python" -c "import jarvis_desktop; print(jarvis_desktop.__name__, 'ok')"
+
+  # --- the shell -------------------------------------------------------------
+  #
+  # The Electron app that shows the console (M07). Built and driven for real on
+  # a runner with no display: `tools/xvfb.sh` starts Xvfb itself rather than
+  # using `xvfb-run`, and `tools/electron-runtime.sh` unpacks Electron's
+  # library closure under $HOME — both needed on a machine where nothing may be
+  # installed system-wide, which is the constraint this project develops under.
+  shell:
+    name: desktop shell (Electron)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        working-directory: jarvis-desktop-app
+        run: npm ci || npm install --no-audit --no-fund
+
+      - name: Build
+        working-directory: jarvis-desktop-app
+        run: npm run build
+
+      - name: Unit tests (Electron mocked out entirely)
+        working-directory: jarvis-desktop-app
+        run: npx vitest run
+
+      - name: Electron under Xvfb
+        working-directory: jarvis-desktop-app
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgtk-3-0 libnotify4 libnss3 libxss1 \
+            libxtst6 libatk-bridge2.0-0 libgbm1 libasound2t64 || true
+          # Ubuntu 24.04 runners restrict unprivileged user namespaces; the
+          # spec passes --no-sandbox under CI, and this lifts the restriction
+          # too, so the two ways Electron can fail to start both go away.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bash tools/xvfb.sh npx playwright test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: desktop-shell-playwright-report
+          path: jarvis-desktop-app/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Unpacked distribution
+        working-directory: jarvis-desktop-app
+        run: npm run dist:dir
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-desktop-app-linux
+          path: jarvis-desktop-app/dist-app/linux-unpacked
+          if-no-files-found: error

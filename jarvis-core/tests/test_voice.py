@@ -104,6 +104,11 @@ class FakeWyomingServer:
         self.info = info or {"asr": [{"name": "whisper", "installed": True}]}
         self.events = []
         self.audio_payloads = []
+        #: How each client connection ended: "eof" for a polite hang-up, the
+        #: exception's name for a slammed door. The real containers log the
+        #: latter at ERROR, which is what `test_wyoming_info_hangs_up_politely`
+        #: pins.
+        self.hangups = []
         self._server = None
         self._transcribing = False
         self._detecting = False
@@ -131,8 +136,13 @@ class FakeWyomingServer:
         chunks_seen = 0
         try:
             while True:
-                event = await read_frame(reader)
+                try:
+                    event = await read_frame(reader)
+                except (ConnectionError, OSError) as err:
+                    self.hangups.append(type(err).__name__)
+                    return
                 if event is None:
+                    self.hangups.append("eof")
                     break
                 self.events.append(event)
                 kind = event["type"]
@@ -388,6 +398,20 @@ async def test_wyoming_info(server):
     info = await wyoming_info("127.0.0.1", server.port)
     assert info == {"asr": [{"name": "whisper", "installed": True}]}
     assert server.types == ["describe"]
+
+
+async def test_wyoming_info_hangs_up_politely(server):
+    """The client sends EOF and waits, rather than closing on a server mid-drain.
+
+    Both Wyoming containers logged `ConnectionResetError('Connection lost')`
+    at ERROR on every `describe` — the client had read the info and closed
+    while the server's own drain was still in flight — and the live suite's
+    stack-logs-clean check went red for a conversation that had gone
+    perfectly. The server must see a clean end of stream, never a reset.
+    """
+    await wyoming_info("127.0.0.1", server.port)
+    await asyncio.sleep(0.05)
+    assert server.hangups == ["eof"]
 
 
 async def test_transcribe_streams_audio_and_returns_transcript(server):
@@ -1422,4 +1446,417 @@ async def test_a_real_reply_still_reaches_the_tts_service(tmp_path):
     tts = FakeTts()
     run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hi"), tts=tts, converse=converse)
     await run.execute(await queue_of(sine_pcm(20)))
-    assert [call[0] for call in tts.calls] == ["  Kitchen light on.  "]
+    # Trimmed, not verbatim: `speakable()` collapses whitespace on the way to
+    # the synthesiser, because a leading blank line is the normal shape of a
+    # streamed reply and means nothing out loud. The reply itself — what the
+    # console shows and the archive keeps — is untouched.
+    assert [call[0] for call in tts.calls] == ["Kitchen light on."]
+
+
+async def test_the_spoken_answer_is_the_answer_not_the_working(tmp_path):
+    """The pipeline speaks `result.text`, not every delta it streamed.
+
+    The deltas include what the model wrote in a round that then called a tool
+    — a guess made before the tool ran. Out loud that is one breath containing
+    both "the bed light is already off, sir" and "the bed light is now off,
+    sir", and there is no screen out here to tell them apart. Found by talking
+    to it; see ISSUES.md.
+    """
+
+    class Agent:
+        """Just enough of ConversationAgent: a stream and a last_result."""
+
+        def __init__(self) -> None:
+            self.last_result = type(
+                "R", (), {"text": "The bed light is now off, sir.",
+                          "preamble": "The bed light is already off, sir. "}
+            )()
+
+        async def converse(self, text, conversation_id=None, **kwargs):
+            for piece in ("The bed light is already off, sir. ",
+                          "The bed light is now off, sir."):
+                yield piece
+
+    agent = Agent()
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt("turn off the bed light"),
+        tts=FakeTts(),
+        converse=agent.converse,
+        start_stage="intent",
+        end_stage="intent",
+    )
+    await run.execute(None, None, text="turn off the bed light")
+
+    assert run.response_text == "The bed light is now off, sir."
+    # The deltas still carried everything: a surface showing the working can.
+    progress = "".join(
+        str((event.data.get("chat_log_delta") or {}).get("content") or "")
+        for event in run.events
+        if event.type == "intent-progress"
+    )
+    assert "already off" in progress
+
+
+async def test_the_answer_is_still_the_answer_through_the_voice_wrapper(tmp_path):
+    """The house wraps the agent's converse for a spoken turn (`fast_model`,
+    `voice: think: false`), and a closure has no `__self__` — so the drop above
+    never ran on the voice path, and "The front door is locked, Sir.", written
+    before the model was nudged into its call, was in the spoken clip ahead of
+    "waiting on your confirmation" (27 Aug 2026). The wrapper names its agent."""
+    from jarvis.integrations.voice import _on_the_fast_model
+
+    class Agent:
+        fast_model = ""
+
+        def __init__(self) -> None:
+            self.last_result = type(
+                "R", (), {"text": "The front door is waiting on your confirmation, Sir.",
+                          "preamble": "The front door is locked, Sir."}
+            )()
+
+        async def converse(self, text, conversation_id=None, *, model=None, think=None, **kwargs):
+            for piece in ("The front door is locked, Sir.",
+                          "The front door is waiting on your confirmation, Sir."):
+                yield piece
+
+    agent = Agent()
+    wrapped = _on_the_fast_model(agent, agent.converse, think_on_voice=False)
+    assert not hasattr(wrapped, "__self__")
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt("lock the front door again"),
+        tts=FakeTts(),
+        converse=wrapped,
+        start_stage="intent",
+        end_stage="intent",
+    )
+    await run.execute(None, None, text="lock the front door again")
+
+    assert run.response_text == "The front door is waiting on your confirmation, Sir."
+
+
+async def test_an_agent_with_no_last_result_is_left_alone(tmp_path):
+    """Duck-typed, and optional: the stand-in agent and every test's two-line
+    coroutine have no `last_result`, and their stream is the answer."""
+
+    async def converse(text, conversation_id=None, **kwargs):
+        yield "Very good, Sir."
+
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt("hello"),
+        tts=FakeTts(),
+        converse=converse,
+        start_stage="intent",
+        end_stage="intent",
+    )
+    await run.execute(None, None, text="hello")
+    assert run.response_text == "Very good, Sir."
+
+
+# --- what is actually sent to the synthesiser --------------------------------
+#
+# Found live, against `wyoming-piper:2.3.1`: a reply that opens with an ellipsis
+# produced NO AUDIO AT ALL and failed the turn with `wave.Error: # channels not
+# specified`. Piper splits its input into sentences and synthesises each; a
+# leading "...?" phonemises to nothing, its wav writer closes having written no
+# frames, and the whole request dies — including the perfectly speakable
+# sentence after it. Measured: the same sentence without the ellipsis gave
+# 183 KB of audio.
+#
+# A model reacting to a sound it could not make out opens with an ellipsis
+# often, so this is what Jarvis says when the room is quiet and something
+# rustles — the `voice-room-tone` scenario, exactly.
+
+def test_a_leading_ellipsis_is_not_sent_to_the_synthesiser():
+    from jarvis.voice.pipeline import speakable
+
+    said = "\n\n...? Shall I fetch something, Sir, or were you merely testing the silence?"
+    assert speakable(said) == (
+        "Shall I fetch something, Sir, or were you merely testing the silence?"
+    )
+
+
+def test_text_with_nothing_pronounceable_becomes_empty_not_an_error():
+    from jarvis.voice.pipeline import speakable
+
+    for nothing in ("...?", "— !! ...", "   ", "\n\n", ""):
+        assert speakable(nothing) == ""
+
+
+def test_ordinary_replies_are_untouched_except_for_whitespace():
+    from jarvis.voice.pipeline import speakable
+
+    assert speakable("Done, Sir.") == "Done, Sir."
+    # Newlines mean nothing out loud, and a reply that begins with one is the
+    # normal shape of a streamed answer.
+    assert speakable("Done, Sir.\n\nThe hall light is on.") == "Done, Sir. The hall light is on."
+    # A number-only sentence is speakable; the filter is about punctuation.
+    assert speakable("21.") == "21."
+
+
+async def test_a_reply_that_cannot_be_spoken_skips_tts_rather_than_failing(monkeypatch):
+    """The turn still ends cleanly — the text answer is the answer."""
+    from jarvis.voice import pipeline as pipeline_module
+
+    calls: list[str] = []
+
+    class _Tts:
+        def synthesize(self, text, voice=None):  # pragma: no cover - must not run
+            calls.append(text)
+            raise AssertionError("TTS was asked to say nothing")
+
+    run = object.__new__(pipeline_module.PipelineRun)
+    run.tts = _Tts()
+    run.run_id = "test"
+    url = await pipeline_module.PipelineRun._run_tts(run, "...?")
+    assert url == ""
+    assert not calls
+
+
+async def test_synthesize_hangs_up_politely(server):
+    """Every Wyoming exit is a hang-up, not only `describe`.
+
+    Piper logged `BrokenPipeError` at ERROR three times in one live run: the
+    core had read the last audio chunk and closed while the server still had
+    a write in flight. The synthesis path must end the stream the way
+    `wyoming_info` does — EOF first, then wait — so the server sees a clean
+    end and logs nothing.
+    """
+    client = WyomingTtsClient("127.0.0.1", server.port)
+    await client.synthesize("the kettle is on")
+    await asyncio.sleep(0.05)
+    assert server.hangups == ["eof"]
+
+
+# --- early speech (M60) --------------------------------------------------------
+
+
+async def test_the_first_sentence_is_spoken_before_the_reply_is_finished(tmp_path):
+    """A finished sentence is synthesised while the model writes the next.
+
+    The wait a person notices runs from the end of their sentence to the start
+    of Jarvis's; synthesising after the model has finished puts the whole
+    generation in front of the first word. With early speech the first
+    sentence is a `tts-chunk` before `intent-end`, and the whole reply still
+    arrives as `tts-end` for a client that plays only that.
+    """
+    jarvis = Jarvis(tmp_path)
+    stt, tts = FakeStt(), FakeTts()
+    converse = make_converse("The kitchen light is on. Good night, Sir.")
+    run = PipelineRun(
+        jarvis,
+        pipeline=Pipeline(id="jarvis", name="Jarvis", tts_voice="en_GB-alan-medium"),
+        stt=stt,
+        tts=tts,
+        converse=converse,
+        binary_handler_id=7,
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(30), sine_pcm(30), silence_pcm(1000)), event_cb)
+
+    types = [event_type for event_type, _ in events]
+    assert "tts-chunk" in types and "tts-end" in types
+    assert types.index("tts-chunk") < types.index("intent-end"), "the first sentence waited for the whole reply"
+    chunk = [data for kind, data in events if kind == "tts-chunk"][0]
+    assert chunk["index"] == 0 and chunk["text"] == "The kitchen light is on."
+    assert chunk["tts_output"]["url"].startswith("/api/tts_proxy/")
+    assert tts.calls[0][0] == "The kitchen light is on.", tts.calls
+    # The tail is the LAST chunk, synthesised before the whole-reply clip
+    # (M74): a client playing the chunks is waiting for exactly this, and
+    # behind the whole clip it waited for every sentence to be made twice.
+    assert tts.calls[1][0] == "Good night, Sir."
+    assert tts.calls[2][0] == "The kitchen light is on. Good night, Sir."
+    chunks = [data for kind, data in events if kind == "tts-chunk"]
+    assert [c["text"] for c in chunks] == ["The kitchen light is on.", "Good night, Sir."]
+    assert run.spoken_chunks == [c["tts_output"]["url"] for c in chunks]
+    assert types.index("tts-chunk", types.index("tts-start")) < types.index("tts-end"), (
+        "the tail chunk must reach the client before tts-end"
+    )
+    # `tts-end` still carries the whole reply for a client that plays only
+    # that; `remainder_url` stays in the payload for a client written against
+    # M60's shape, and is None because the tail already went as a chunk.
+    end = [data for kind, data in events if kind == "tts-end"][0]["tts_output"]
+    assert end["url"] == run.tts_url and end["chunks"] == 2
+    assert end["remainder_url"] is None
+
+
+async def test_early_speech_resumes_after_a_tool_for_the_answer_the_tool_made_possible(tmp_path):
+    """M74. M60 switched early speech off for the whole turn once a tool had
+    run, so a research answer was synthesised whole after its last word —
+    "it took forever after it spit out text". A tool call now opens a new
+    segment: the guess written before it is never spoken after it, and the
+    answer written after it is spoken sentence by sentence like any other,
+    with the tail as the last chunk before the whole-reply clip."""
+    class Agent:
+        def __init__(self) -> None:
+            self.last_result = type(
+                "R", (), {"text": "Bitcoin is at 78,721 dollars. It rose 0.15 percent. Sentiment is neutral.",
+                          "preamble": "Let me look that up. "}
+            )()
+
+        async def converse(self, text, conversation_id=None, on_event=None, **kwargs):
+            yield "Let me look that up. "
+            if on_event is not None:
+                on_event("tool-start", {"name": "web_search", "arguments": {"query": "bitcoin"}})
+                on_event("tool-end", {"name": "web_search", "ok": True})
+            for piece in ("Bitcoin is at 78,721 dollars. ", "It rose 0.15 percent. ", "Sentiment is neutral."):
+                yield piece
+
+    tts = FakeTts()
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        pipeline=Pipeline(id="jarvis", name="Jarvis"),
+        stt=FakeStt("what is bitcoin doing"),
+        tts=tts,
+        converse=Agent().converse,
+        start_stage="intent",
+        end_stage="tts",
+    )
+    events, event_cb = collector()
+    await run.execute(None, event_cb, text="what is bitcoin doing")
+    types = [event_type for event_type, _ in events]
+    chunks = [data["text"] for kind, data in events if kind == "tts-chunk"]
+    # The guess before the tool is not among the chunks; the two finished
+    # sentences after it are, before intent-end; the last is the tail.
+    assert chunks == ["Bitcoin is at 78,721 dollars.", "It rose 0.15 percent.", "Sentiment is neutral."], chunks
+    assert types.index("tts-chunk") < types.index("intent-end"), "the answer waited for its last word"
+    assert "Let me look that up." not in [c[0] for c in tts.calls]
+    assert run.response_text == "Bitcoin is at 78,721 dollars. It rose 0.15 percent. Sentiment is neutral."
+    end = [data for kind, data in events if kind == "tts-end"][0]["tts_output"]
+    assert end["chunks"] == 3 and end["remainder_url"] is None
+
+
+async def test_early_speech_can_be_switched_off(tmp_path):
+    jarvis = Jarvis(tmp_path)
+    run = PipelineRun(
+        jarvis,
+        pipeline=Pipeline(id="jarvis", name="Jarvis"),
+        stt=FakeStt(),
+        tts=FakeTts(),
+        converse=make_converse("The kitchen light is on. Good night, Sir."),
+        early_speech=False,
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(30), silence_pcm(1000)), event_cb)
+    assert "tts-chunk" not in [event_type for event_type, _ in events]
+
+
+# --- one utterance, one turn (M78) ------------------------------------------------
+async def test_a_second_listener_bringing_the_same_words_yields_to_the_first(tmp_path):
+    """"I asked it to set an alarm, why did it do it twice? and why did I hear
+    jarvis twice": the phone's wake word and the console's microphone each
+    heard the sentence and each ran a turn — two alarms, two voices. The
+    second device inside the window yields: no model, no tools, nothing
+    said, and the surface is told which listener is answering."""
+    jarvis = Jarvis(tmp_path)
+    asked: list[str] = []
+
+    def converse_for(name: str):
+        async def converse(text, conversation_id=None, **kwargs):
+            asked.append(f"{name}:{text}")
+            yield "Done, Sir. The alarm is set for half past seven."
+        return converse
+
+    async def turn(device_id: str, text: str):
+        tts = FakeTts()
+        run = PipelineRun(
+            jarvis,
+            pipeline=Pipeline(id="jarvis", name="Jarvis"),
+            stt=FakeStt(text),
+            tts=tts,
+            converse=converse_for(device_id),
+            start_stage="intent",
+            end_stage="tts",
+            device_id=device_id,
+        )
+        events, event_cb = collector()
+        await run.execute(None, event_cb, text=text)
+        return run, events, tts
+
+    first, _events, first_tts = await turn("phone-1", "Set an alarm for half past seven on weekdays.")
+    second, events, second_tts = await turn("console", "set an alarm for half past seven on weekdays")
+    assert asked == ["phone-1:Set an alarm for half past seven on weekdays."], asked
+    assert first.response_text.startswith("Done") and first_tts.calls
+    assert second.response_text == "" and not second_tts.calls, "the second listener spoke too"
+    end = [data for kind, data in events if kind == "intent-end"][0]
+    assert end.get("duplicate_of") == "phone-1"
+
+    # The same device saying it again is a person repeating themselves, not a
+    # duplicate; different words from the other device are a new turn.
+    again, _e, _t = await turn("phone-1", "set an alarm for half past seven on weekdays")
+    assert again.response_text.startswith("Done")
+    other, _e, _t = await turn("console", "Cancel that alarm.")
+    assert other.response_text.startswith("Done")
+
+
+def test_the_listener_window_is_seconds_not_minutes():
+    from jarvis.api.devices import RECENT_LISTENER_WINDOW, RecentListeners
+
+    store = RecentListeners(window=4.0)
+    store.heard("Turn on the lab lights", "phone", now=100.0)
+    assert store.already_heard_from("turn on the lab lights!", "console", now=101.0) == "phone"
+    assert store.already_heard_from("turn on the lab lights", "phone", now=101.0) is None
+    assert store.already_heard_from("turn on the lab lights", "console", now=105.5) is None
+    assert 2.0 <= RECENT_LISTENER_WINDOW <= 8.0
+
+
+# --- not listening while you enrol (M79) -------------------------------------------
+async def test_a_turn_that_starts_during_an_enrolment_yields(tmp_path):
+    """"during enrolment jarvis is listening and tries to respond": the phrases
+    read aloud for a voiceprint reach the listeners as sentences. A client
+    marks the enrolment before it records; a sample refreshes the mark; a
+    turn inside the window yields — no model, nothing said — and says why."""
+    from jarvis.api.speaker import DATA_ENROLLING_UNTIL, mark_enrolling
+
+    jarvis = Jarvis(tmp_path)
+    asked: list[str] = []
+
+    async def converse(text, conversation_id=None, **kwargs):
+        asked.append(text)
+        yield "I could not find a dishwasher, Sir."
+
+    async def turn(text: str):
+        tts = FakeTts()
+        run = PipelineRun(
+            jarvis, pipeline=Pipeline(id="jarvis", name="Jarvis"), stt=FakeStt(text), tts=tts,
+            converse=converse, start_stage="intent", end_stage="tts", device_id="console",
+        )
+        events, event_cb = collector()
+        await run.execute(None, event_cb, text=text)
+        return run, events, tts
+
+    mark_enrolling(jarvis)
+    run, events, tts = await turn("The dishwasher finished its cycle an hour ago.")
+    assert asked == [] and run.response_text == "" and not tts.calls
+    end = [data for kind, data in events if kind == "intent-end"][0]
+    assert end.get("enrolling") is True
+
+    # The window over, the same sentence is a turn again.
+    jarvis.data[DATA_ENROLLING_UNTIL] = 0.0
+    run, _events, tts = await turn("The dishwasher finished its cycle an hour ago.")
+    assert asked == ["The dishwasher finished its cycle an hour ago."] and tts.calls
+
+
+async def test_the_pipeline_hands_the_asking_device_to_a_converse_that_takes_it(tmp_path):
+    """M94: the run's device (the socket's) reaches the agent as `device`
+    — id, name and room — and a converse that cannot take it is left alone."""
+    seen: dict = {}
+
+    async def taking(text, conversation_id=None, *, device=None, **kwargs):
+        seen["device"] = device
+        yield "Very good, Sir."
+
+    async def plain(text, conversation_id=None):
+        yield "Very good, Sir."
+
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hello"), tts=FakeTts(), converse=taking,
+                      start_stage="intent", end_stage="intent", device_id="phone-1")
+    await run.execute(None, None, text="hello")
+    assert seen["device"] == {"id": "phone-1", "name": "", "platform": "", "area": ""}
+
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hello"), tts=FakeTts(), converse=plain,
+                      start_stage="intent", end_stage="intent", device_id="phone-1")
+    await run.execute(None, None, text="hello")
+    assert run.response_text == "Very good, Sir."

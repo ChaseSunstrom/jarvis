@@ -77,6 +77,14 @@ class ConsentGateTest {
     fun connectAndPlantAFile() {
         server = FakeJarvisServer().start()
         TestHooks.configure(context, server.baseUrl, server.expectedToken)
+        // Switched on, or the standing ban denies `delete_file` before the
+        // Tier-3 prompt this whole class is about is ever raised (all four
+        // tests failed that way on CI, in the shared helper, 45 s each).
+        TestHooks.enableAutomation(context)
+        // Muted, for the reason DeviceChannelTest gives: a resumed home screen
+        // dials this test's fake, which speaks the device channel and not the
+        // assist pipeline, and the retries land on the socket under test.
+        TestHooks.muteMicrophone(context)
 
         // A foreground app. Background activity-start restrictions would
         // otherwise decide whether the prompt appears directly or only as a

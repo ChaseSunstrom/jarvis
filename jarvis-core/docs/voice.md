@@ -64,10 +64,15 @@ knowable in advance and guessing it locks you out rather than a stranger.
 voice:
   speaker:
     mode: observe        # off (default) | observe | enforce
+    # threshold: 8.8     # optional; applies to every enrolled person, and
+                         # wins over each profile's own measurement
 ```
 
-The whole thing, including what it is and is not worth, is in
-[`../../docs/voice-identity.md`](../../docs/voice-identity.md).
+More than one person can be enrolled, each under a name (`?label=` on the
+API; the "who is this?" box on the phone and the console), and a turn is
+compared with everyone: the verdict says who, the agent is told, and the
+activity strips draw a stranger. The whole thing, including what it is and is
+not worth, is in [`../../docs/voice-identity.md`](../../docs/voice-identity.md).
 
 ## Pipelines
 
@@ -120,7 +125,7 @@ after it means "that is all the audio".
 
 Events, in order: `run-start`, `wake_word-start`, `wake_word-end`, `stt-start`,
 `stt-vad-start`, `stt-vad-end`, `stt-end`, `intent-start`, `intent-progress`
-(one per streamed token delta), `intent-end`, `tts-start`, `tts-end`,
+(one per streamed token delta), `intent-end`, `tts-chunk` (a sentence synthesised while the model writes the next — M60; zero or more, each with its own `tts_output.url`), `tts-start`, `tts-end` (the whole reply; when chunks were sent, also `chunks` and `remainder_url`, the part they did not cover),
 `run-end`. Failures emit `error` with a `code` and `message`, then `run-end`.
 
 `start_stage` and `end_stage` let a client use part of the pipeline: a phone

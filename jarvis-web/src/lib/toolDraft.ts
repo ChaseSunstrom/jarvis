@@ -169,14 +169,41 @@ export interface Named {
  * when the filter says otherwise, and it goes first because it is the one the
  * button is about to run.
  */
+/**
+ * One row per name, first occurrence wins.
+ *
+ * The Tools page builds its catalogue by unioning two sources, and it only
+ * ever deduped the SECOND against the first. A name appearing twice inside the
+ * first — an MCP server shadowing a built-in, a backend listing a tool twice,
+ * a fixture with an overlap — reached a keyed `{#each}` and threw
+ * `each_key_duplicate`, which in Svelte 5 takes out the whole block. The
+ * visible result was a Test-run control with no options, no error text, and a
+ * disabled button: the page looked like the backend had no tools at all.
+ *
+ * First wins rather than last, so the model's own listing beats a projection
+ * of it.
+ */
+export function dedupeByName<T extends Named>(rows: readonly T[]): T[] {
+	const seen = new Set<string>();
+	const out: T[] = [];
+	for (const row of rows) {
+		const name = String(row?.name ?? '');
+		if (!name || seen.has(name)) continue;
+		seen.add(name);
+		out.push(row);
+	}
+	return out;
+}
+
 export function runnerOptions<T extends Named>(
 	catalogue: readonly T[],
 	visible: readonly T[],
 	selected: string
 ): T[] {
-	if (!selected || visible.some((tool) => tool.name === selected)) return [...visible];
+	const rows = dedupeByName(visible);
+	if (!selected || rows.some((tool) => tool.name === selected)) return rows;
 	const chosen = catalogue.find((tool) => tool.name === selected);
-	return chosen ? [chosen, ...visible] : [...visible];
+	return chosen ? dedupeByName([chosen, ...rows]) : rows;
 }
 
 /**

@@ -47,9 +47,23 @@ class SystemCheckActivity : Activity() {
 
     private fun buildUi(): ViewGroup {
         val root = FrameLayout(this).apply { setBackgroundColor(JarvisUi.BG) }
-        val col = JarvisUi.column(this, padDp = 20)
+        val col = JarvisUi.column(this, padDp = JarvisUi.Space.SCREEN)
 
-        col.addView(JarvisUi.title(this, "SYSTEM CHECK"))
+        // The console's ScreenTitle: sentence case, a lede. The instrumented
+        // suite finds this screen by "SYSTEM CHECK" ignoring case, which a
+        // sentence-case title still satisfies; the button on the settings
+        // screen keeps the caps label the suite taps.
+        col.addView(
+            JarvisUi.screenTitle(
+                this,
+                "System check",
+                "Every permission and special access Jarvis can use: whether it has it, what breaks without it, and where to grant it.",
+            ),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         summary = JarvisUi.hint(this, "")
         col.addView(summary)
@@ -60,7 +74,7 @@ class SystemCheckActivity : Activity() {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = JarvisUi.dp(this@SystemCheckActivity, 12) }
+            ).apply { topMargin = JarvisUi.dp(this@SystemCheckActivity, JarvisUi.Space.GAP) }
         )
 
         col.addView(JarvisUi.label(this, "Requirements"))
@@ -82,22 +96,22 @@ class SystemCheckActivity : Activity() {
             )
         )
         col.addView(
-            JarvisUi.ghost(this, "CRASH LOGS") {
+            JarvisUi.button(this, "CRASH LOGS") {
                 startActivity(Intent(this, CrashLogActivity::class.java))
             },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = JarvisUi.dp(this@SystemCheckActivity, 8) }
+            ).apply { topMargin = JarvisUi.dp(this@SystemCheckActivity, JarvisUi.Space.STEP) }
         )
         col.addView(
-            JarvisUi.ghost(this, "APP INFO") { GrapheneCompat.openAppDetails(this) },
+            JarvisUi.button(this, "APP INFO") { GrapheneCompat.openAppDetails(this) },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = JarvisUi.dp(this@SystemCheckActivity, 8) }
+            ).apply { topMargin = JarvisUi.dp(this@SystemCheckActivity, JarvisUi.Space.STEP) }
         )
-        col.addView(JarvisUi.spacer(this, 24))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -146,34 +160,37 @@ class SystemCheckActivity : Activity() {
         }
 
         listColumn.removeAllViews()
-        for (req in requirements) {
-            listColumn.addView(
-                JarvisUi.checkRow(
-                    context = this,
-                    satisfied = req.satisfied,
-                    essential = req.essential,
-                    label = req.label,
-                    why = req.why,
-                    onClick = {
-                        // Sending the user off to change this toggle makes
-                        // everything observed on the wire so far stale; keeping
-                        // it would leave a fixed problem still on screen.
-                        if (req.id == GrapheneCompat.ID_NETWORK) {
-                            GrapheneCompat.resetNetworkObservations()
-                        }
-                        // A runtime permission is one tap here. Only rows with
-                        // nothing askable left fall through to Settings — this
-                        // screen exists because "go and find it in Settings"
-                        // is how the grants got missed in the first place.
-                        if (!askInPlace(req)) GrapheneCompat.openSettingsFor(this, req)
-                    },
-                ),
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = JarvisUi.dp(this@SystemCheckActivity, 8) }
+        // One panel, a hairline between rows — not a box per requirement.
+        val rows = requirements.map { req ->
+            JarvisUi.checkRow(
+                context = this,
+                satisfied = req.satisfied,
+                essential = req.essential,
+                label = req.label,
+                why = req.why,
+                onClick = {
+                    // Sending the user off to change this toggle makes
+                    // everything observed on the wire so far stale; keeping
+                    // it would leave a fixed problem still on screen.
+                    if (req.id == GrapheneCompat.ID_NETWORK) {
+                        GrapheneCompat.resetNetworkObservations()
+                    }
+                    // A runtime permission is one tap here. Only rows with
+                    // nothing askable left fall through to Settings — this
+                    // screen exists because "go and find it in Settings"
+                    // is how the grants got missed in the first place.
+                    if (!askInPlace(req)) GrapheneCompat.openSettingsFor(this, req)
+                },
             )
         }
+        listColumn.addView(
+            JarvisUi.rows(this, rows),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = JarvisUi.dp(this@SystemCheckActivity, JarvisUi.Space.STEP) }
+        )
+        rows.forEachIndexed { index, row -> JarvisUi.enter(row, index) }
 
         if (JarvisCrashHandler.hasRecords(this)) {
             listColumn.addView(

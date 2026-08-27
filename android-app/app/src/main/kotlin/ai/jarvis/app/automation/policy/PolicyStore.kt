@@ -108,11 +108,18 @@ class PolicyStore(
 
     /**
      * Master switch for the whole automation layer. Off => every dispatch is
-     * denied before any action code runs. Defaults to ON so a fresh install is
-     * still useful; the per-action tiers are what keep it safe.
+     * denied before any action code runs.
+     *
+     * Defaults to **OFF** as of M22. It defaulted to ON, with the argument that
+     * a fresh install should be useful and the per-action tiers keep it safe —
+     * and the tiers do. What changed is what the switch now governs: with the
+     * phone-automation interfaces scaffolded, "automation" on this device
+     * means driving other apps as well as the house, and a capability like
+     * that starts off. Turning it on is one tap in Settings and a sentence
+     * saying what it means.
      */
     override var automationEnabled: Boolean
-        get() = prefs.getBoolean(KEY_ENABLED, true)
+        get() = prefs.getBoolean(KEY_ENABLED, false)
         set(value) {
             prefs.edit().putBoolean(KEY_ENABLED, value).commit()
             notifyChanged()

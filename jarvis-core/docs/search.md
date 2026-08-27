@@ -31,6 +31,9 @@ web:
 Everything they return is **fenced**. Nothing they return can start an action.
 Those two sentences are most of this document.
 
+There is a fifth tool built on the first two — see
+[Deep research](#deep-research) at the end.
+
 ---
 
 ## Enabling SearXNG
@@ -113,6 +116,27 @@ SearXNG configured makes **zero** outbound requests, another that an
 unreachable SearXNG produces exactly **one** request — to the configured host —
 and a third greps the integration's own source for the hostname of every major
 cloud engine.
+
+## The one fallback there is: a second SearXNG
+
+`searxng_url` pointed at an instance elsewhere (a tailnet box, say) whose
+engines cannot reach the web answers every query with `results: []` and a full
+`unresponsive_engines` list — which, read as "no results", becomes a research
+report that says *nothing was found for 4 searches*. So `web.search` tells the
+two apart. An empty answer with every engine responding is final: nothing
+matched. An empty answer with engines unresponsive, a timeout, or an
+unreachable instance is *could not search*, and the client asks one more
+SearXNG: `web: searxng_fallback_url:`, which defaults to the stack's own
+`http://127.0.0.1:8888` whenever `searxng_url` is something else, and to
+nothing when it is not. `""` disables it.
+
+The result says what happened: `instance` is the SearXNG that answered, and
+`notes` carries what the first one did (`SearXNG at https://searx.example
+timed out after 20s`, or `the search engine at … answered nothing — every
+engine failed (google: timeout, duckduckgo: timeout, brave: CAPTCHA)`); a
+research step shows the note beside its result count. When both cannot search,
+the error names each instance and its engines. The fallback is a SearXNG or
+nothing — the cloud-hostname grep above covers it too.
 
 The reason for the belt and braces: a fallback is the most reasonable-looking
 patch anyone could send. "Degrade gracefully when SearXNG is down" reads like
@@ -367,3 +391,52 @@ default. Add the domain to `BROWSER_ACT_ALLOWLIST` *and* `web: act_allowlist:`.
 **`web.fetch` returns 502s about the browser.** Chromium is missing from the
 image, or it cannot start its sandbox. `docker compose logs jarvis-browser`;
 see `../../jarvis-browser/README.md`.
+
+---
+
+## Deep research
+
+One question, several searches, and the pages actually read. `research.run` /
+`deep_research`, configured in the `research:` block and needing the `web:`
+block above to work at all.
+
+```yaml
+research:
+  max_queries: 4       # angles to search the question from
+  max_sources: 8       # pages to actually read
+  per_domain: 2        # from any one site
+  model: ""            # empty = the conversation model
+```
+
+A run plans queries from the question, searches each, dedupes and ranks what
+came back, reads the best pages, takes notes on each, and writes the answer up
+with numbered citations. It reports every one of those as a **step on a task**,
+so `/tasks` in the console shows a real fraction rather than a spinner — and it
+is `open_ended` until the searches say how many pages there are, because a
+percentage before then would be a guess.
+
+It returns a task id, **not an answer**: a run takes a minute or two, and the
+model is told to say it is under way and to invent nothing.
+
+Three things it will not do, each of which is a way this kind of feature fails
+while still producing a document that looks fine:
+
+* **Answer from its own training when it could read nothing.** No readable page
+  means no write-up call at all and a task that says why. An answer synthesised
+  from an empty note list is fluent, uncited and indistinguishable at a glance
+  from a researched one.
+* **Let one site be the report.** `per_domain` caps how many pages come from any
+  host. One vendor's documentation can hold the top twelve results for a
+  technical question, and reading twelve of them reads as thorough while being
+  the opposite.
+* **Cite a page nobody read.** Citations are checked against the pages that were
+  actually read; an invented number is struck to `[?]` rather than quietly
+  dropped, and pages that failed are listed under "Not used" with the reason.
+
+Cancelling from `/tasks` really stops it — the worker checks between every
+step, which is the thing the cancel endpoint warns a worker might not do.
+
+Nothing is remembered unless you ask (`remember: true`). A report is a synthesis
+of pages anyone can write, and long-term memory is read back into every later
+turn; when you do ask, the note is tagged `research` and `from-the-web` so it is
+visible for what it is.

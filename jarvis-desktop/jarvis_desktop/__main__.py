@@ -27,9 +27,11 @@ import dataclasses
 import json
 import logging
 import os
+import shutil
 import signal
 import sys
 import time
+from pathlib import Path
 from typing import Any, Sequence
 
 from . import __version__
@@ -39,6 +41,7 @@ from .channel import DeviceChannel
 from .companion import CompanionHandler, build_asker
 from .config import Config, load_config, normalize_server_url
 from .consent import build_gateway
+from .ipc import IpcServer, write_token
 from .policy import ActionTier, PolicyStore, UserPolicy
 from .presence import PresenceReporter
 from .status import StatusSnapshot, StatusWriter
@@ -148,6 +151,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=5, help="recent audit lines to show (0 for none)"
     )
     status.add_argument("--json", action="store_true")
+
+    enrol = subs.add_parser(
+        "enrol",
+        parents=[common],
+        help="teach Jarvis your voice from this machine",
+        description=(
+            "Record a few phrases and send them to jarvis-core, so it can tell "
+            "your voice from anybody else's. Uses whatever recorder this "
+            "machine already has (arecord, sox, ffmpeg, afrecord); if it has "
+            "none, record a WAV yourself and pass --from-file."
+        ),
+    )
+    enrol.add_argument("--from-file", help="a 16-bit WAV to send instead of recording")
+    enrol.add_argument("--seconds", type=int, default=5, help="length of each sample")
+    enrol.add_argument("--samples", type=int, default=0, help="how many to record (0 = the server's minimum)")
+    enrol.add_argument("--recorder", default="", help="force one of the recorders")
+    enrol.add_argument("--list-recorders", action="store_true", help="show what is available and stop")
+    enrol.add_argument("--status", action="store_true", help="show whose voice is enrolled and stop")
 
     return parser
 
@@ -431,9 +452,18 @@ async def cmd_run(config: Config, once: bool = False) -> int:
     # or the policy store, so a proactive message has no path to running
     # anything — that is wiring, not a rule someone has to remember.
     presence = PresenceReporter(emit)
+
+    # The socket the Electron shell answers prompts over (M07). Started here,
+    # before the gateway that uses it, and torn down with everything else. Its
+    # port is written into the status file so the shell can find it without
+    # being configured — the token is beside it, readable only by this user.
+    shell = IpcServer(token=write_token(config.state_dir))
+    shell_port = await shell.start()
+
     consent = build_gateway(
         headless_deny=config.headless_deny,
         on_interaction=presence.note_interaction,
+        shell=shell,
     )
     registry = build_registry(config, policy, audit, consent=consent)
     channel = DeviceChannel(config, registry)
@@ -450,6 +480,10 @@ async def cmd_run(config: Config, once: bool = False) -> int:
             consent_backend=consent.describe(),
             action_count=len(registry),
             connected=channel.registered,
+            # How the shell finds the socket. In the status file rather than an
+            # environment variable, because the shell is started by a person
+            # (or by their session), not by this process.
+            shell_port=shell_port,
         ),
     )
 
@@ -509,7 +543,109 @@ async def cmd_run(config: Config, once: bool = False) -> int:
     return 0
 
 
-SUBCOMMANDS = ("run", "tiers", "policy", "audit", "cron", "doctor", "status")
+def cmd_enrol(config: Config, args: argparse.Namespace) -> int:
+    """Record phrases and send them to jarvis-core's speaker profile.
+
+    Kept in this file with the other commands, and thin: everything about
+    recorders and WAV files is in `enrol.py`, and everything about the HTTP is
+    in `enrol_client.py`, so this is the conversation and nothing else.
+    """
+    from .enrol import RECORDERS, EnrolError, find_recorder, read_wav, record_wav
+    from .enrol_client import SpeakerClient, SpeakerError
+
+    if args.list_recorders:
+        found = [r for r in RECORDERS if shutil.which(r.name)]
+        for recorder in RECORDERS:
+            mark = "yes" if recorder in found else "no "
+            print(f"  {mark}  {recorder.name.ljust(10)} {recorder.install}")
+        if not found:
+            print()
+            print("None available. Record a WAV yourself and use --from-file.")
+        return 0 if found else 1
+
+    try:
+        client = SpeakerClient.from_config(config)
+    except SpeakerError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
+
+    try:
+        status = client.status()
+    except SpeakerError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
+
+    if not status.get("supported", True):
+        print("This Jarvis has no speaker verification, so there is nothing to enrol into.")
+        return 1
+
+    enrolled = int(status.get("samples") or 0)
+    minimum = int(status.get("min_samples") or 3)
+    print(f"Voice profile: {enrolled} sample(s) recorded, {minimum} needed.")
+    if args.status:
+        return 0
+
+    # --- a file, if one was given --------------------------------------------
+    if args.from_file:
+        try:
+            sample = read_wav(Path(args.from_file).read_bytes())
+            result = client.enrol(sample)
+        except (EnrolError, SpeakerError, OSError) as err:
+            print(f"error: {err}", file=sys.stderr)
+            return 1
+        print(f"Accepted. {result.get('samples', '?')} sample(s) now.")
+        return 0
+
+    # --- otherwise record ----------------------------------------------------
+    recorder = find_recorder(args.recorder)
+    if recorder is None:
+        print(
+            "No recorder found on this machine. Install one of "
+            f"{', '.join(r.name for r in RECORDERS)}, or record a 16-bit WAV "
+            "yourself and pass --from-file.",
+            file=sys.stderr,
+        )
+        return 1
+
+    prompts = [str(p) for p in (status.get("prompts") or []) if str(p).strip()]
+    wanted = args.samples or max(1, minimum - enrolled)
+    if not prompts:
+        prompts = ["Say a sentence in your normal speaking voice."]
+    print(f"Recording with {recorder.name}. {args.seconds}s per phrase, {wanted} to go.")
+
+    accepted = 0
+    for index in range(wanted):
+        prompt = prompts[index % len(prompts)]
+        print()
+        print(f"  [{index + 1}/{wanted}]  {prompt}")
+        try:
+            input("  press enter, then read it aloud… ")
+        except EOFError:
+            # Piped stdin. Recording immediately is better than refusing, and
+            # the countdown below is what makes that usable.
+            print()
+        try:
+            raw = record_wav(recorder, args.seconds)
+            sample = read_wav(raw)
+            result = client.enrol(sample)
+        except (EnrolError, SpeakerError) as err:
+            # A refusal is jarvis-core's own sentence — "that sample has no
+            # measurable pitch, it is too quiet" — and it is the actionable
+            # part, so it is shown rather than replaced.
+            print(f"  not accepted: {err}")
+            continue
+        accepted += 1
+        print(f"  accepted ({result.get('samples', '?')} in the profile)")
+
+    print()
+    if accepted:
+        print(f"Done. {accepted} sample(s) accepted.")
+        return 0
+    print("Nothing was accepted. Check the microphone and try again.", file=sys.stderr)
+    return 1
+
+
+SUBCOMMANDS = ("run", "tiers", "policy", "audit", "cron", "doctor", "status", "enrol")
 
 #: Global flags that take a value, so the scanner below skips both tokens.
 _GLOBAL_VALUE_FLAGS = ("-c", "--config", "--log-file")
@@ -567,6 +703,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_doctor(config)
         if command == "status":
             return cmd_status(config, args)
+        if command == "enrol":
+            return cmd_enrol(config, args)
     except KeyboardInterrupt:
         return 130
     except ValueError as exc:

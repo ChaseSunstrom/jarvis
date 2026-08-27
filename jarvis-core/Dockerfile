@@ -29,9 +29,9 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' \
         /etc/apt/sources.list 2>/dev/null || true; \
     ( timeout 180 apt-get -o Acquire::ForceIPv4=true update \
       && timeout 180 apt-get -o Acquire::ForceIPv4=true install -y \
-           --no-install-recommends tzdata curl \
+           --no-install-recommends tzdata curl git \
       && rm -rf /var/lib/apt/lists/* ) \
-    || echo "WARN: apt failed/timed out. The image is fully functional; only named-timezone resolution (see the /etc/localtime mount in docker-compose.yml) and the curl debugging convenience are affected."
+    || echo "WARN: apt failed/timed out. Voice and the house work; named-timezone resolution (see the /etc/localtime mount in docker-compose.yml), the curl debugging convenience and CODING JOBS are affected — the code integration needs git on this PATH and reports 'git is not installed' without it."
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -46,6 +46,8 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY jarvis ./jarvis
+# The environment catalogue the console lists (M114): every variable .env.example names.
+COPY .env.example ./.env.example
 # Host build caches (3.11 .pyc in a 3.12 image) are dead weight; drop them.
 RUN find /srv/jarvis -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 

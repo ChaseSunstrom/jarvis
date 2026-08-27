@@ -31,7 +31,10 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_DISCOVERY_PREFIX = "homeassistant"
 
 # Components we knowingly ignore rather than warn about.
-IGNORED_COMPONENTS = frozenset({"device_automation", "tag", "event", "update", "scene"})
+#: Components discovery never turns into an entity. `event` is NOT here any
+#: more: Zigbee2MQTT 2.x publishes button presses and doorbells as `event`,
+#: and a house whose buttons are invisible is not a house Jarvis runs (M57).
+IGNORED_COMPONENTS = frozenset({"device_automation", "tag", "update", "scene"})
 
 TOPIC_KEY_SUFFIX = "_topic"
 
@@ -113,11 +116,19 @@ class MqttDiscovery:
         client: MqttClientBase,
         platforms: "MqttPlatforms",
         prefix: str = DEFAULT_DISCOVERY_PREFIX,
+        allow_ids: tuple[str, ...] = (),
+        deny_ids: tuple[str, ...] = (),
     ) -> None:
         self.jarvis = jarvis
         self.client = client
         self.platforms = platforms
         self.prefix = prefix.rstrip("/")
+        #: Glob patterns matched against a config's unique_id and its device
+        #: identifiers. A radio source (rtl_433) hears the whole street's tyre
+        #: sensors and weather stations; an allowlist keeps the neighbours out.
+        #: Empty allow = everything; deny wins.
+        self.allow_ids = tuple(str(p) for p in allow_ids if str(p).strip())
+        self.deny_ids = tuple(str(p) for p in deny_ids if str(p).strip())
         self.entities: dict[str, MqttEntity] = {}
         self._children: dict[str, list[str]] = {}
         self._unsubs: list[Any] = []
@@ -209,11 +220,33 @@ class MqttDiscovery:
             await self.async_remove(stale)
         self._children[discovery_id] = seen
 
+    def wanted(self, config: dict[str, Any], discovery_id: str = "") -> bool:
+        """Whether the allow/deny patterns let this config become an entity."""
+        import fnmatch
+
+        device = config.get("device") if isinstance(config.get("device"), dict) else {}
+        identifiers = device.get("identifiers") or device.get("ids") or []
+        if isinstance(identifiers, str):
+            identifiers = [identifiers]
+        names = [str(config.get("unique_id") or ""), str(discovery_id or "")] + [
+            str(i) for i in (identifiers if isinstance(identifiers, list) else [])
+        ]
+        names = [n for n in names if n]
+        for pattern in self.deny_ids:
+            if any(fnmatch.fnmatch(n, pattern) for n in names):
+                return False
+        if not self.allow_ids:
+            return True
+        return any(fnmatch.fnmatch(n, pattern) for pattern in self.allow_ids for n in names)
+
     async def _async_apply(
         self, discovery_id: str, component: str, config: dict[str, Any]
     ) -> bool:
         if component in IGNORED_COMPONENTS:
             _LOGGER.debug("Ignoring discovery component %s (%s)", component, discovery_id)
+            return False
+        if not self.wanted(config, discovery_id):
+            _LOGGER.info("Discovery %s is not on the allowlist; ignored", discovery_id)
             return False
         if component not in ENTITY_CLASSES:
             _LOGGER.info(

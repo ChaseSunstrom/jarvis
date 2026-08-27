@@ -1,0 +1,45 @@
+{
+  "$comment": "The activity strip's vocabulary (M52). Read by jarvis-web/src/lib/activity.test.ts and by android-app/tools/activity_mirror_test.py (M61): the kinds a row can be, the bus events that make one, which kind each event makes, and the cap. Change it here, and both mirrors fail until they agree. The speaker row (M71) has its own field table in speaker_verdict.json, which both strips read for the row rule.",
+  "kinds": [
+    "tool",
+    "task",
+    "sensor",
+    "camera",
+    "memory",
+    "moment",
+    "approval",
+    "speaker",
+    "error"
+  ],
+  "cap": 12,
+  "events": {
+    "jarvis_tool_started": "tool",
+    "jarvis_tool_finished": "tool",
+    "jarvis_task_added": "task",
+    "jarvis_task_updated": "task",
+    "state_changed": "sensor",
+    "jarvis_mqtt_event": "sensor",
+    "vision_look_started": "camera",
+    "vision_look_finished": "camera",
+    "vision_look_denied": "camera",
+    "memory_changed": "memory",
+    "jarvis_notification": "moment",
+    "jarvis_approval_required": "approval",
+    "jarvis_approval_resolved": "approval",
+    "jarvis_speaker_verdict": "speaker"
+  },
+  "sensor_domains": [
+    "sensor",
+    "binary_sensor",
+    "climate",
+    "weather",
+    "number",
+    "event",
+    "device_tracker"
+  ],
+  "states": [
+    "live",
+    "done",
+    "failed"
+  ]
+}

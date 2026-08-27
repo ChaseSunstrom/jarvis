@@ -3,12 +3,24 @@ package ai.jarvis.app
 import ai.jarvis.app.assist.JarvisConversation
 import ai.jarvis.app.companion.CompanionMessageHandler
 import ai.jarvis.app.companion.ConversationAskHost
+import ai.jarvis.app.assist.ActivityRows
+import ai.jarvis.app.assist.KnowledgeGraph
 import ai.jarvis.app.assist.ToolActivityView
 import ai.jarvis.app.assist.ToolRun
 import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.ApprovalBridge
 import ai.jarvis.app.ui.JarvisOrbView
+import ai.jarvis.app.ui.ActivityStrip
+import ai.jarvis.app.ui.KnowledgeGraphView
+import ai.jarvis.app.surface.SurfaceView
+import ai.jarvis.app.surface.SurfaceWatch
+import ai.jarvis.app.surface.TaskDockView
+import ai.jarvis.app.tasks.TaskWatch
+import ai.jarvis.app.channel.DeviceChannelHost
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import ai.jarvis.app.ui.JarvisUi
 import ai.jarvis.app.ui.PermissionBridge
 import ai.jarvis.app.ui.ReadabilityScrim
@@ -21,10 +33,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.graphics.Typeface
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.text.InputType
 import android.text.TextUtils
 import android.util.Log
 import android.util.TypedValue
@@ -33,8 +45,11 @@ import android.view.HapticFeedbackConstants
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.ViewTreeObserver
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * Siri-like activation surface for ACTION_ASSIST / ACTION_VOICE_COMMAND — the
@@ -49,7 +64,16 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     private lateinit var captionView: TextView
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
+    private lateinit var typedView: EditText
+    // What the house has put up, and what it is working on (M103): the
+    // console's surface and task dock, said in lines under the strip.
+    private lateinit var surfaceView: SurfaceView
+    private lateinit var taskDockView: TaskDockView
+    private var unlistenSurface: (() -> Unit)? = null
+    private var unlistenDock: (() -> Unit)? = null
     private lateinit var toolActivityView: ToolActivityView
+    private lateinit var activityStrip: ActivityStrip
+    private lateinit var knowledgeGraphView: KnowledgeGraphView
     private lateinit var config: JarvisConfig
     private var convo: JarvisConversation? = null
 
@@ -127,11 +151,11 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
      */
     private fun sizeAsCard() {
         val screen = resources.displayMetrics.widthPixels
-        val width = minOf(screen - JarvisUi.dp(this, 32), JarvisUi.dp(this, 340))
+        val width = minOf(screen - JarvisUi.dp(this, JarvisUi.Size.SHEET), JarvisUi.dp(this, JarvisUi.Size.PANEL_MAX))
         window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
         window.attributes = window.attributes.also {
             it.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            it.y = JarvisUi.dp(this, 56)
+            it.y = JarvisUi.dp(this, JarvisUi.Size.DROP)
         }
         blurBehind()
     }
@@ -161,7 +185,7 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     }
 
     private fun buildUi(): ViewGroup {
-        val pad = JarvisUi.dp(this, 20)
+        val pad = JarvisUi.dp(this, JarvisUi.Space.SCREEN)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -195,12 +219,15 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
 
         // The state readout the orb used to paint itself. A real view, so it is
         // in the accessibility tree and a test can read it.
+        // The console's `.cap`: the chrome face, the smallest step, wide
+        // tracking, always the accent at rest — the reactor above it carries
+        // the state's colour. It was tinted per state and tracked by hand.
         captionView = TextView(this).apply {
             text = "LISTENING"
-            setTextColor(JarvisOrbView.Mode.LISTENING.color)
+            setTextColor(JarvisTokens.Color.ACCENT_DEEP)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.LABEL)
-            letterSpacing = 0.2f
-            typeface = Typeface.MONOSPACE
+            letterSpacing = JarvisUi.TRACK_WIDE
+            typeface = JarvisUi.MONO_FACE
             gravity = Gravity.CENTER
             setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.ROW), 0, 0)
             // "A real view, so it is in the accessibility tree" — it was in the
@@ -215,9 +242,28 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         // What the turn is DOING, above what it is saying. Hidden until there
         // is something to show, so an ordinary question looks exactly as it did.
         toolActivityView = ToolActivityView(this).apply {
-            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 10), 0, 0)
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.ROW), 0, 0)
         }
         root.addView(toolActivityView, fullWidth())
+        // And what the HOUSE did around the turn (M61): the same rows the console draws.
+        activityStrip = ActivityStrip(this)
+        root.addView(activityStrip, fullWidth())
+        // And what the house has PUT UP and is WORKING ON (M103): the surface's
+        // panels one line each, the task dock with its bars — hidden until
+        // there is something, like the tool activity above.
+        surfaceView = SurfaceView(this).apply {
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.ROW), 0, 0)
+            onDismiss = { panelId -> dismissPanel(panelId) }
+        }
+        root.addView(surfaceView, fullWidth())
+        taskDockView = TaskDockView(this).apply {
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.ROW), 0, 0)
+        }
+        root.addView(taskDockView, fullWidth())
+        // Sized by the graph itself (the console's 2:1 box), not a number
+        // typed here.
+        knowledgeGraphView = KnowledgeGraphView(this)
+        root.addView(knowledgeGraphView, fullWidth())
 
         transcriptView = JarvisUi.transcriptView(this).apply {
             // Brighter than the shared transcript colour, for the same reason
@@ -225,7 +271,7 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
             setTextColor(JarvisUi.TEXT)
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 12), 0, 0)
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.GAP), 0, 0)
         }
         responseView = JarvisUi.responseView(this).apply {
             maxLines = 4
@@ -236,14 +282,40 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
             // drawn over whatever the dim is over rather than needing a slab
             // behind it.
             view.setShadowLayer(
-                JarvisUi.dp(this, 6).toFloat(),
+                JarvisUi.dp(this, JarvisUi.Space.SNUG).toFloat(),
                 0f,
-                JarvisUi.dp(this, 1).toFloat(),
-                0xF0000308.toInt(),
+                JarvisUi.dp(this, JarvisUi.Space.HAIRLINE).toFloat(),
+                JarvisTokens.Color.SCRIM_HEAVY,
             )
         }
         root.addView(transcriptView, fullWidth())
         root.addView(responseView, fullWidth())
+
+        // Type to Jarvis (M98): the console's typed form, on the phone. One
+        // line, sent on the keyboard's action; the same pipeline as speech.
+        typedView = EditText(this).apply {
+            hint = "Type to Jarvis"
+            setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            imeOptions = EditorInfo.IME_ACTION_SEND
+            setTextColor(JarvisUi.TEXT)
+            setHintTextColor(JarvisTokens.Color.TEXT_DIM)
+            contentDescription = "Type to Jarvis"
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.GAP), 0, 0)
+            setOnEditorActionListener { view, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_SEND) {
+                    val typed = view.text.toString()
+                    view.text = null
+                    convo?.sendTyped(typed)
+                    true
+                } else {
+                    false
+                }
+            }
+            // A tap in the field must not be the tap that closes the screen.
+            setOnClickListener { }
+        }
+        root.addView(typedView, fullWidth())
 
         root.setOnClickListener { finish() }
         return root
@@ -297,7 +369,6 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     override fun onMode(mode: JarvisOrbView.Mode, label: String) {
         orbView.setMode(mode)
         captionView.text = label
-        captionView.setTextColor(mode.color)
     }
 
     override fun onAmplitude(level: Float) = orbView.setAmplitude(level)
@@ -309,11 +380,17 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     override fun onError(message: String) {
         responseView.text = message
         captionView.text = "ERROR"
-        captionView.setTextColor(JarvisOrbView.Mode.ERROR.color)
         orbView.setMode(JarvisOrbView.Mode.ERROR)
     }
 
     override fun onTools(run: ToolRun) = toolActivityView.render(run)
+    override fun onActivity(rows: ActivityRows) = activityStrip.render(rows)
+    override fun onKnowledge(nodes: List<KnowledgeGraph.Node>, edges: List<KnowledgeGraph.Edge>) = knowledgeGraphView.render(nodes, edges)
+    override fun onKnowledgePulse(ids: List<String>) = knowledgeGraphView.pulse(ids)
+    override fun onWork() = orbView.work()
+    override fun onLooking(looking: Boolean) {
+        orbView.looking = looking
+    }
 
     override fun onIdle() { if (!isFinishing) finish() }
 
@@ -370,6 +447,9 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     }
 
     override fun onStart() {
+        // The surface and the dock follow the house while the screen is up (M103).
+        unlistenSurface = SurfaceWatch.listen { panels -> runOnUiThread { if (::surfaceView.isInitialized) surfaceView.render(panels) } }
+        unlistenDock = TaskWatch.listen { rows -> runOnUiThread { if (::taskDockView.isInitialized) taskDockView.render(rows) } }
         super.onStart()
         // Back on screen — either from the very first frame, or because a
         // prompt of ours has just been answered and handed the foreground back.
@@ -400,6 +480,8 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
      * app itself raised.
      */
     override fun onStop() {
+        unlistenSurface?.invoke(); unlistenSurface = null
+        unlistenDock?.invoke(); unlistenDock = null
         super.onStop()
         if (isFinishing) return
         if (!ourOwnPromptIsUp()) {
@@ -450,6 +532,22 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         if (!isFinishing) {
             Log.i(TAG, "nothing came back from the prompt; closing the conversation")
             finish()
+        }
+    }
+
+    /**
+     * Take a panel down, through the same `jarvis/surface/remove` the console
+     * sends, on the device channel. The event that follows redraws the list;
+     * nothing is removed locally on faith.
+     */
+    private fun dismissPanel(panelId: String) {
+        val channel = DeviceChannelHost.channel() ?: return
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                channel.request(SurfaceWatch.TYPE_REMOVE, SurfaceWatch.removeArgs(panelId))
+            } catch (t: Throwable) {
+                android.util.Log.w("JarvisAssist", "could not take panel $panelId down", t)
+            }
         }
     }
 

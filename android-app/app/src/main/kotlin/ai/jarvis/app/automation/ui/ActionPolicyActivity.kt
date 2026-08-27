@@ -64,7 +64,7 @@ class ActionPolicyActivity : Activity() {
         JarvisUi.immersive(this)
 
         val column = JarvisUi.column(this)
-        column.addView(JarvisUi.title(this, "WHAT JARVIS MAY DO"))
+        column.addView(JarvisUi.screenTitle(this, "What Jarvis may do", "Which actions run without asking, which ask every time, and which are refused."))
         column.addView(
             JarvisUi.hint(
                 this,
@@ -77,14 +77,14 @@ class ActionPolicyActivity : Activity() {
                     "they are marked below."
             )
         )
-        column.addView(JarvisUi.spacer(this, 12))
+        column.addView(JarvisUi.spacer(this, JarvisUi.Space.GAP))
 
         rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         column.addView(rows, matchWidth())
 
-        column.addView(JarvisUi.spacer(this, 16))
+        column.addView(JarvisUi.spacer(this, JarvisUi.Space.SECTION))
         column.addView(
-            JarvisUi.ghost(this, "BACK TO ASK FOR EVERYTHING") {
+            JarvisUi.button(this, "BACK TO ASK FOR EVERYTHING") {
                 store?.clearAllPolicies()
                 toast("Every action is back to ASK.")
                 refresh()
@@ -163,7 +163,7 @@ class ActionPolicyActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = JarvisUi.panel(this@ActionPolicyActivity)
-            val pad = JarvisUi.dp(this@ActionPolicyActivity, 14)
+            val pad = JarvisUi.dp(this@ActionPolicyActivity, JarvisUi.Space.SECTION)
             setPadding(pad, pad, pad, pad)
         }
         panel.addView(JarvisUi.label(this, actionId))
@@ -174,7 +174,7 @@ class ActionPolicyActivity : Activity() {
             TextView(this).apply {
                 text = tierBlurb(tier)
                 setTextColor(JarvisUi.DIM)
-                textSize = 11f
+                textSize = JarvisUi.Type.LABEL
             }
         )
 
@@ -200,7 +200,7 @@ class ActionPolicyActivity : Activity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(panel, matchWidth())
-            addView(JarvisUi.spacer(this@ActionPolicyActivity, 10))
+            addView(JarvisUi.spacer(this@ActionPolicyActivity, JarvisUi.Space.ROW))
         }
     }
 

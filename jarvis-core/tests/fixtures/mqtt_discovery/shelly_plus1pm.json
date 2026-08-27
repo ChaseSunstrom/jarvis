@@ -1,0 +1,29 @@
+{
+  "source": "Shelly Plus 1PM, Gen2 firmware 1.4 — MQTT status, no discovery",
+  "device_id": "shellyplus1pm-441793d69718",
+  "status_topic": "shellyplus1pm-441793d69718/status/switch:0",
+  "status": {
+    "id": 0,
+    "source": "MQTT",
+    "output": true,
+    "apower": 12.3,
+    "voltage": 231.7,
+    "current": 0.06,
+    "aenergy": {
+      "total": 4521.7,
+      "by_minute": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "minute_ts": 1787725920
+    },
+    "temperature": {
+      "tC": 43.1,
+      "tF": 109.6
+    }
+  },
+  "online_topic": "shellyplus1pm-441793d69718/online",
+  "online": "true",
+  "command_topic": "shellyplus1pm-441793d69718/command/switch:0"
+}

@@ -1419,6 +1419,66 @@ async def test_remember_refuses_a_turn_that_has_read_untrusted_content(tmp_path)
     assert (await call(jarvis, "memory", "list"))["count"] == 0
 
 
+async def test_a_paraphrase_of_a_note_is_the_same_note(tmp_path):
+    """Turn one of memory-forget left two notes — the user's "the shed key is
+    under the second flowerpot" and the extractor's "the speaker keeps the shed
+    key under the second flowerpot" — so "forget the shed key" was a tie. A
+    paraphrase whose words contain the other's is the same fact; from the
+    extractor it is not kept, from the user it replaces the old wording."""
+    from jarvis.integrations.memory import get_memory
+
+    jarvis = await setup_memory(tmp_path)
+    first = await call(jarvis, "memory", "add", text="the shed key is under the second flowerpot")
+    assert first["stored"] is True
+
+    memory = get_memory(jarvis)
+    extracted = await memory.async_add(
+        text="The speaker keeps the shed key under the second flowerpot.", source="extracted"
+    )
+    assert extracted["stored"] is False and "already remembered" in extracted["reason"]
+    assert (await call(jarvis, "memory", "list"))["count"] == 1
+
+    # The user's own restatement wins over the old wording, once.
+    again = await call(jarvis, "memory", "add", text="the shed key lives under the second flowerpot by the door")
+    assert again["stored"] is True and again.get("replaced")
+    listing = await call(jarvis, "memory", "list")
+    assert listing["count"] == 1 and "by the door" in listing["entries"][0]["text"]
+
+    # A different fact that happens to share two words is not a duplicate.
+    other = await call(jarvis, "memory", "add", text="the spare key is on the hook by the door")
+    assert other["stored"] is True and not other.get("replaced")
+    assert (await call(jarvis, "memory", "list"))["count"] == 2
+
+    # And forgetting the shed key is no longer a tie.
+    gone = await tools(jarvis).call("forget", {"query": "shed key"})
+    assert gone["count"] == 1
+
+
+async def test_forget_that_matched_nothing_says_so_to_the_model(tmp_path):
+    """A count of zero with a reason was read as success: on the live rig the
+    model answered "Forgotten, Sir" over `{"count": 0}` and the store still
+    held the fact. The result now says, in the reply's own words, that nothing
+    was forgotten — and for two matches, that it must ask which."""
+    jarvis = await setup_memory(tmp_path)
+    await call(jarvis, "memory", "add", text="the shed key is under the second flowerpot")
+
+    nothing = await tools(jarvis).call("forget", {"query": "the boiler's serial number"})
+    assert nothing["count"] == 0
+    assert nothing["message"].startswith("NOTHING was forgotten")
+    assert "do not say it is forgotten" in nothing["message"]
+    assert (await call(jarvis, "memory", "list"))["count"] == 1
+
+    await call(jarvis, "memory", "add", text="the spare key is on the hook by the door")
+    two = await tools(jarvis).call("forget", {"query": "key"})
+    assert two["count"] == 0 and len(two["candidates"]) == 2
+    assert two["message"].startswith("NOTHING was forgotten") and "Ask which" in two["message"]
+    assert (await call(jarvis, "memory", "list"))["count"] == 2
+
+    one = await tools(jarvis).call("forget", {"query": "shed key"})
+    assert one["count"] == 1 and one["message"].startswith("Forgotten")
+    assert (await call(jarvis, "memory", "list"))["count"] == 1
+
+
 async def test_forget_refuses_a_turn_that_has_read_untrusted_content(tmp_path):
     """Deleting is a durable write too, and nothing puts a note back."""
     from jarvis.api.devices import mark_untrusted
@@ -2108,3 +2168,25 @@ async def test_the_user_can_still_clear_everything_through_the_service(tmp_path)
 
     assert result["count"] == 1
     assert (await call(jarvis, "memory", "list"))["count"] == 0
+
+
+async def test_what_did_you_learn_today_recalls_what_was_kept_today(tmp_path):
+    """The nineteenth house (27 Aug 2026): "Mira reacts badly to peanuts" was
+    kept, and "What did you learn about me today?" recalled the profile and
+    said "nothing else recorded today" — the words of the question matched
+    nothing in the fact. A question about the recent past returns what was
+    kept recently, newest first, beside whatever the words matched."""
+    from jarvis.core import Context
+
+    jarvis = await setup_memory(tmp_path)
+    registry = jarvis.data["llm_tools"]
+    context = Context(origin="api")
+    kept = await registry.call("remember", {"text": "Mira, the youngest in this house, reacts badly to peanuts"}, context=context)
+    assert kept.get("stored") is not False, kept
+    answer = await registry.call("recall", {"query": "What did you learn about me today?"}, context=context)
+    texts = [m["text"] for m in answer["memories"]]
+    assert any("peanuts" in t for t in texts), texts
+    # The same words, asked as a plain search, need the switch said out loud.
+    plain = await registry.call("recall", {"query": "combination", "recent_hours": 24}, context=context)
+    assert any("peanuts" in m["text"] for m in plain["memories"])
+    await jarvis.async_stop()

@@ -676,6 +676,357 @@ class WebSocketHandler:
         )
 
     # conversation history — what the console's chat mode lists and reopens
+    async def _cmd_task_list(self, msg: dict[str, Any]) -> Any:
+        return common.task_list_payload(
+            self.jarvis,
+            kind=str(msg.get("kind") or "") or None,
+            active_only=bool(msg.get("active")),
+        )
+
+    async def _cmd_task_get(self, msg: dict[str, Any]) -> Any:
+        return common.task_get_payload(self.jarvis, str(msg.get("task_id") or ""))
+
+    # --- dashboards + metrics ---------------------------------------------
+    #
+    # `self.user_id` is the token this socket authenticated with, and a token IS
+    # the identity here (there are no user accounts). So "this user's
+    # dashboards" is "this token's", and the server stamps the owner rather than
+    # trusting a client to say whose board it is saving.
+    async def _cmd_dashboards_list(self, msg: dict[str, Any]) -> Any:
+        return common.dashboards_list_payload(self.jarvis, self.user_id or "")
+
+    async def _cmd_dashboards_save(self, msg: dict[str, Any]) -> Any:
+        return await common.async_dashboard_save(
+            self.jarvis, msg.get("dashboard"), self.user_id or ""
+        )
+
+    async def _cmd_dashboards_delete(self, msg: dict[str, Any]) -> Any:
+        return await common.async_dashboard_delete(
+            self.jarvis, str(msg.get("id") or ""), self.user_id or ""
+        )
+
+    # --- the surface (M83): what Jarvis has put up on the voice screen ------
+    def _surface(self) -> Any:
+        from ..integrations.surface import get_surface
+
+        surface = get_surface(self.jarvis)
+        if surface is None:
+            raise common.ApiError("unsupported", "this backend has no surface integration", 501)
+        return surface
+
+    async def _cmd_surface_list(self, msg: dict[str, Any]) -> Any:
+        return self._surface().as_payload()
+
+    async def _cmd_surface_place(self, msg: dict[str, Any]) -> Any:
+        panel = msg.get("panel")
+        if not isinstance(panel, dict):
+            raise common.ApiError("invalid_format", "place needs a panel", 400)
+        return await self._surface().async_place(panel)
+
+    async def _cmd_surface_move(self, msg: dict[str, Any]) -> Any:
+        # `panel`, not `id`: `id` is the frame's own sequence number, and the
+        # first draft used it — the mock moved nothing and told nobody.
+        return await self._surface().async_move(
+            str(msg.get("panel") or ""), x=msg.get("x"), y=msg.get("y"), w=msg.get("w"), h=msg.get("h")
+        )
+
+    async def _cmd_surface_remove(self, msg: dict[str, Any]) -> Any:
+        return await self._surface().async_remove(str(msg.get("panel") or ""))
+
+    async def _cmd_surface_clear(self, msg: dict[str, Any]) -> Any:
+        return await self._surface().async_clear()
+
+    async def _cmd_sensors_history(self, msg: dict[str, Any]) -> Any:
+        """An entity's recent numeric history as a chart's series (M83)."""
+        from ..integrations.surface import async_history_series
+
+        try:
+            hours = float(msg.get("hours") or 24.0)
+        except (TypeError, ValueError):
+            hours = 24.0
+        return await async_history_series(self.jarvis, str(msg.get("entity_id") or ""), hours)
+
+    async def _cmd_metrics_sources(self, msg: dict[str, Any]) -> Any:
+        return await common.async_metrics_sources(self.jarvis)
+
+    async def _cmd_metrics_query(self, msg: dict[str, Any]) -> Any:
+        return await common.async_metrics_query(self.jarvis, msg)
+
+    async def _cmd_sensors_readings(self, msg: dict[str, Any]) -> Any:
+        return common.sensors_readings_payload(
+            self.jarvis, area=str(msg.get("area") or ""), limit=int(msg.get("limit") or 0)
+        )
+
+    async def _cmd_sky_summary(self, msg: dict[str, Any]) -> Any:
+        return await common.async_sky_summary(self.jarvis)
+
+    async def _cmd_vision_still(self, msg: dict[str, Any]) -> Any:
+        # The requester is this socket's token, in the vision integration's
+        # `origin:user` spelling — the payload never gets to say who is asking,
+        # or the audit trail would be worth nothing.
+        return await common.async_vision_still(
+            self.jarvis,
+            camera=str(msg.get("camera") or ""),
+            reason=str(msg.get("reason") or ""),
+            requester=f"api:{self.user_id}" if self.user_id else "api",
+        )
+
+    async def _cmd_task_log(self, msg: dict[str, Any]) -> Any:
+        return common.task_log_payload(
+            self.jarvis, str(msg.get("task_id") or ""), int(msg.get("limit") or 200)
+        )
+
+    async def _cmd_task_retry(self, msg: dict[str, Any]) -> Any:
+        return await common.async_retry_task(self.jarvis, str(msg.get("task_id") or ""))
+
+    async def _cmd_task_cancel(self, msg: dict[str, Any]) -> Any:
+        return await common.async_cancel_task(self.jarvis, str(msg.get("task_id") or ""))
+
+    async def _cmd_task_delete(self, msg: dict[str, Any]) -> Any:
+        return await common.async_delete_task(self.jarvis, str(msg.get("task_id") or ""))
+
+    async def _cmd_task_clear_finished(self, msg: dict[str, Any]) -> Any:
+        return await common.async_clear_finished_tasks(self.jarvis)
+
+    async def _cmd_schedule_list(self, msg: dict[str, Any]) -> Any:
+        return common.schedule_list_payload(self.jarvis)
+
+    async def _cmd_schedule_add(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_add_scheduled(self.jarvis, payload)
+
+    async def _cmd_schedule_remove(self, msg: dict[str, Any]) -> Any:
+        return await common.async_remove_scheduled(self.jarvis, str(msg.get("job_id") or ""))
+
+    async def _cmd_schedule_enabled(self, msg: dict[str, Any]) -> Any:
+        return await common.async_enable_scheduled(
+            self.jarvis, str(msg.get("job_id") or ""), bool(msg.get("enabled", True))
+        )
+
+    async def _cmd_tools_list(self, msg: dict[str, Any]) -> Any:
+        return common.tools_list_payload(self.jarvis)
+
+    async def _cmd_tools_call(self, msg: dict[str, Any]) -> Any:
+        return await common.async_call_tool(
+            self.jarvis,
+            str(msg.get("name") or ""),
+            msg.get("arguments"),
+            context=self._context(),
+        )
+
+    async def _cmd_code_list(self, msg: dict[str, Any]) -> Any:
+        return common.code_list_payload(self.jarvis)
+
+    async def _cmd_code_start(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_start_code_job(self.jarvis, payload)
+
+    async def _cmd_code_create_repo(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_create_code_repository(self.jarvis, payload)
+
+    async def _cmd_code_forget_repo(self, msg: dict[str, Any]) -> Any:
+        return await common.async_forget_code_repository(
+            self.jarvis, str(msg.get("name") or "")
+        )
+
+    async def _cmd_code_clone_repo(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_clone_code_repository(self.jarvis, payload)
+
+    async def _cmd_code_push(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_push_code_branch(self.jarvis, payload)
+
+    async def _cmd_code_result(self, msg: dict[str, Any]) -> Any:
+        return common.code_result_payload(self.jarvis, str(msg.get("task_id") or ""))
+
+    async def _cmd_briefing_get(self, msg: dict[str, Any]) -> Any:
+        return common.briefing_settings_payload(self.jarvis)
+
+    async def _cmd_briefing_set(self, msg: dict[str, Any]) -> Any:
+        changes = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return common.briefing_configure(self.jarvis, changes)
+
+    async def _cmd_notifications_list(self, msg: dict[str, Any]) -> Any:
+        return common.notifications_payload(
+            self.jarvis,
+            unread_only=bool(msg.get("unread")),
+            limit=int(msg.get("limit") or 100),
+        )
+
+    async def _cmd_notifications_read(self, msg: dict[str, Any]) -> Any:
+        return await common.async_notification_read(
+            self.jarvis,
+            entry_id=str(msg.get("notification_id") or ""),
+            everything=bool(msg.get("all")),
+        )
+
+    async def _cmd_notifications_dismiss(self, msg: dict[str, Any]) -> Any:
+        return await common.async_notification_dismiss(
+            self.jarvis,
+            entry_id=str(msg.get("notification_id") or ""),
+            everything=bool(msg.get("all")),
+        )
+
+    async def _cmd_conversation_search(self, msg: dict[str, Any]) -> Any:
+        return common.conversation_search_payload(
+            self.jarvis, str(msg.get("query") or ""), int(msg.get("limit") or 20)
+        )
+
+    async def _cmd_notes_list(self, msg: dict[str, Any]) -> Any:
+        return common.notes_list_payload(
+            self.jarvis,
+            tag=str(msg.get("tag") or ""),
+            query=str(msg.get("query") or ""),
+            limit=int(msg.get("limit") or 200),
+        )
+
+    async def _cmd_notes_get(self, msg: dict[str, Any]) -> Any:
+        # `note_id`, never `id`: every websocket frame already has an `id` and
+        # it is the correlation number. Reading it here returned "no note '7'"
+        # for a note called `boiler-serviced`, which is a bug that looks like
+        # a missing note.
+        return common.note_payload(
+            self.jarvis, str(msg.get("note_id") or msg.get("title") or "")
+        )
+
+    async def _cmd_notes_create(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_note_create(self.jarvis, payload)
+
+    async def _cmd_notes_update(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type", "note_id")}
+        return await common.async_note_update(
+            self.jarvis, str(msg.get("note_id") or ""), payload
+        )
+
+    async def _cmd_notes_append(self, msg: dict[str, Any]) -> Any:
+        return await common.async_note_append(
+            self.jarvis,
+            str(msg.get("note_id") or ""),
+            str(msg.get("text") or ""),
+        )
+
+    async def _cmd_notes_delete(self, msg: dict[str, Any]) -> Any:
+        return await common.async_note_delete(self.jarvis, str(msg.get("note_id") or ""))
+
+    async def _cmd_notes_search(self, msg: dict[str, Any]) -> Any:
+        return common.notes_list_payload(
+            self.jarvis,
+            tag=str(msg.get("tag") or ""),
+            query=str(msg.get("query") or msg.get("q") or ""),
+            limit=int(msg.get("limit") or 20),
+        )
+
+    async def _cmd_memory_list(self, msg: dict[str, Any]) -> Any:
+        return await common.async_memory_list_payload(
+            self.jarvis,
+            tag=str(msg.get("tag") or ""),
+            query=str(msg.get("query") or ""),
+            limit=int(msg.get("limit") or 200),
+            # None means everybody's; "" means the house's own (M100).
+            person=None if msg.get("person") is None else str(msg.get("person")),
+        )
+
+    async def _cmd_memory_reflect(self, msg: dict[str, Any]) -> Any:
+        """Reflect on the day now (M87): the console's "what did you learn?" button."""
+        reflection = self.jarvis.data.get("memory_reflection")
+        if reflection is None or not hasattr(reflection, "reflect"):
+            raise ApiError("not_configured", "the memory integration is not set up")
+        return await reflection.reflect()
+
+    async def _cmd_memory_add(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_memory_add(self.jarvis, payload)
+
+    async def _cmd_memory_forget(self, msg: dict[str, Any]) -> Any:
+        return await common.async_memory_forget(
+            self.jarvis,
+            entry_id=str(msg.get("entry_id") or msg.get("id_") or ""),
+            query=str(msg.get("query") or ""),
+            everything=bool(msg.get("all")),
+        )
+
+    async def _cmd_memory_pin(self, msg: dict[str, Any]) -> Any:
+        return await common.async_memory_pin(
+            self.jarvis, str(msg.get("entry_id") or ""), bool(msg.get("pinned", True))
+        )
+
+    async def _cmd_memory_export(self, msg: dict[str, Any]) -> Any:
+        return common.memory_export_payload(self.jarvis, str(msg.get("format") or "json"))
+
+    async def _cmd_traces_list(self, msg: dict[str, Any]) -> Any:
+        return common.traces_payload(
+            self.jarvis,
+            limit=int(msg.get("limit") or 50),
+            kind=str(msg.get("kind") or ""),
+        )
+
+    async def _cmd_traces_get(self, msg: dict[str, Any]) -> Any:
+        return common.trace_payload(
+            self.jarvis,
+            trace_id=str(msg.get("trace_id") or ""),
+            task_id=str(msg.get("task_id") or ""),
+        )
+
+    async def _cmd_skills_list(self, msg: dict[str, Any]) -> Any:
+        return common.skills_list_payload(self.jarvis)
+
+    async def _cmd_skills_get(self, msg: dict[str, Any]) -> Any:
+        return common.skill_payload(self.jarvis, str(msg.get("name") or ""))
+
+    async def _cmd_skills_reload(self, msg: dict[str, Any]) -> Any:
+        return await common.async_reload_skills(self.jarvis)
+
+    async def _cmd_extensions_list(self, msg: dict[str, Any]) -> Any:
+        return await common.extensions_list_payload(self.jarvis)
+
+    async def _cmd_extensions_set(self, msg: dict[str, Any]) -> Any:
+        return await common.async_set_extension(
+            self.jarvis,
+            {
+                key: msg[key]
+                for key in ("key", "enabled", "permissions")
+                if key in msg
+            },
+        )
+
+    async def _cmd_extensions_browse(self, msg: dict[str, Any]) -> Any:
+        return await common.extensions_browse_payload(self.jarvis, msg)
+
+    async def _cmd_extensions_plan(self, msg: dict[str, Any]) -> Any:
+        return await common.extensions_plan_payload(self.jarvis, msg)
+
+    async def _cmd_extensions_install(self, msg: dict[str, Any]) -> Any:
+        return await common.async_install_extension(self.jarvis, msg)
+
+    async def _cmd_extensions_scaffold(self, msg: dict[str, Any]) -> Any:
+        return await common.async_scaffold_skill(
+            self.jarvis,
+            {
+                key: msg[key]
+                for key in ("name", "description", "tools", "permissions", "body")
+                if key in msg
+            },
+        )
+
+    async def _cmd_mcp_list(self, msg: dict[str, Any]) -> Any:
+        return common.mcp_list_payload(self.jarvis)
+
+    async def _cmd_mcp_inspect(self, msg: dict[str, Any]) -> Any:
+        return common.mcp_inspect_payload(self.jarvis, str(msg.get("name") or ""))
+
+    async def _cmd_mcp_add(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_add_mcp_server(self.jarvis, payload)
+
+    async def _cmd_mcp_remove(self, msg: dict[str, Any]) -> Any:
+        return await common.async_remove_mcp_server(self.jarvis, str(msg.get("name") or ""))
+
+    async def _cmd_mcp_reconnect(self, msg: dict[str, Any]) -> Any:
+        return await common.async_reconnect_mcp(self.jarvis, str(msg.get("name") or ""))
+
     async def _cmd_conversation_list(self, msg: dict[str, Any]) -> Any:
         return common.conversation_list_payload(self.jarvis)
 
@@ -713,11 +1064,17 @@ class WebSocketHandler:
     async def _cmd_entity_update(self, msg: dict[str, Any]) -> Any:
         return await common.async_update_entity(self.jarvis, msg)
 
+    async def _cmd_entity_remove(self, msg: dict[str, Any]) -> Any:
+        return await common.async_remove_entity(self.jarvis, msg)
+
     async def _cmd_device_list(self, msg: dict[str, Any]) -> Any:
         return common.device_registry_payload(self.jarvis)
 
     async def _cmd_device_update(self, msg: dict[str, Any]) -> Any:
         return await common.async_update_device(self.jarvis, msg)
+
+    async def _cmd_device_remove(self, msg: dict[str, Any]) -> Any:
+        return await common.async_remove_device(self.jarvis, msg)
 
     async def _cmd_area_list(self, msg: dict[str, Any]) -> Any:
         return common.area_registry_payload(self.jarvis)
@@ -763,10 +1120,16 @@ class WebSocketHandler:
         return common.settings_payload(self.jarvis)
 
     async def _cmd_settings_set(self, msg: dict[str, Any]) -> Any:
-        return await common.async_set_setting(self.jarvis, msg)
+        # The context is who: the audit line says `api <token id>` for this
+        # socket and `llm` for the model's tool, on the same write path.
+        return await common.async_set_setting(self.jarvis, msg, context=self._context())
 
     async def _cmd_settings_reset(self, msg: dict[str, Any]) -> Any:
-        return await common.async_reset_setting(self.jarvis, msg)
+        return await common.async_reset_setting(self.jarvis, msg, context=self._context())
+
+    # the models the servers actually serve
+    async def _cmd_llm_models(self, msg: dict[str, Any]) -> Any:
+        return await common.async_llm_models_payload(self.jarvis)
 
     # automations
     async def _cmd_automation_list(self, msg: dict[str, Any]) -> Any:
@@ -817,6 +1180,21 @@ class WebSocketHandler:
             owner=self,
         )
         self.device_id = device_id
+        # Filed in the device registry too (M99), under `companion:<id>`, so the
+        # Devices page's room picker applies to a phone as it does to a bridge
+        # and `device_of` can say which room a spoken request came from. The
+        # registry keeps whatever room was assigned across re-registers.
+        link.area_facts = lambda: hub.area_facts_for(device_id)
+        registry = getattr(self.jarvis, "devices", None)
+        if registry is not None:
+            try:
+                entry = await registry.async_get_or_create(
+                    [f"companion:{device_id}"], name, "companion",
+                    manufacturer=platform, sw_version=str(device.get("app_version") or "") or None,
+                )
+                link.registry_id = entry.id
+            except Exception:  # pragma: no cover - a registry fault must not refuse the phone
+                _LOGGER.exception("Could not file %s in the device registry", device_id)
         get_presence(self.jarvis).register(device_id, name, platform, link.capabilities)
 
         # There is somewhere to deliver to now, so hand the companion manager a
@@ -958,6 +1336,9 @@ class WebSocketHandler:
                 end_stage=end_stage,
                 conversation_id=msg.get("conversation_id"),
                 binary_handler_id=handler_id,
+                # Which satellite asked. A wake-word hook that cannot tell the
+                # workshop from the kitchen is a hook that fires in both.
+                device_id=self.device_id or "",
                 **_run_kwargs(msg),
             )
         except ApiError:
@@ -973,6 +1354,22 @@ class WebSocketHandler:
             self._drive_run(msg_id, run, queue, handler_id, text)
         )
         return HANDLED
+
+    async def _cmd_pipeline_stop(self, msg: dict[str, Any]) -> Any:
+        """Stop a run on this connection, at the server (M96).
+
+        Barge-in was a client dropping its socket: the model kept generating
+        and the synthesiser kept writing into a closed socket, and the trace
+        could not say "interrupted". This cancels the run's task; the pipeline
+        ends with `run-end {interrupted: true}` and cancels its own children.
+        `run_id` is the id the run was started with.
+        """
+        run_id = msg.get("run_id")
+        task = self._runs.get(run_id)
+        if task is None or task.done():
+            raise ApiError("not_found", f"no run {run_id!r} is in progress on this connection", status=404)
+        task.cancel()
+        return {"stopped": True, "run_id": run_id}
 
     async def _drive_run(
         self,
@@ -1024,6 +1421,96 @@ WebSocketHandler._HANDLERS = {
     "fire_event": WebSocketHandler._cmd_fire_event,
     "call_service": WebSocketHandler._cmd_call_service,
     "conversation/process": WebSocketHandler._cmd_conversation_process,
+    # Reading and forgetting only. Creating a task is deliberately not a
+    # client command — see api/common.py: a task nothing is driving is the
+    # empty seam this registry exists to close, and a client-minted one would
+    # put that hole back one level out.
+    "jarvis/tasks/list": WebSocketHandler._cmd_task_list,
+    "jarvis/tasks/get": WebSocketHandler._cmd_task_get,
+    "jarvis/tasks/log": WebSocketHandler._cmd_task_log,
+    "jarvis/dashboards/list": WebSocketHandler._cmd_dashboards_list,
+    "jarvis/dashboards/save": WebSocketHandler._cmd_dashboards_save,
+    "jarvis/dashboards/delete": WebSocketHandler._cmd_dashboards_delete,
+    # The surface (M83): the panels Jarvis put up on the voice screen. Five
+    # commands and one event, `jarvis_surface_changed`; a drag ends in `move`.
+    "jarvis/surface/list": WebSocketHandler._cmd_surface_list,
+    "jarvis/surface/place": WebSocketHandler._cmd_surface_place,
+    "jarvis/surface/move": WebSocketHandler._cmd_surface_move,
+    "jarvis/surface/remove": WebSocketHandler._cmd_surface_remove,
+    "jarvis/surface/clear": WebSocketHandler._cmd_surface_clear,
+    "jarvis/sensors/history": WebSocketHandler._cmd_sensors_history,
+    "jarvis/metrics/sources": WebSocketHandler._cmd_metrics_sources,
+    "jarvis/metrics/query": WebSocketHandler._cmd_metrics_query,
+    # What the dashboard's house widgets read (M63). All three are reads; the
+    # still is the one with a side effect — an audit row and, on an `ask`
+    # camera, a question to a person — which is exactly a look's.
+    "jarvis/sensors/readings": WebSocketHandler._cmd_sensors_readings,
+    "jarvis/sky/summary": WebSocketHandler._cmd_sky_summary,
+    "jarvis/vision/still": WebSocketHandler._cmd_vision_still,
+    "jarvis/tasks/retry": WebSocketHandler._cmd_task_retry,
+    "jarvis/tasks/cancel": WebSocketHandler._cmd_task_cancel,
+    "jarvis/tasks/delete": WebSocketHandler._cmd_task_delete,
+    "jarvis/tasks/clear_finished": WebSocketHandler._cmd_task_clear_finished,
+    # Reading and managing MCP servers. There is no command to turn
+    # `allow_stdio` on — see api/common.py: that is the line between fetching a
+    # URL and starting a program, and configuration.yaml is the only side of it
+    # a request cannot reach.
+    "jarvis/schedule/list": WebSocketHandler._cmd_schedule_list,
+    "jarvis/schedule/add": WebSocketHandler._cmd_schedule_add,
+    "jarvis/schedule/remove": WebSocketHandler._cmd_schedule_remove,
+    "jarvis/schedule/enabled": WebSocketHandler._cmd_schedule_enabled,
+    # The model's own toolbox, and running one by hand. `config/tool/list`
+    # below is a different question — what this console may EDIT — and the
+    # Tools page shows the union, because a backend can answer one and not the
+    # other. `jarvis/tools/call` goes through the same approval gate a model
+    # turn does, so a Tier-3 tool raises a card here too.
+    "jarvis/tools/list": WebSocketHandler._cmd_tools_list,
+    "jarvis/tools/call": WebSocketHandler._cmd_tools_call,
+    # Jarvis Code. Starting a job IS a client command, unlike minting a bare
+    # task: a coding job has a worker behind it, so the record it creates is
+    # one something is driving.
+    "jarvis/code/list": WebSocketHandler._cmd_code_list,
+    "jarvis/code/start": WebSocketHandler._cmd_code_start,
+    "jarvis/code/create_repo": WebSocketHandler._cmd_code_create_repo,
+    "jarvis/code/forget_repo": WebSocketHandler._cmd_code_forget_repo,
+    "jarvis/code/clone_repo": WebSocketHandler._cmd_code_clone_repo,
+    "jarvis/code/push": WebSocketHandler._cmd_code_push,
+    "jarvis/code/result": WebSocketHandler._cmd_code_result,
+    "jarvis/briefing/get": WebSocketHandler._cmd_briefing_get,
+    "jarvis/briefing/set": WebSocketHandler._cmd_briefing_set,
+    "jarvis/notifications/list": WebSocketHandler._cmd_notifications_list,
+    "jarvis/notifications/read": WebSocketHandler._cmd_notifications_read,
+    "jarvis/notifications/dismiss": WebSocketHandler._cmd_notifications_dismiss,
+    "jarvis/conversation/search": WebSocketHandler._cmd_conversation_search,
+    "jarvis/notes/list": WebSocketHandler._cmd_notes_list,
+    "jarvis/notes/get": WebSocketHandler._cmd_notes_get,
+    "jarvis/notes/create": WebSocketHandler._cmd_notes_create,
+    "jarvis/notes/update": WebSocketHandler._cmd_notes_update,
+    "jarvis/notes/append": WebSocketHandler._cmd_notes_append,
+    "jarvis/notes/delete": WebSocketHandler._cmd_notes_delete,
+    "jarvis/notes/search": WebSocketHandler._cmd_notes_search,
+    "jarvis/memory/list": WebSocketHandler._cmd_memory_list,
+    "jarvis/memory/reflect": WebSocketHandler._cmd_memory_reflect,
+    "jarvis/memory/add": WebSocketHandler._cmd_memory_add,
+    "jarvis/memory/forget": WebSocketHandler._cmd_memory_forget,
+    "jarvis/memory/pin": WebSocketHandler._cmd_memory_pin,
+    "jarvis/memory/export": WebSocketHandler._cmd_memory_export,
+    "jarvis/traces/list": WebSocketHandler._cmd_traces_list,
+    "jarvis/traces/get": WebSocketHandler._cmd_traces_get,
+    "jarvis/skills/list": WebSocketHandler._cmd_skills_list,
+    "jarvis/skills/get": WebSocketHandler._cmd_skills_get,
+    "jarvis/skills/reload": WebSocketHandler._cmd_skills_reload,
+    "jarvis/extensions/list": WebSocketHandler._cmd_extensions_list,
+    "jarvis/extensions/set": WebSocketHandler._cmd_extensions_set,
+    "jarvis/extensions/scaffold": WebSocketHandler._cmd_extensions_scaffold,
+    "jarvis/extensions/browse": WebSocketHandler._cmd_extensions_browse,
+    "jarvis/extensions/plan": WebSocketHandler._cmd_extensions_plan,
+    "jarvis/extensions/install": WebSocketHandler._cmd_extensions_install,
+    "jarvis/mcp/list": WebSocketHandler._cmd_mcp_list,
+    "jarvis/mcp/inspect": WebSocketHandler._cmd_mcp_inspect,
+    "jarvis/mcp/add": WebSocketHandler._cmd_mcp_add,
+    "jarvis/mcp/remove": WebSocketHandler._cmd_mcp_remove,
+    "jarvis/mcp/reconnect": WebSocketHandler._cmd_mcp_reconnect,
     "jarvis/conversation/list": WebSocketHandler._cmd_conversation_list,
     "jarvis/conversation/get": WebSocketHandler._cmd_conversation_get,
     "jarvis/conversation/delete": WebSocketHandler._cmd_conversation_delete,
@@ -1031,8 +1518,12 @@ WebSocketHandler._HANDLERS = {
     "jarvis/approve": WebSocketHandler._cmd_approve,
     "config/entity_registry/list": WebSocketHandler._cmd_entity_list,
     "config/entity_registry/update": WebSocketHandler._cmd_entity_update,
+    # Removal (M69). The same `Jarvis.async_remove_entity` the assistant's
+    # `remove_entities` runs after its approval, so there is one delete path.
+    "config/entity_registry/remove": WebSocketHandler._cmd_entity_remove,
     "config/device_registry/list": WebSocketHandler._cmd_device_list,
     "config/device_registry/update": WebSocketHandler._cmd_device_update,
+    "config/device_registry/remove": WebSocketHandler._cmd_device_remove,
     "config/area_registry/list": WebSocketHandler._cmd_area_list,
     "config/area_registry/create": WebSocketHandler._cmd_area_create,
     "config/area_registry/update": WebSocketHandler._cmd_area_update,
@@ -1047,12 +1538,14 @@ WebSocketHandler._HANDLERS = {
     "config/settings/list": WebSocketHandler._cmd_settings_list,
     "config/settings/set": WebSocketHandler._cmd_settings_set,
     "config/settings/reset": WebSocketHandler._cmd_settings_reset,
+    "jarvis/llm/models": WebSocketHandler._cmd_llm_models,
     "config/automation/list": WebSocketHandler._cmd_automation_list,
     "config/automation/create": WebSocketHandler._cmd_automation_create,
     "config/automation/update": WebSocketHandler._cmd_automation_update,
     "config/automation/delete": WebSocketHandler._cmd_automation_delete,
     "assist_pipeline/pipeline/list": WebSocketHandler._cmd_pipeline_list,
     "assist_pipeline/run": WebSocketHandler._cmd_pipeline_run,
+    "assist_pipeline/stop": WebSocketHandler._cmd_pipeline_stop,
     # the device channel (phone, desktop agent, satellites)
     TYPE_REGISTER: WebSocketHandler._cmd_device_register,
 }

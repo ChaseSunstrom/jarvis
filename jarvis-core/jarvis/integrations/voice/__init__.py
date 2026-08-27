@@ -48,6 +48,8 @@ from ...voice.speaker import (
     ON_REJECT_SILENT,
     ON_REJECT_SPEAK,
     SpeakerGate,
+    profiles_from_dict,
+    profiles_to_dict,
     VoiceProfile,
 )
 from ...voice.wyoming import (
@@ -70,6 +72,12 @@ DEPENDENCIES: list[str] = []
 DATA_VOICE = "voice"
 DATA_STT_CLIENT = "voice_stt_client"
 DATA_TTS_CLIENT = "voice_tts_client"
+#: Piper's length scale as configured (`voice: tts: length_scale:`, read from
+#: PIPER_LENGTH_SCALE). Jarvis cannot apply it — Piper takes it at start — so
+#: it is kept only to be shown: Settings › Voice says what the house speaks at
+#: and where the knob is. None with an OpenAI-compatible engine, whose pace is
+#: `speed:` per request.
+DATA_TTS_LENGTH_SCALE = "voice_tts_length_scale"
 DATA_WAKE_CLIENT = "voice_wake_client"
 DATA_CONVERSATION_AGENT = "conversation_agent"
 
@@ -118,6 +126,15 @@ class VoiceData:
     language: str = DEFAULT_LANGUAGE
     tts_voice: str | None = None
     wake_word: str | None = DEFAULT_WAKE_WORD
+    #: Speak each finished sentence while the model writes the next (M60).
+    #: `voice: early_speech: false` turns it off for a client that cannot
+    #: play chunks and must not hear the reply twice.
+    early_speech: bool = True
+    #: Let a spoken turn reason. Off was measured (M60): the median round trip
+    #: fell from 5.9 s to 3.1 s and intent accuracy from 93 % to 87 % — the
+    #: model chose worse tools without the block. The brief puts intelligence
+    #: first, so on is the default and `voice: think: false` is the speed.
+    think: bool = True
 
     #: What the running services say they can do, from their own `describe`.
     #:
@@ -156,6 +173,7 @@ class VoiceData:
             conversation_id=conversation_id,
             language=resolved.language or self.language,
             tts_voice=resolved.tts_voice or self.tts_voice,
+            early_speech=self.early_speech,
             wake_word=resolved.wake_word or self.wake_word,
             **kwargs,
         )
@@ -250,6 +268,53 @@ def async_create_run(
     return data.async_create_run(pipeline, **kwargs)
 
 
+def _on_the_fast_model(agent: Any, converse: Any, think_on_voice: bool = True) -> Any:
+    """The agent's converse for a spoken turn (M60): `fast_model` when one is
+    set, and no reasoning when `voice: think: false`.
+
+    Read at call time, not wrapped once: the settings are live. An agent whose
+    converse takes neither `model` nor `think` (a stand-in in a test) is used
+    as it is.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(converse).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    takes_model = "model" in parameters
+    if not takes_model and "think" not in parameters:
+        return converse
+    takes_var_kw = any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+
+    def spoken(text: str, conversation_id: str | None = None, *args: Any, **kwargs: Any) -> Any:
+        fast = str(getattr(agent, "fast_model", "") or "").strip()
+        if fast:
+            kwargs.setdefault("model", fast)
+        # This wrapper takes `**kwargs`, so the pipeline sees a converse that
+        # accepts `speaker` and passes it (M71). Forwarded only when the real
+        # converse can take it — an agent from before names existed must not
+        # fall over on the first turn the gate recognises somebody.
+        if "speaker" in kwargs and "speaker" not in parameters and not takes_var_kw:
+            kwargs.pop("speaker")
+        # `voice: think: false` trades the reasoning block for the first word
+        # sooner — measured at 3.1 s against 5.9 s, and 87 % intent against
+        # 93 % — which is why it is a switch and not the default.
+        if not think_on_voice and "think" in parameters:
+            kwargs.setdefault("think", False)
+        return converse(text, conversation_id, *args, **kwargs)
+
+    # The pipeline asks the converse it was given for the agent behind it —
+    # `Pipeline._authoritative_answer` reads `last_result` to drop the words
+    # the model wrote before a tool ran. A bound method carries `__self__`; a
+    # closure carries nothing, and with this wrapper in place the drop never
+    # happened on the voice path: "The front door is locked, Sir." — written
+    # before the model was nudged into its call — was in the spoken clip
+    # ahead of "waiting on your confirmation" (27 Aug 2026).
+    spoken.agent = agent  # type: ignore[attr-defined]
+    return spoken
+
+
 def resolve_conversation_agent(jarvis: "Jarvis") -> Any:
     """Find something that can hold a conversation, else a polite stand-in.
 
@@ -260,10 +325,12 @@ def resolve_conversation_agent(jarvis: "Jarvis") -> Any:
         return candidate
 
     llm = jarvis.data.get("llm")
+    voice = jarvis.data.get(DATA_VOICE)
+    think_on_voice = bool(getattr(voice, "think", True))
     for attr in ("async_converse", "converse", "async_process", "process"):
         method = getattr(llm, attr, None)
         if callable(method):
-            return method
+            return _on_the_fast_model(llm, method, think_on_voice) if attr == "converse" else method
 
     if jarvis.services.has_service("conversation", "process"):
 
@@ -358,7 +425,27 @@ def _build_clients(jarvis: "Jarvis", config: dict[str, Any]) -> tuple[Any, Any, 
     tts = jarvis.data.get(DATA_TTS_CLIENT)
     if tts is None:
         section = _section(config, "tts")
-        if section is not None:
+        try:
+            scale = float((section or {}).get("length_scale") or 0) or None
+        except (TypeError, ValueError):
+            scale = None
+        jarvis.data[DATA_TTS_LENGTH_SCALE] = (
+            None if section is not None and str(section.get("engine") or "").lower() == "openai" else scale
+        )
+        if section is not None and str(section.get("engine") or "").lower() == "openai":
+            # An OpenAI-compatible speech service (Kokoro-FastAPI and friends).
+            # Opt-in, because Piper is 33 MB and already here; see
+            # `voice/openai_tts.py` for the A/B that decided the default.
+            from ...voice.openai_tts import OpenAiTtsClient
+
+            tts = OpenAiTtsClient(
+                url=str(section.get("url") or ""),
+                voice=section.get("voice"),
+                model=str(section.get("model") or "kokoro"),
+                timeout=float(section.get("timeout") or 60.0),
+                speed=float(section.get("speed") or 1.0),
+            )
+        elif section is not None:
             tts = WyomingTtsClient(
                 str(section.get("host") or host),
                 int(section.get("port") or DEFAULT_TTS_PORT),
@@ -510,6 +597,17 @@ def _speaker_gate(config: dict[str, Any]) -> SpeakerGate:
         on_reject = ON_REJECT_SPEAK
 
     gate = SpeakerGate(mode=mode, on_reject=on_reject)
+    # Held on the gate, not poked into a profile: a profile's threshold is
+    # rewritten by every enrolment sample, and a configured number that lived
+    # there was lost from the first new sample until the next restart.
+    if "threshold" in section:
+        try:
+            gate.configured_threshold = float(section["threshold"])
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                "voice: speaker: threshold: %r is not a number; using each profile's own",
+                section["threshold"],
+            )
     refusal = section.get("refusal")
     if isinstance(refusal, str) and refusal.strip():
         gate.refusal = refusal.strip()
@@ -565,24 +663,34 @@ def _positive_float(
 
 
 async def async_load_profile(jarvis: "Jarvis", data: VoiceData) -> None:
-    """Read the enrolled voiceprint off disk into [data.speaker]."""
+    """Read every enrolled voiceprint off disk into [data.speaker].
+
+    Reads both shapes the store has had — one profile at the top level, or
+    `people: [...]` — so an upgrade never loses whoever was enrolled. Each
+    profile carries the threshold enrolment worked out for it; the gate's
+    `configured_threshold` (`voice: speaker: threshold:`) is applied over
+    them afterwards, because an explicit number a person typed beats one a
+    computer suggested.
+    """
     from ...store import Store
 
     store = Store(jarvis.config_dir, STORE_SPEAKER)
     payload = await store.load()
-    # The profile carries the threshold enrolment worked out for it, and that
-    # is the one in force unless `voice: speaker: threshold:` overrides it —
-    # an explicit number a person typed beats one a computer suggested. See
-    # async_setup, which applies the override after this.
-    data.speaker.profile = VoiceProfile.from_dict(payload) if payload else None
+    data.speaker.profiles = profiles_from_dict(payload) if payload else []
+    data.speaker.apply_threshold()
 
 
-async def async_save_profile(jarvis: "Jarvis", profile: VoiceProfile | None) -> None:
-    """Persist (or clear) the enrolled voiceprint."""
+async def async_save_profiles(jarvis: "Jarvis", profiles: list[VoiceProfile]) -> None:
+    """Persist every voiceprint, or clear the store when the list is empty.
+
+    An empty list writes `{}` rather than `{"people": []}` so the file after
+    FORGET carries no shape at all — `test_forgetting_is_a_real_delete` reads
+    it back and expects nothing recognisable in it.
+    """
     from ...store import Store
 
     store = Store(jarvis.config_dir, STORE_SPEAKER)
-    await store.save(profile.as_dict() if profile is not None else {})
+    await store.save(profiles_to_dict(profiles) if profiles else {})
 
 
 async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
@@ -621,15 +729,14 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
         config=config,
         language=language,
         tts_voice=tts_voice,
+        early_speech=bool(config.get("early_speech", True)),
+        think=bool(config.get("think", True)),
         wake_word=wake_word,
     )
     jarvis.data[DATA_VOICE] = data
     jarvis.data.setdefault(DATA_TTS_CACHE, {})
 
     await async_load_profile(jarvis, data)
-    speaker_section = _section(config, "speaker") or {}
-    if "threshold" in speaker_section and data.speaker.profile is not None:
-        data.speaker.profile.threshold = float(speaker_section["threshold"])
     if data.speaker.mode != MODE_OFF and not data.speaker.enrolled:
         # Asked for, and impossible to honour. Saying so is the difference
         # between "voice identity is on" and "voice identity is on and doing

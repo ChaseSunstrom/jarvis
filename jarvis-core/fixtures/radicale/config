@@ -1,0 +1,15 @@
+# Radicale, as a fixture. Loopback only, no authentication, nothing real in it.
+#
+# A password here would be a password in the repository, and the thing under
+# test is Jarvis's CalDAV client rather than Radicale's auth.
+[server]
+hosts = 127.0.0.1:5232
+
+[auth]
+type = none
+
+[storage]
+filesystem_folder = /data/collections
+
+[rights]
+type = authenticated

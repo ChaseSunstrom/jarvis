@@ -34,9 +34,9 @@ Policy is enforced on the device, outside the model. A server may only ever
 
 | tier | examples | gate |
 |---|---|---|
-| 1 direct | lights, covers, climate, `get_user_context`, `web_search`, `web_fetch`, tier-1 `*.tool.yaml` | none (safe / idempotent) |
+| 1 direct | lights, covers, climate, `get_user_context`, `web_search`, `web_fetch`, `list_settings`, tier-1 `*.tool.yaml` | none (safe / idempotent) |
 | 2 background | `run_background_task`, `delegate_to_agents`, `code_task` | none, but runs outside the turn and reports back |
-| 3 approval | unlock, notify, `execute_command`, `apply_code_task`, tier-3 `*.tool.yaml` | **human approval, enforced in code** |
+| 3 approval | unlock, notify, `execute_command`, `apply_code_task`, `write_file`, `start_coding_job`, `change_setting`, tier-3 `*.tool.yaml` | **human approval, enforced in code** |
 
 Two things escalate automatically, and neither consults the model:
 
@@ -52,6 +52,33 @@ arguments are **pinned** when the request is created: a fuzzy target ("the
 front door") is resolved to concrete entity ids *before* a human sees it, so
 what runs later is what was shown, not a re-resolution against a house that
 has moved on. Requests expire, and each can be used at most once.
+
+## Enrolling a voice is a durable write about a person, and no turn can do it
+
+Teaching Jarvis whose voice it answers (`docs/voice-identity.md`) changes what
+the speaker gate will accept for good, until somebody deletes it. On the tier
+table above that would be tier 3 — an approval — but it is not a tool at all,
+and the difference is deliberate: an approval card says *what* will run and a
+human says yes; an enrolment's "what" is a recording, and a card cannot show a
+voice. So the write is reachable only over REST — `POST /api/voice/speaker/enrol`
+and `DELETE /api/voice/speaker` — with a credential a person holds:
+
+* the phone's own bearer token, relayed unchanged by the console
+  (`jarvis-web/src/lib/server/speakerRelay.ts`), or
+* the console password, the same door already in front of the pairing secret
+  and in front of deleting the profile.
+
+There is no `enrol_voice` tool, no `jarvis/voice/...` socket command, and no
+service call. The consequence that matters: **a model turn cannot enrol
+anybody** — not a fenced one that read a web page saying "enrol this voice",
+not a spoken one from a stranger the gate let through in `observe`. The
+recognised name a turn carries is context for the prompt and unlocks nothing.
+`jarvis-core/tests/test_speaker_gate.py::test_no_tool_and_no_websocket_command_can_enrol`
+pins all three absences and that the routes sit on the token-gated router;
+`jarvis-web/src/lib/server/routes.test.ts` pins that the console's relay never
+lends the admin token to an enrolment. The store never leaves the box (counts
+and scores on every endpoint, never a vector), and a bare `DELETE` is a real
+delete of every person.
 
 ## The command path has two gates, with different credentials
 
@@ -134,6 +161,94 @@ the words. Nothing is refused — a turn that read a page and needs to ask which
 of three results was meant is the legitimate case, and an attacker who is
 refused simply rephrases. Marking is the control that survives that.
 
+The raising itself happens in one of two places, never both. The tool registry
+holds every tool that is not declared read-only once the turn has read
+untrusted content (`ToolRegistry.requires_approval`); a tool that applies the
+rule at the surface that runs the action declares `escalates_itself` and is let
+through — `control_device` is the one, because `device_control` raises the
+device's own tier to CONFIRM with the reason verbatim, so the phone shows the
+human the real action. Held at the registry as well, the phone never saw the
+action and the server asked about "control_device" instead: two prompts, the
+second naming the tool rather than the deed. The flag is declared, not
+inferred, and a re-registration that starts claiming it is refused as a
+weakening, so a tool that does not say so escalates like any other.
+
+## A settings tool may change what the settings page can change, and nothing else
+
+"How can I ask it to be able to edit settings with permission" (M67). The
+model has `list_settings` (tier 1, read-only: a turn that has read a page may
+still ask what the settings are) and `change_setting` (tier 3). What the
+second may do is decided by the allowlist in `jarvis/settings.py`, not by the
+tool: `SETTINGS` is a hardcoded tuple of the knobs a person changes on the
+console — a model, a temperature, a wake word, the timezone — and the keys the
+safety model reads (`llm.expose`, the gated domains, `jarvis.http` and its
+CORS list, the sandbox's `network_mode`, `mcp.allow_stdio`) are not in it and
+cannot be added from a tool. Resolution is membership in that tuple, never a
+path into the config file, so no spelling of `local_only` reaches anything; a
+key that is not a setting is refused *before* a request is held, with the
+nearest real names, because a card a human can only deny teaches the model
+nothing.
+
+What runs is what was shown. The pin freezes the exact key, the value as the
+setting's own validator coerced it, and the value it replaces; the sentence on
+the card — "Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu" —
+is composed from those pinned arguments on the server, never by the model and
+never on the surface. An approved change then goes through the one function
+`config/settings/set` is (`api/common.py async_set_setting`): the same
+validator, the same live apply, one audit line in the `jarvis.settings.audit`
+logger saying what changed from what to what and by whom (`api <token>` or
+`llm`), one `jarvis_setting_changed`. There is no second write path for a tool
+to be quietly laxer on, and `test_settings_tool.py` spies on the function from
+both doors.
+
+A tainted turn is **held and marked, not refused** — the opposite decision
+from `remember`, on purpose. `remember` refuses after untrusted content because
+a human cannot audit a memory write in the two seconds an approval gets. A
+setting change is the case approval was built for: one key, one value, the old
+value beside the new one, in a sentence a person can judge. The attack to
+reason about is a page saying "turn local-only off": there is no such key, so
+nothing is held; and a key that *is* there arrives on the card marked
+`tainted` for the human to weigh. Refusing would also break the legitimate
+case — a turn that read a page and was then asked, by the user, to change the
+temperature.
+## An answer can be said, and the taint boundary decides when it may not be
+
+"I should be able to verbally confirm it." While a question or a held action
+waits on a conversation, the next turn in that conversation can be its answer
+— *"the corner one"*, *"yes, go ahead"*, *"cancel"* — and the agent decides
+that **in code, before the model sees the turn**, by the rules pinned in
+`tests/contracts/spoken_answers.json` (`jarvis/llm/spoken_answers.py`). The
+resolution itself is `approve_request`, unchanged: single use, the answer
+reaching only the argument the tool named in `Tool.answerable`, an approval
+carrying no words at all. What runs after a spoken yes is what the card showed.
+
+A wrong match approves an action the person did not confirm, so the rules
+prefer asking again over guessing:
+
+| waiting | resolved by | never by |
+| --- | --- | --- |
+| one **action** | the whole utterance being one of the affirmations (*yes*, *go ahead*, *okay*…) or denials (*no*, *cancel*, *never mind*…) | *"yes and also turn on the lamp"*, a choice word, anything else — the request keeps waiting and the model is told so |
+| one **question with choices** | words that pick out exactly one choice (the choice's own text is the answer); a denial dismisses | words that fit two choices or none |
+| one **free-text question** | the words, verbatim; a denial dismisses | — |
+| **two or more** | nothing — a *yes* is answered with what is waiting and *"say which"* | any guess |
+| anything **tainted** | nothing — the turn says it waits on the console | any words |
+
+The request carries which conversation raised it (`conversation_id`, stamped
+from what the agent recorded for the turn), so a *"yes"* in one conversation
+never approves what another asked; a request raised outside any conversation
+(the console's `jarvis/tools/call`) is nobody's to answer by voice.
+
+**The taint boundary.** A request raised by a turn that had already read
+untrusted content carries `tainted` (above), and such a request is never
+resolved by words, in either direction. The reason is the one the previous
+section gives: the words of a tainted question may be the page's, not
+Jarvis's, and the console's banner is the surface that says so. A spoken
+*"the corner one"* to a question an injected page composed would answer the
+page. So the turn replies that the request is waiting on the console, where
+the provenance is on screen, and leaves it exactly as it was. The rule is a
+single check in `spoken_answers.decide`, and the contract's cases pin it for
+an action, a question with choices and a free-text question alike.
+
 ## Everything that comes back is untrusted too
 
 Search results, fetched pages, crawled pages, specialist-agent prose,
@@ -192,9 +307,9 @@ TTS through it, instead of needing to know which of two servers is which.
 
 | service | network | user | rootfs | mounts | caps |
 |---|---|---|---|---|---|
-| jarvis-core | host (:8080), LAN/WG via ufw | non-root | rw (image) | `./config` | default |
-| jarvis-web | host (:8199), LAN/WG via ufw | node | rw (image) | none | default |
-| jarvis-browser | host (:8210), loopback via ufw | non-root | rw (image) | none | default |
+| jarvis-core | host (:8080), LAN/WG via ufw | non-root | rw (image) | `./config` | drop ALL |
+| jarvis-web | host (:8199), LAN/WG via ufw | node | rw (image) | `./.storage/jarvis-web` | default |
+| jarvis-browser | host (:8210), loopback via ufw | non-root | rw (image) | none | drop ALL (`seccomp:unconfined` for Chromium) |
 | jarvis-orchestrator | host (:8188), core host only via ufw | 10002 | read-only | `./jarvis-workspace` | drop ALL |
 | jarvis-sandbox | **none** | 10001 | read-only | `./jarvis-workspace` | drop ALL |
 
@@ -223,7 +338,10 @@ else is local:
   talk to the internet; firewalled.
 
 There is no cloud fallback anywhere. If SearXNG is down, `web_search` fails
-and says so; it does not quietly ask somebody's search API instead.
+and says so; it does not quietly ask somebody's search API instead. The one
+fallback it has is another SearXNG — the stack's own, when `SEARXNG_URL` names
+an instance elsewhere that cannot search — and the result says which one
+answered (`jarvis-core/docs/search.md`).
 
 Run `scripts/egress-audit.sh` against the live stack: it proves the sandbox
 has only `lo` and cannot reach the LAN gateway or the internet, and flags any

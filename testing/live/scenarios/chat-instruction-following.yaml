@@ -1,0 +1,12 @@
+name: chat-instruction-following
+capability: conversation
+intent: >
+  Constraint compliance. A butler that answers a yes-or-no question with three
+  sentences is a butler nobody lets finish, and on a speaker the length of the
+  answer IS the latency.
+variants: [text]
+turns:
+  - say: "In one word only, is the front door locked? Answer with just yes or no."
+    expect:
+      reply_matches: '^\W*(yes|no)\b'
+      reply_means: "answers in one word, yes or no"

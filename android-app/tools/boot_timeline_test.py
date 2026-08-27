@@ -1236,10 +1236,12 @@ def test_the_orb_keeps_a_frame_clock_when_the_animator_scale_is_zero():
 def test_the_orbs_edge_light_fades_in_with_the_rest_of_its_chrome():
     """Nothing may appear whole on the frame the boot lets go of the orb.
 
-    The edge light is a rounded rectangle traced around the WHOLE view. It was
+    The edge light used to be a rounded rectangle traced around the WHOLE
+    view; since M51 it is Reactor II's field — three hairline circles behind
+    the instrument — but the failure is the same shape either way: it was
     suppressed for the entire power-on and then drawn at full strength the
-    instant `bootDrive` went null — a box snapping on around the screen while
-    everything beside it was still fading up.
+    instant `bootDrive` went null, snapping on while everything beside it was
+    still fading up.
     """
     src = KOTLIN_ORB.read_text()
     code = code_only(KOTLIN_ORB)
@@ -1308,18 +1310,17 @@ def test_orb_guards_the_zero_radius_the_boot_starts_from():
     assert core_scale(0) == 0.0, "the premise: the boot starts the core at zero"
     src = KOTLIN_REACTOR.read_text()
     assert "MIN_DRAW_PX" in src, "ReactorOrb has no degenerate-geometry guard"
+    # The instrument's layers (M51). The previous list named the glass ball's
+    # primitives; what is pinned is unchanged — every function that builds a
+    # shader or a path effect bails out below MIN_DRAW_PX first.
     for fn in (
-        "drawSubstrate",
-        "drawBlob",
-        "drawSpokes",
-        "drawCore",
-        "drawGlass",
-        "drawHalo",
-        "drawRim",
-        "drawRing",
+        "drawBezel",
+        "drawBlades",
+        "drawCoil",
+        "drawLevel",
+        "drawLens",
+        "drawDot",
         "drawDashedRing",
-        "drawTicks",
-        "drawAnnulusSweep",
     ):
         body = src.split(f"private fun {fn}(", 1)[1][:900]
         assert "MIN_DRAW_PX" in body, f"{fn} does not guard against a sub-pixel radius"
@@ -1464,12 +1465,19 @@ def test_splash_screen_is_wired_with_no_white_flash():
     assert "windowSplashScreenAnimatedIcon" in themes
 
     colors = (ROOT / "app/src/main/res/values/colors.xml").read_text()
-    assert "<color name=\"jarvis_bg\">#FF04070C</color>" in colors, (
+    tokens_xml = (ROOT / "app/src/main/res/values/tokens.xml").read_text()
+    # colors.xml holds aliases only (design/build.py generates it); the hex lives
+    # in tokens.xml and must be the HUD ground from design/tokens.json.
+    assert "<color name=\"jarvis_bg\">@color/jv_bg</color>" in colors, (
+        "the splash background must alias the generated ground token"
+    )
+    ground = re.search(r"<color name=\"jv_bg\">#FF([0-9A-F]{6})</color>", tokens_xml)
+    assert ground, "tokens.xml has no jv_bg"
+    source = re.search(r'"bg":\s*\{[^}]*"\$value":\s*"#([0-9a-fA-F]{6})"',
+                       (ROOT.parent / "design/tokens.json").read_text())
+    assert source and ground.group(1).lower() == source.group(1).lower(), (
         "the splash background must be exactly the HUD ground"
     )
-
-
-def test_launcher_icon_has_all_three_layers():
     assert ADAPTIVE_ICON.is_file(), f"missing {ADAPTIVE_ICON}"
     icon = ADAPTIVE_ICON.read_text()
     assert "<background" in icon and "<foreground" in icon and "<monochrome" in icon

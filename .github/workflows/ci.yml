@@ -28,6 +28,11 @@ on:
 # needs more should ask for it by name rather than inherit a write token.
 permissions:
   contents: read
+  # For the step that names a red core leg's failing tests on the pull
+  # request: `::error::` lines never reached the check run's annotations
+  # (27 Aug 2026, five reds in a row showed "exit code 1" and nothing else),
+  # and the job log needs a token to read. A PR comment is readable by anyone.
+  pull-requests: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -74,7 +79,77 @@ jobs:
       # a hang is one named failing test and the rest of the suite still runs.
       - name: Run tests
         working-directory: ${{ matrix.suite.dir }}
-        run: python -m pytest ${{ matrix.suite.paths }} -q --timeout=120 --timeout-method=signal
+        env:
+          # Unbuffered: through `tee` pytest's stdout is a pipe and Python
+          # block-buffers it, so a process killed at the end leaves an EMPTY
+          # log — which is what the first PR comment carried (27 Aug 2026,
+          # run 33087733490: "Run tests" red, pytest.plain of zero bytes).
+          PYTHONUNBUFFERED: "1"
+        run: |
+          # `set +e` FIRST: GitHub runs `run:` scripts under `bash -e`, so the
+          # pytest pipeline exiting 1 ended the script right there — the sed,
+          # the grep, the `::error::` rows and the notice below never ran on
+          # any red leg, which is why five reds showed nothing but "exit code
+          # 1" (27 Aug 2026; run 33088811731 finally said so: 496 lines in
+          # pytest.log, no pytest.plain). Every line after pytest is the
+          # report of its result and must run whatever that result is.
+          set +e
+          set -uo pipefail
+          # The job log needs a token to read; the check run's annotations do
+          # not. A failing test is named on the check run, so a red job can be
+          # reproduced from the public API. (`-rfE`: pytest's own FAILED and
+          # ERROR lines. `-rf` alone hid every error: twice on 27 Aug a red
+          # core leg carried nothing but "exit code 1", because a test that
+          # errored in setup or teardown is not a FAILED row, and `-r` with an
+          # explicit letter drops pytest's default `E`.)
+          python -m pytest ${{ matrix.suite.paths }} -q -rfE --timeout=120 --timeout-method=signal 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          # `|| true`: the default shell here is `bash -e`, and with pipefail a
+          # grep that finds no FAILED line — every green run — returned 1 and
+          # took the job down with it (three green suites went red on 69da624).
+          # Colour codes stripped first: a FAILED row wrapped in an escape
+          # sequence is not at column 0, and the check run showed nothing for
+          # a red leg three times on 27 Aug while a local run named the test.
+          sed 's/\x1b\[[0-9;]*m//g' pytest.log > pytest.plain || true
+          grep -E '^(FAILED|ERROR) ' pytest.plain | head -n 30 | sed 's/^/::error::/' || true
+          # Always: the last line, as a notice — so the check run says what
+          # pytest said even when nothing above matched, and a green run
+          # proves the annotations reach it at all.
+          echo "::notice::pytest: $(tail -n 1 pytest.plain)"
+          # A red with no FAILED or ERROR row — pytest exiting 1 with no
+          # summary (twice on 27 Aug, 11:24 UTC among them, on a run that
+          # took its usual four minutes) — leaves nothing on the check run
+          # to reproduce from without a token for the job log. The tail is
+          # where pytest says what it died of.
+          if [ "$status" != "0" ] && ! grep -qE '^(FAILED|ERROR) ' pytest.plain; then
+            tail -n 25 pytest.plain | sed 's/^/::error::tail: /' || true
+          fi
+          exit "$status"
+      - name: Name the failing tests on the pull request
+        # The one place a red leg's test names are readable without a token.
+        # Skipped quietly when the branch has no open PR (a push to dev).
+        if: failure()
+        working-directory: ${{ matrix.suite.dir }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          # The plain log is made here when the test step did not get to it.
+          [ -s pytest.plain ] || { [ -s pytest.log ] && sed 's/\x1b\[[0-9;]*m//g' pytest.log > pytest.plain; } || true
+          if [ ! -s pytest.plain ]; then
+            # Nothing pytest said: the log is missing (an earlier step
+            # failed) or empty (pytest was killed before it flushed — see
+            # PYTHONUNBUFFERED on the test step).
+            rows="pytest.plain is $( [ -f pytest.plain ] && echo empty || echo missing ) — pytest wrote nothing; $(wc -l < pytest.log 2>/dev/null || echo 0) line(s) in pytest.log"
+          else
+            rows=$(grep -E '^(FAILED|ERROR) ' pytest.plain | head -n 30 || true)
+            [ -n "$rows" ] || rows=$(tail -n 25 pytest.plain || true)
+          fi
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -z "$pr" ]; then echo "no open PR for $branch; nothing to comment on"; exit 0; fi
+          body=$(printf 'CI · python · %s is red on %s (%s):\n\n```\n%s\n```\n' "${{ matrix.suite.name }}" "${GITHUB_SHA::7}" "$GITHUB_RUN_ID" "$rows")
+          gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body "$body" || echo "could not comment"
 
   legacy-suites:
     name: python · orchestrator/sandbox/evals

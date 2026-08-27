@@ -1,0 +1,12 @@
+/*
+ * The three faces the design system names (design/tokens.json → type.family),
+ * self-hosted from static/fonts so the console works with no network and inside
+ * the CSP's `default-src 'self'`. Latin subsets, SIL Open Font License — the
+ * licence texts sit beside the files. `font-display: swap` so a slow first load
+ * shows system text rather than nothing.
+ */
+@font-face { font-family: 'Barlow'; font-weight: 400; font-display: swap; src: url('/fonts/barlow-400.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow'; font-weight: 500; font-display: swap; src: url('/fonts/barlow-500.woff2') format('woff2'); }
+@font-face { font-family: 'Space Grotesk'; font-weight: 300; font-display: swap; src: url('/fonts/space-grotesk-300.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 400; font-display: swap; src: url('/fonts/jetbrains-mono-400.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 500; font-display: swap; src: url('/fonts/jetbrains-mono-500.woff2') format('woff2'); }

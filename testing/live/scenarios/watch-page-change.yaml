@@ -1,0 +1,40 @@
+name: watch-page-change
+capability: online
+gated-on: M59
+ground: fixture
+intent: >
+  Anything online, locally, with time in it: asked to watch a page, Jarvis
+  keeps a snapshot, checks it on the interval it was given, and when the page
+  changes the change lands as a moment — a record that outlives the moment it
+  was sent — with what changed in it. The page is one this repository's
+  fixture web serves, and the rig rewrites it between turns, so the change is
+  real and the answer is knowable: nothing on the open web is watched.
+variants: [text]
+turns:
+  - do:
+      fixture_write:
+        - site: handbook
+          path: live/notice.html
+          content: "<html><head><title>Pool notice</title></head><body><h1>Pool notice</h1><p>Open 07:00 to 21:00 every day.</p></body></html>"
+    wait: 1
+    say: "Watch the page at {{handbook}}/live/notice.html and tell me when it changes. Check it every 30 seconds."
+    expect:
+      capability: online
+      reply_means: "confirms it is watching the page and will say when it changes"
+  - do:
+      fixture_write:
+        - site: handbook
+          path: live/notice.html
+          content: "<html><head><title>Pool notice</title></head><body><h1>Pool notice</h1><p>Open 06:00 to 22:00 every day.</p><p>New: lane swimming on Tuesdays.</p></body></html>"
+    observe: true
+    wait: 5
+    expect:
+      notification:
+        kind: watch
+        source: watch
+        title_contains: "changed"
+        within: 90
+  - say: "What is being watched right now?"
+    expect:
+      capability: online
+      reply_means: "names the notice page as being watched and says it has changed once"

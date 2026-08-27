@@ -1,3 +1,4 @@
+import { CHORD_ROUTES } from './screens';
 // Keyboard shortcuts for the management console.
 //
 // The console is a keyboard-first surface: `/` focuses the filter, `g d` goes
@@ -48,15 +49,18 @@ export function isBareKey(e: KeyLike): boolean {
 	return !e.ctrlKey && !e.metaKey && !e.altKey;
 }
 
-/** `g`-prefixed navigation chords. `g a` is automations; areas takes `g r` (rooms). */
-export const CHORDS: Readonly<Record<string, string>> = {
-	'g d': '/devices',
-	'g a': '/automations',
-	'g r': '/areas',
-	'g t': '/tools',
-	'g s': '/settings',
-	'g h': '/'
-};
+/**
+ * `g`-prefixed navigation chords. `g a` is automations; areas takes `g r`
+ * (rooms) and tasks takes `g k` — `g t` was already tools. Code takes `g c`,
+ * notes `g n`, memory `g m`.
+ *
+ * Built from `screens.ts`, which is the one place a route is declared. It was
+ * a hand-written table, and it drifted: the nav's tooltip advertised `g b` for
+ * dashboards and this table had no such entry, so the tooltip promised a key
+ * that did nothing. Deriving it only ever ADDS a chord — nothing anybody
+ * learnt has moved.
+ */
+export const CHORDS: Readonly<Record<string, string>> = CHORD_ROUTES;
 
 /** How long a chord's first key stays armed. */
 export const CHORD_TIMEOUT_MS = 1200;

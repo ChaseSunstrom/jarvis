@@ -97,6 +97,8 @@ BINARY_SENSOR_PHRASES: dict[str, tuple[str, str]] = {
     "presence": ("is home", "is away"),
     "door": ("was opened", "was closed"),
     "garage_door": ("was opened", "was closed"),
+    "garage": ("was opened", "was closed"),
+    "gate": ("was opened", "was closed"),
     "window": ("was opened", "was closed"),
     "opening": ("was opened", "was closed"),
     "smoke": ("detected smoke", "cleared"),

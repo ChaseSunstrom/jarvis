@@ -495,6 +495,36 @@ Register-ScheduledTask -TaskName "Jarvis desktop agent" `
 
 ---
 
+## Teaching Jarvis your voice
+
+So it can tell you from anybody else who speaks to it. The browser console can
+do this too; this is the same thing from a machine with no browser open.
+
+```sh
+python -m jarvis_desktop enrol                  # record and send
+python -m jarvis_desktop enrol --status         # whose voice is on file
+python -m jarvis_desktop enrol --list-recorders # what this machine can use
+python -m jarvis_desktop enrol --from-file me.wav
+```
+
+**No new dependency.** The only hard dependency of this agent is its websocket
+client, and a microphone library — `sounddevice`, `pyaudio` — wants native code
+for something you do three times in the life of an install. So it uses whatever
+recorder the machine already has (`arecord`, `sox`'s `rec`, `afrecord`,
+`ffmpeg`) and, if it has none, takes a WAV you recorded any way you like.
+
+A supplied WAV is parsed rather than sent as-is: jarvis-core wants raw
+little-endian 16-bit mono PCM, so a whole file would put the letters `RIFF` into
+your voice profile — and nothing would error, because a header is 44 perfectly
+valid bytes of int16. Stereo is mixed down rather than refused, and the rate
+that travels with the audio is the rate the file **really** is, not the one that
+was asked for: a recorder given `-r 16000` on a device that cannot do 16 kHz
+hands back 48 kHz, and a profile built at the wrong declared rate matches
+nobody.
+
+The HTTP address is derived from `server_url` rather than configured again, so
+you cannot enrol into a different Jarvis from the one this agent is paired with.
+
 ## Reading the audit log
 
 ```bash

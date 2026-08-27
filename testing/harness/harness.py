@@ -256,7 +256,19 @@ def build_config(
     tts_port: int,
     wake_port: int,
     model: str = DEFAULT_MODEL,
+    llm_api_key: str = "",
     wyoming_host: str = "127.0.0.1",
+    search_url: str = "",
+    browser_url: str = "",
+    browser_token: str = "",
+    embeddings_url: str = "",
+    embeddings_model: str = "",
+    rerank_url: str = "",
+    rerank_model: str = "",
+    code: dict[str, Any] | None = None,
+    question_ttl: float = 1800.0,
+    vision_model: str = "",
+    vision_camera_url: str = "",
 ) -> str:
     """A complete jarvis-core configuration.yaml, pointed at the fakes.
 
@@ -265,6 +277,86 @@ def build_config(
     deterministic persona, the companion/device channel, sensors, automation,
     and the recorder in the throwaway config directory.
     """
+    # Only when both are given. `web.search` with no SearXNG fails saying so,
+    # which is the shipped behaviour; a harness that half-configured it would
+    # be testing a state nobody runs.
+    # Retrieval services, when the caller has them. Off by default, because a
+    # harness that silently depended on two containers would fail on a laptop
+    # in a way that looked like a broken assistant.
+    retrieval_block = ""
+    research_rerank = ""
+    if rerank_url:
+        # Research is where the cross-encoder measurably helps: it picks which
+        # pages get READ, before any of them is fetched.
+        research_rerank = (
+            f"  rerank_url: {rerank_url.rstrip('/')}\n"
+            f"  rerank_model: {rerank_model}\n"
+        )
+    if embeddings_url:
+        retrieval_block += (
+            f"  embeddings: true\n"
+            f"  embedding_url: {embeddings_url.rstrip('/')}/v1\n"
+            f"  embedding_model: {embeddings_model}\n"
+        )
+    if rerank_url:
+        retrieval_block += (
+            f"  rerank_url: {rerank_url.rstrip('/')}\n"
+            f"  rerank_model: {rerank_model}\n"
+        )
+
+    # A camera and a vision model, when the caller has both (M56): the fixture
+    # site's still and a GGUF VLM the model server serves. Half of it would be
+    # a house with a camera nobody can look through, so it is all or nothing.
+    vision_block = (
+        f"""
+# One fixture camera, looked at on the OpenAI wire through the same model
+# server as the chat model. Consent `always`: the rig is the operator here.
+vision:
+  backend: openai
+  url: {ollama_url}
+  model: {vision_model}
+  api_key_env: LLM_API_KEY
+  local_only: false
+  cameras:
+    - name: Kitchen
+      platform: still
+      url: {vision_camera_url}
+      area: Kitchen
+      consent: always
+"""
+        if vision_model and vision_camera_url
+        else ""
+    )
+    web_block = (
+        f"""
+# Private search and page fetching. Pointed at whatever the caller passed —
+# the research eval passes its own fixture web, and nothing here reaches the
+# internet unless an operator points it there.
+web:
+  searxng_url: {search_url}
+  browser_url: {browser_url}
+  # A token, because `browser_configured` is url AND token — a browser_url with
+  # no token leaves every fetch failing with "not configured", which is the
+  # right refusal and a confusing way to discover a harness is half-wired.
+  # The caller's, when it borrowed the operator's real jarvis-browser; a
+  # made-up one is enough for the fixture stand-in, which checks no bearer.
+  browser_token: {browser_token}
+  safe_search: 1
+"""
+        if search_url and browser_url
+        else ""
+    )
+    # `code:` only when a caller asked for it. A harness that always declared a
+    # repository would give every test a coding agent pointed at something, and
+    # the interesting property of Jarvis Code is what it CANNOT reach.
+    code_block = ""
+    if code:
+        import yaml as _yaml
+
+        code_block = "\n# Jarvis Code, as this test wants it.\n" + _yaml.safe_dump(
+            {"code": code}, sort_keys=False, default_flow_style=False
+        )
+
     return f"""\
 # Written by testing/harness/harness.py. Throwaway: delete the directory.
 jarvis:
@@ -312,6 +404,57 @@ sun:
 demo:
   create_areas: true
 
+{web_block}{code_block}{vision_block}
+# Researching a question: several searches, read the best pages, write it up
+# with citations. Needs `web:` above, which the caller has to point somewhere.
+research:
+{research_rerank}  max_queries: 3
+  max_sources: 4
+
+# The record of everything Jarvis says without being asked. On here because
+# the live rig asserts on it: a notification that exists only as a log line is
+# a notification nobody got, and that was the state of things before M17.
+notifications:
+  max_entries: 200
+
+# Notes: documents on disk. On in the harness house because the live rig and
+# the research eval both write one, and because a research report landing in
+# `memory` instead is exactly the mistake this integration exists to prevent.
+notes:
+  path: notes
+
+# Durable memory, on by default in the harness house: the memory eval and the
+# live scenarios both need a store, and an integration that is absent fails
+# with "400 Bad Request" from a service that does not exist — which reads as a
+# broken API rather than as a feature nobody switched on.
+# Channels, for the red-team probes. Enabled with ONE allow-listed identity, so
+# both halves are testable: `memory:tester` is served and everybody else is
+# ignored. The `memory` adapter goes nowhere, so no account is ever touched.
+channels:
+  enabled: true
+  allow:
+    - memory:tester
+  rate:
+    per_sender: 30
+    global: 60
+
+memory:
+  max_entries: 200
+  context_limit: 600
+  context_entries: 8
+{retrieval_block}
+# One skill, copied in beside this file by the harness. The live rig asks it
+# something only the skill knows, which is the only way to tell "the skill was
+# loaded" from "the persona happened to say something similar".
+skills:
+  path: skills
+
+# The specialists a fan-out reaches. Copied into the throwaway config beside the
+# skills, for the same reason: a test must not be able to edit the repository's
+# own definitions.
+agents:
+  path: agents
+
 voice:
   language: en
   stt:
@@ -341,11 +484,26 @@ voice:
 llm:
   url: {ollama_url}
   model: {model}
+  # Present so the harness can talk to a gateway that wants one (M40). Empty
+  # when there is none, which is what a bare llama-swap or Ollama expects.
+  api_key: "{llm_api_key}"
   # An inline persona: no prompts/ directory needed, and the system prompt is
   # the same on every run, so the fake model's rules match deterministically.
   persona: "You are Jarvis, a composed British butler. Answer in one sentence."
-  max_tool_rounds: 3
+  # Six, not three. Three is enough for a scripted model that answers on cue
+  # and not for a real one: the live rig watched a turn spend all three rounds
+  # searching notes for something that was on the web, and the round budget ran
+  # out before it could answer at all. The shipped default is what
+  # `configuration.yaml` says; this is the harness being generous enough to see
+  # the behaviour rather than the ceiling.
+  max_tool_rounds: 6
+  # Below the live rig's turn timeout on purpose: when the model server stalls,
+  # the failure should be Jarvis saying so, not the test giving up first.
+  call_timeout: 200
   approval_ttl: 60
+  # A question's own clock (M66). The shipped default; a test that wants to
+  # watch one lapse boots its own harness with a short one.
+  question_ttl: {question_ttl}
   options:
     temperature: 0
   expose:
@@ -371,6 +529,16 @@ llm:
 companion:
 device_control:
   timeout: 30
+
+# Anything online, locally (M59): the interval is the floor so a scenario that
+# rewrites a fixture page sees the change inside its wait.
+watch:
+  interval: 30
+  max_watches: 10
+  # The rig's fixture site lives on a loopback alias, which the watch refuses
+  # by design (a page on the LAN is somebody else's); the harness house names
+  # it so watch-page-change can prove the watching, not the refusal.
+  allowed_hosts: [127.0.0.2]
 
 sensors:
   allow_auto_register: true
@@ -474,8 +642,23 @@ class Harness:
         verbose: bool = False,
         boot_timeout: float = BOOT_TIMEOUT,
         save_audio: bool = True,
+        ollama_url: str | None = None,
+        llm_api_key: str | None = None,
+        wyoming: dict[str, Any] | None = None,
+        search_url: str | None = None,
+        browser_url: str | None = None,
+        browser_token: str | None = None,
+        embeddings_url: str | None = None,
+        vision_model: str | None = None,
+        vision_camera_url: str | None = None,
+        embeddings_model: str | None = None,
+        rerank_url: str | None = None,
+        rerank_model: str | None = None,
+        code: dict[str, Any] | None = None,
+        question_ttl: float = 1800.0,
     ) -> None:
         self.host = host
+        self.question_ttl = question_ttl
         # The fakes never leave this box: jarvis-core reaches them over
         # loopback and nothing else ever does (an emulator talks to the server,
         # not to them). Binding them on 0.0.0.0 would put the fake Ollama's
@@ -492,6 +675,31 @@ class Harness:
         self.save_audio = save_audio
         self.transcript = transcript
         self.stt_mode = stt_mode
+        #: Point the server at a model server and voice services that are
+        #: ALREADY RUNNING instead of at the fakes. This is what the live
+        #: interaction rig uses: the whole point of that rig is that the STT is
+        #: really Whisper, the TTS is really Piper and the model really thinks,
+        #: so a fake in the middle of it would prove nothing about any of them.
+        #:
+        #: `wyoming` is `{"host": ..., "stt": port, "tts": port, "wake": port}`.
+        #: Either may be set without the other — a scripted model against real
+        #: voice services is a useful third thing.
+        self.external_ollama_url = str(ollama_url).rstrip("/") if ollama_url else ""
+        self.external_wyoming = dict(wyoming) if wyoming else {}
+        #: The `web` integration's two services. Empty means the block is left
+        #: out of the config, and `web.search` fails saying it is not
+        #: configured — which is the shipped behaviour and the right default
+        #: for a harness that must never reach the internet by accident.
+        self.search_url = str(search_url or "").rstrip("/")
+        self.browser_url = str(browser_url or "").rstrip("/")
+        self.browser_token = str(browser_token or "harness-browser-token")
+        self.embeddings_url = str(embeddings_url or "").rstrip("/")
+        self.embeddings_model = str(embeddings_model or "")
+        self.rerank_url = str(rerank_url or "").rstrip("/")
+        self.rerank_model = str(rerank_model or "")
+        #: A `code:` block for this run — repositories, environments and the
+        #: permission mode. `evals/coding_eval.py` is the caller that matters.
+        self.code_config = dict(code) if code else {}
         self.ollama_script = Path(ollama_script).resolve() if ollama_script else DEFAULT_OLLAMA_SCRIPT
         self.wyoming_script = Path(wyoming_script).resolve() if wyoming_script else None
 
@@ -511,6 +719,13 @@ class Harness:
         self.port = int(port) if port else free_port(host)
         self.ports: dict[str, int] = {"core": self.port}
         self.ollama_url = ""
+        # The gateway's key, when one is in front (M40). From the environment
+        # by default, so every caller does not have to know about it.
+        self.vision_model = str(vision_model or "")
+        self.vision_camera_url = str(vision_camera_url or "")
+        self.llm_api_key = str(
+            llm_api_key if llm_api_key is not None else os.environ.get("LLM_API_KEY", "")
+        )
         self._children: list[_Child] = []
         self._started = False
         self._atexit_registered = False
@@ -639,6 +854,13 @@ class Harness:
         return child
 
     def _start_fakes(self) -> None:
+        self._start_fake_ollama()
+        self._start_fake_wyoming()
+
+    def _start_fake_ollama(self) -> None:
+        if self.external_ollama_url:
+            self.ollama_url = self.external_ollama_url
+            return
         ollama_out = self.work_dir / "fake-ollama.json"
         # A reused --work-dir still holds the *last* run's port files. Reading
         # one of those would point this run's config at a dead port and the
@@ -658,6 +880,12 @@ class Harness:
         self.ports["ollama"] = int(info["port"])
         self.ollama_url = f"http://{self.fake_host}:{self.ports['ollama']}"
 
+    def _start_fake_wyoming(self) -> None:
+        if self.external_wyoming:
+            self.wyoming_host = str(self.external_wyoming.get("host") or "127.0.0.1")
+            for name, default in (("stt", 10300), ("tts", 10200), ("wake", 10400)):
+                self.ports[name] = int(self.external_wyoming.get(name) or default)
+            return
         wyoming_out = self.work_dir / "fake-wyoming.json"
         wyoming_out.unlink(missing_ok=True)
         argv = [
@@ -725,18 +953,61 @@ class Harness:
 
         shutil.rmtree(self.config_dir, ignore_errors=True)
         self.config_dir.mkdir(parents=True, exist_ok=True)
+        self._write_skills()
+        self._write_agents()
         (self.config_dir / "configuration.yaml").write_text(
             build_config(
                 port=self.port,
                 host=self.host,
                 ollama_url=self.ollama_url,
+                llm_api_key=self.llm_api_key,
+                vision_model=self.vision_model,
+                vision_camera_url=self.vision_camera_url,
                 stt_port=self.ports["stt"],
                 tts_port=self.ports["tts"],
                 wake_port=self.ports["wake"],
                 model=self.model,
-                wyoming_host=self.fake_host,
+                wyoming_host=getattr(self, "wyoming_host", self.fake_host),
+                search_url=self.search_url,
+                browser_url=self.browser_url,
+                browser_token=self.browser_token,
+                embeddings_url=self.embeddings_url,
+                embeddings_model=self.embeddings_model,
+                rerank_url=self.rerank_url,
+                rerank_model=self.rerank_model,
+                code=self.code_config,
+                question_ttl=self.question_ttl,
             ),
             encoding="utf-8",
+        )
+
+    def _write_agents(self) -> None:
+        """Copy the shipped agent definitions into the throwaway config."""
+        source = Path(self.core_dir) / "config" / "agents"
+        if not source.is_dir():
+            return
+        import shutil
+
+        target = self.config_dir / "agents"
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns("README.md"))
+
+    def _write_skills(self) -> None:
+        """Copy the shipped example skills into the throwaway config.
+
+        Copied rather than pointed at: `skills.reload` and the console both
+        write nothing, but a test that edits a skill must not be able to edit
+        the repository's own example.
+        """
+        source = Path(self.core_dir) / "config" / "examples" / "skills"
+        if not source.is_dir():
+            return
+        import shutil
+
+        target = self.config_dir / "skills"
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(
+            source, target, ignore=shutil.ignore_patterns("README.md", "__pycache__")
         )
 
     def _spawn_core(self) -> _Child:
@@ -800,6 +1071,23 @@ class Harness:
                 self.ports["core"] = self.port
                 self._write_config()
 
+    def restart_core(self) -> "Harness":
+        """Stop jarvis-core and start it again, on the same config and port.
+
+        For the one class of claim that cannot be tested any other way: "it
+        remembered". A memory that lives in a process is not a memory, and the
+        only honest way to say so is to kill the process. The fakes and the
+        config directory are left exactly as they are — this restarts the
+        server, not the world.
+        """
+        for child in list(self._children):
+            if child.name.startswith("jarvis-core"):
+                child.stop()
+                self._children.remove(child)
+        self._start_core()
+        self._check_token()
+        return self
+
     @staticmethod
     def _port_was_contended(child: _Child) -> bool:
         """Did this jarvis-core die because something already had its port?"""
@@ -852,6 +1140,15 @@ class Harness:
     # async test between awaits, and a great deal clearer than reaching into
     # a subprocess some other way.
     def _control(self, path: str, payload: Any = None) -> Any:
+        if self.external_ollama_url:
+            # A real model server has no `/_control` plane, and pretending the
+            # call worked would let a test "script" a model that then answers
+            # however it likes — which is worse than not being able to script
+            # it, because the assertions would still be written as if it had.
+            raise HarnessError(
+                "this harness talks to a real model server "
+                f"({self.external_ollama_url}); there is nothing to script"
+            )
         return http_json(f"{self.ollama_url}{path}", payload=payload, timeout=5.0)
 
     def set_ollama_script(self, script: Any = None) -> None:

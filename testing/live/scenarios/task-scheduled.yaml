@@ -1,0 +1,26 @@
+name: task-scheduled
+capability: task
+gated-on: M17
+intent: >
+  "Remind me in a minute" is the smallest proactive thing an assistant does,
+  and the one people notice missing. It must fire on time, once, and arrive as
+  a UI moment rather than a line in a log.
+variants: [voice, text]
+turns:
+  - say: "Remind me in one minute to check the oven."
+    expect:
+      # A reminder is a schedule entry until it fires (then a `scheduled`
+      # task runs). This turn proves the entry exists; the next proves it
+      # fired and was heard. There has never been a `notify` task kind.
+      schedule: {title_contains: oven, within: 30}
+      reply_means: >-
+        confirms a reminder is set — "in a minute", or a clock time about a
+        minute ahead, both count
+  # Nothing is said: a silent audio turn is answered with an STT error, and an
+  # empty text turn was read as a new request (the model set a second
+  # reminder, whose reply happened to say "oven"). The reminder is watched
+  # for instead — it lands in the notifications inbox when it fires.
+  - observe: true
+    wait: 65
+    expect:
+      notification: {kind: reminder, title_contains: oven, within: 30}

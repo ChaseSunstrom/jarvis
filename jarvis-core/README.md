@@ -295,6 +295,7 @@ and exits without starting the server.
 - [docs/configuration.md](docs/configuration.md) — every YAML key
 - [docs/integrations.md](docs/integrations.md) — writing one, with a full example
 - [docs/clients.md](docs/clients.md) — the REST/websocket contract clients speak
+- [docs/code.md](docs/code.md) — Jarvis Code: what a coding job may and may not do
 - [docs/voice.md](docs/voice.md) — Wyoming wiring and latency targets
 - [docs/security.md](docs/security.md) — tokens, network posture, the approval gate
 - [docs/migrating-from-ha.md](docs/migrating-from-ha.md) — what ports over and what does not

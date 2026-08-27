@@ -79,10 +79,14 @@ def scrim_numbers() -> dict:
         r"floatArrayOf\(([^)]*)\)", src).group(1))]
     fractions = [float(v) for v in re.findall(
         r"core \* ([\d.]+)f", src)]
-    rgb = tuple(
-        int(v) for v in re.search(
-            r"Color\.argb\(core, (\d+), (\d+), (\d+)\)", src).groups()
-    )
+    # The scrim's colour is the BG token now, not three numbers — M08's token
+    # pass moved every hand-mixed colour in the app into `design/tokens.json`,
+    # and this mirror asserts the DARKNESS of the scrim, which is a property of
+    # that token rather than of a literal. Read from the generated Kotlin, so
+    # the two cannot drift.
+    tokens = source(Path(SCRIM).parent / "theme" / "JarvisTokens.kt")
+    bg = int(re.search(r"const val BG = 0x([0-9A-Fa-f]{8})", tokens).group(1), 16)
+    rgb = ((bg >> 16) & 0xFF, (bg >> 8) & 0xFF, bg & 0xFF)
     return {
         "strength": strength,
         "focus_y": focus_y,
@@ -144,8 +148,16 @@ def text_colours() -> dict:
             "AssistOverlay no longer sets its own transcript colour, so it is "
             "drawing the palette's dimmest one over arbitrary content"
         )
-    value = re.search(rf"const val {token.group(1)} = 0x..([0-9A-Fa-f]{{6}})", ui)
-    if not value:
+    # JarvisUi's colours are aliases of the generated JarvisTokens (design/build.py),
+    # so the hex is read from the constant the alias points at.
+    alias = re.search(rf"const val {token.group(1)} = JarvisTokens\.Color\.([A-Z_0-9]+)", ui)
+    generated = source(KOTLIN / "ui/theme/JarvisTokens.kt")
+    value = None
+    if alias:
+        value = re.search(rf"const val {alias.group(1)} = 0x..([0-9A-Fa-f]{{6}})", generated)
+    if value is None:
+        value = re.search(rf"const val {token.group(1)} = 0x..([0-9A-Fa-f]{{6}})", ui)
+    if value is None:
         raise ValueError(f"JarvisUi has no colour {token.group(1)}")
     hexv = value.group(1)
     return {

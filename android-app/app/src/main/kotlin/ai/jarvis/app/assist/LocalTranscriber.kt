@@ -84,6 +84,9 @@ class LocalTranscriber(private val context: Context) {
         pending = onResult
 
         val engine = try {
+            // `isAvailable` above already refused anything below API 31 — one
+            // stack frame away, which is one too many for lint to follow.
+            @Suppress("NewApi")
             SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         } catch (t: Throwable) {
             Log.w(TAG, "could not create the on-device recogniser", t)

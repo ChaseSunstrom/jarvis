@@ -24,6 +24,7 @@ import pytest
 
 from jarvis.llm.agent import (
     TURN_EVENT_THINKING,
+    TURN_EVENT_TOOL_NARRATED,
     TURN_EVENT_TOOL_END,
     TURN_EVENT_TOOL_START,
     ThinkStripper,
@@ -32,6 +33,7 @@ from jarvis.llm.ollama import OllamaClient
 from jarvis.llm.openai_compat import OpenAICompatClient
 from jarvis.voice.pipeline import (
     EVENT_INTENT_THINKING,
+    EVENT_INTENT_TOOL_NARRATED,
     EVENT_INTENT_TOOL_END,
     EVENT_INTENT_TOOL_START,
     MAX_THINKING_FRAME_CHARS,
@@ -476,3 +478,93 @@ async def test_a_text_run_needs_no_audio_and_can_stop_at_intent() -> None:
         "intent-end",
         "run-end",
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_tool_row_survives_a_turn_that_thinks_before_it_speaks() -> None:
+    """The eviction, and the reason it was invisible.
+
+    `_turn_events` is a bounded deque and the intent loop used to be the only
+    thing that drained it — on a comment that claimed it ran "on every tick,
+    not only when there is text". It did not: `_converse_deltas` drops every
+    falsy delta and the agent's rounds yield only visible text, so during
+    reasoning and during tool execution the loop never ticked and nothing
+    drained. Fill the queue past `MAX_QUEUED_TURN_EVENTS` before the first
+    token and the deque evicts from the LEFT — taking the tool rows and the
+    reasoning that preceded them, silently.
+
+    Which is exactly the window a tool row exists to narrate: the model thinks,
+    calls something slow, and says nothing until it is done.
+    """
+    from jarvis.voice.pipeline import MAX_QUEUED_TURN_EVENTS
+
+    async def _agent(text, conversation_id=None, on_event=None):
+        # The rows go in FIRST. `deque` evicts from the left, so a row is only
+        # lost once everything queued after it has pushed it out — which is a
+        # model that calls a tool and then reasons at length about the result
+        # before saying a word. Nothing ticks the intent loop in between,
+        # because the agent yields no visible text until the very end.
+        on_event(TURN_EVENT_TOOL_START, {"name": "code_task", "round": 1})
+        on_event(TURN_EVENT_TOOL_END, {"name": "code_task", "ok": True})
+        for index in range(MAX_QUEUED_TURN_EVENTS + 200):
+            on_event(TURN_EVENT_THINKING, {"delta": f"t{index} "})
+            if index % 64 == 0:
+                # A real turn awaits its socket constantly; this is where a
+                # ticker gets its chance to run and the old code got none.
+                await asyncio.sleep(0.01)
+        yield "Started, Sir."
+
+    events: list[tuple[str, dict]] = []
+    run = _run(events, _agent)
+    await run.execute(None, run._event_cb, text="write me a snake game")
+
+    names = [name for name, _ in events]
+    assert EVENT_INTENT_TOOL_START in names, (
+        "the tool row was evicted before it ever reached the client"
+    )
+    assert EVENT_INTENT_TOOL_END in names
+    assert EVENT_INTENT_THINKING in names, "the reasoning went with it"
+
+
+@pytest.mark.asyncio
+async def test_rows_still_precede_the_text_they_were_queued_before() -> None:
+    """The ordering the in-loop drain guarantees, kept while adding the ticker.
+
+    Reasoning that preceded a tool call has to reach the client ahead of the
+    row for that call, and both ahead of the sentence that follows them, or the
+    transcript reads as though the model decided first and thought after.
+    """
+    async def _agent(text, conversation_id=None, on_event=None):
+        on_event(TURN_EVENT_THINKING, {"delta": "weighing it up"})
+        on_event(TURN_EVENT_TOOL_START, {"name": "turn_on", "round": 1})
+        on_event(TURN_EVENT_TOOL_END, {"name": "turn_on", "ok": True})
+        yield "Done, Sir."
+
+    events: list[tuple[str, dict]] = []
+    run = _run(events, _agent)
+    await run.execute(None, run._event_cb, text="lights on")
+
+    names = [name for name, _ in events]
+    assert names.index(EVENT_INTENT_THINKING) < names.index(EVENT_INTENT_TOOL_START)
+    assert names.index(EVENT_INTENT_TOOL_END) < names.index("intent-progress")
+
+
+@pytest.mark.asyncio
+async def test_a_narrated_call_reaches_the_client_not_only_the_log() -> None:
+    """The correction costs an extra round; the client should be able to say so.
+
+    Without this the turn simply takes longer for no visible reason. The
+    pipeline drops any turn event it has no mapping for (`_TURN_EVENT_NAMES`),
+    so emitting the event from the agent is only half the wiring.
+    """
+    async def _agent(text, conversation_id=None, on_event=None):
+        on_event(TURN_EVENT_TOOL_NARRATED, {"tool": "code_task", "round": 1})
+        yield "Sorry, Sir — I had to do that twice."
+
+    events: list[tuple[str, dict]] = []
+    run = _run(events, _agent)
+    await run.execute(None, run._event_cb, text="write me a snake game")
+
+    narrated = [data for name, data in events if name == EVENT_INTENT_TOOL_NARRATED]
+    assert narrated, "the agent reported it and the pipeline swallowed it"
+    assert narrated[0]["tool"] == "code_task"

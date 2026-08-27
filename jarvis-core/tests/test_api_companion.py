@@ -887,3 +887,32 @@ async def test_a_frame_carrying_nan_is_refused_at_the_door(jarvis, session):
     assert complaint["error"]["code"] == "invalid_format"
     session.push({"id": 9, "type": "ping"})
     assert (await session.next())["type"] == "pong"
+
+
+async def test_a_companion_is_filed_in_the_device_registry_and_carries_its_room(jarvis, session):
+    """M99: a phone gets a room the way a bridge does.
+
+    The Devices page had a room picker for registry devices and none for the
+    phones on the socket, so `device_of` (M94) always answered `area: ""` and
+    "turn the light on" from the kitchen phone could not mean the kitchen.
+    """
+    await session.register()
+    entry = jarvis.devices.get_by_identifier(f"companion:{DEVICE_ID}")
+    assert entry is not None and entry.platform == "companion" and entry.name == "Pixel 8"
+    listed = await session.command({"id": 40, "type": "config/companion/list"})
+    mine = [r for r in listed["result"] if r["device_id"] == DEVICE_ID][0]
+    assert mine["registry_id"] == entry.id and mine["area_id"] is None and mine["area"] == ""
+
+    kitchen = await jarvis.areas.create("Kitchen")
+    moved = await session.command({"id": 41, "type": "config/device_registry/update", "device_id": entry.id, "area_id": kitchen.id})
+    assert moved["success"] is True
+    listed = await session.command({"id": 42, "type": "config/companion/list"})
+    mine = [r for r in listed["result"] if r["device_id"] == DEVICE_ID][0]
+    assert mine["area_id"] == kitchen.id and mine["area"] == "Kitchen"
+    # The link itself says so, live, which is what the pipeline's device_facts reads.
+    assert get_devices(jarvis).get(DEVICE_ID).area == "Kitchen"
+
+    # A re-register keeps the room: the registry entry is found, not recreated.
+    await session.register()
+    assert jarvis.devices.get_by_identifier(f"companion:{DEVICE_ID}").area_id == kitchen.id
+

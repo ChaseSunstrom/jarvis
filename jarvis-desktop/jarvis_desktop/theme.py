@@ -69,40 +69,25 @@ __all__ = [
 
 # --- the palette ------------------------------------------------------------
 #
-# Every value here is a --jv-* token from jarvis-web/src/lib/tokens.ts, named in
-# the comment beside it. A colour with no token named is the thing this module
-# exists to prevent: a fourth palette, growing back one constant at a time.
-
-#: The ground every dialog is painted on.
-BG = "#04070c"  # --jv-bg
-#: Panels and fields *inside* that ground: the verbatim params box, the answer
-#: field. One step up from the ground so a read-only slab reads as inset.
-PANEL = "#06121a"  # --jv-panel-solid
-#: Arc-reactor cyan. The wordmark, focus rings, the affirmative button fill.
-ACCENT = "#3fd8ff"  # --jv-accent
-#: The accent, dimmed. Borders, which must be visible without competing with
-#: the text inside them.
-ACCENT_DEEP = "#2bb0d8"  # --jv-accent-deep
-#: Text drawn ON a filled button, never on the ground — it is a near-black and
-#: would be invisible there. Checked against the fills, not against BG.
-ACCENT_INK = "#04121a"  # --jv-accent-ink
-#: Body text.
-TEXT = "#d7edf5"  # --jv-text
-#: The one line that must be read first: the action id, the question.
-TEXT_BRIGHT = "#eaf7fc"  # --jv-text-bright
-#: Supporting text — the action's own description, the countdown.
-TEXT_DIM = "#9fc0cc"  # --jv-text-dim
-#: Hints. The quietest colour that still clears AA on this ground.
-TEXT_FAINT = "#8fb3c0"  # --jv-text-faint
-#: "This is the approving answer."
-OK = "#6ff2c0"  # --jv-ok
-#: "This is the refusing answer." Red, because it is a refusal, not because
-#: anything is broken.
-DANGER = "#ff6b5c"  # --jv-danger
-#: Held, not failed: an approval waiting on a human. The consent prompt's whole
-#: subject, which is why its header is drawn in it rather than in the danger
-#: red — nothing has gone wrong, something is waiting.
-WARN = "#ffb347"  # --jv-warn
+# Every colour is a --jv-* token from design/tokens.json, generated into
+# ``tokens.py`` by ``design/build.py`` (which also names the token beside each
+# value). Nothing here may hold a hex of its own: a colour with no token is the
+# thing this module exists to prevent — a fourth palette, growing back one
+# constant at a time. ``tests/test_theme.py`` checks the generated lines for AA.
+from .tokens import (  # noqa: F401 — re-exported under the names the dialogs use
+    ACCENT,
+    ACCENT_DEEP,
+    ACCENT_INK,
+    BG,
+    DANGER,
+    OK,
+    PANEL,
+    TEXT,
+    TEXT_BRIGHT,
+    TEXT_DIM,
+    TEXT_FAINT,
+    WARN,
+)
 
 # --- chrome -----------------------------------------------------------------
 

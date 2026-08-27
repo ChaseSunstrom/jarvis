@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jarvis.local/schemas/extension-manifest-1.json",
+  "title": "Jarvis extension manifest",
+  "description": "One extensible thing — a skill, an MCP server or a tool plugin — and what it is allowed to reach. Hand-validated by jarvis/integrations/extensions/manifest.py; this document is the readable copy an author writes against.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "kind", "version", "description"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique within its kind. Lowercase so a case-insensitive filesystem cannot make two of them one.",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "kind": {
+      "description": "Which subsystem loads it.",
+      "enum": ["skill", "mcp", "plugin"]
+    },
+    "version": {"type": "string", "minLength": 1, "maxLength": 32},
+    "description": {"type": "string", "minLength": 1, "maxLength": 600},
+    "author": {"type": "string", "maxLength": 120},
+    "source_url": {
+      "type": "string",
+      "description": "Where it came from. Empty for anything written in this repository.",
+      "maxLength": 500,
+      "pattern": "^$|^https://|^http://|^file://"
+    },
+    "permissions": {
+      "type": "array",
+      "description": "A CLOSED vocabulary. An unknown permission is rejected rather than ignored: a manifest must not be able to invent a permission nothing enforces.",
+      "uniqueItems": true,
+      "maxItems": 16,
+      "items": {
+        "enum": [
+          "read_state",
+          "act",
+          "memory_read",
+          "memory_write",
+          "network",
+          "filesystem_read",
+          "filesystem_write",
+          "run_process"
+        ]
+      }
+    },
+    "tools": {
+      "type": "array",
+      "description": "The tool allowlist: every tool this extension may use, named exactly.",
+      "uniqueItems": true,
+      "maxItems": 128,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.:-]{0,63}$"}
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "needs": {"type": "boolean"},
+        "hosts": {
+          "type": "array",
+          "description": "Hosts it expects to reach. `[\"*\"]` is allowed and means it will not say.",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": {"type": "string", "minLength": 1, "maxLength": 255}
+        }
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "read": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": {"type": "string", "minLength": 1, "maxLength": 255}
+        },
+        "write": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": {"type": "string", "minLength": 1, "maxLength": 255}
+        }
+      }
+    }
+  }
+}

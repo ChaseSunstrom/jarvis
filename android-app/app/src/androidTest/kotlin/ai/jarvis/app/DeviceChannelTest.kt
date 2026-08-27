@@ -6,6 +6,7 @@ import ai.jarvis.app.support.FakeJarvisServer
 import ai.jarvis.app.support.JarvisTestRule
 import ai.jarvis.app.support.Screenshots
 import ai.jarvis.app.support.Waits
+import ai.jarvis.app.automation.policy.PolicyStore
 import ai.jarvis.app.testing.TestHooks
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
@@ -77,6 +78,10 @@ class DeviceChannelTest {
     fun connectTheDevice() {
         server = FakeJarvisServer().start()
         TestHooks.configure(context, server.baseUrl, server.expectedToken)
+        // The rule's resetState left the master switch OFF (M22's default), and
+        // with it off every known action is denied before its tier is looked
+        // at — which is the one test below that wants it off, and not this one.
+        TestHooks.enableAutomation(context)
 
         // Something on screen, so the screenshots are of an app rather than of a
         // launcher, and so the process is foreground while commands arrive.
@@ -147,6 +152,38 @@ class DeviceChannelTest {
         }
 
         Screenshots.take("DeviceChannelTest-registered")
+    }
+
+    @Test
+    fun aKnownTierOneCommandIsDeniedWhileAutomationIsOff() {
+        // The guard for the failure that arrived as five red rows on CI: with
+        // the master switch off — M22's default, and what the rule's
+        // resetState leaves — the standing ban denies every known action before
+        // its tier is looked at. That is the right answer for a phone nobody
+        // switched on; this pins it so the next time it is the cause, one test
+        // names it instead of every dispatching test failing on its own timer.
+        server.awaitRegistration()
+        Waits.until("the channel to reach READY") {
+            channel.status.value.state == JarvisChannel.State.READY
+        }
+        PolicyStore(context).automationEnabled = false
+
+        val commandId = "cmd-${UUID.randomUUID()}"
+        server.sendDeviceCommand(
+            commandId = commandId,
+            action = TIER1_ACTION,
+            params = JSONObject(),
+            tier = 1,
+            reason = "an instrumented test asked, with automation switched off",
+        )
+        val result = server.awaitDeviceResult(commandId)
+
+        assertEquals(
+            "With the master switch off a known action is denied, not run. Frame: $result",
+            "denied",
+            result.optString("status"),
+        )
+        assertEquals(commandId, result.optString("command_id"))
     }
 
     @Test

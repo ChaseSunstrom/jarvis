@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+<title>Jarvis — no console yet</title>
+<link rel="stylesheet" href="tokens.css" />
+<style>
+  html, body { height: 100%; margin: 0; background: var(--jv-bg, #0b0e12); color: var(--jv-fg, #d7dde5); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 34rem; margin: 18vh auto 0; padding: 0 1.5rem; }
+  h1 { font-size: 1.1rem; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 1rem; }
+  code { font: 0.95em ui-monospace, monospace; background: rgba(255,255,255,0.06); padding: 0.1em 0.35em; border-radius: 3px; }
+  p { margin: 0 0 0.8rem; }
+  .why { opacity: 0.7; }
+</style>
+</head>
+<body>
+<main data-testid="unreachable">
+  <h1>No console there yet</h1>
+  <p>Nothing answered at <code data-testid="unreachable-url"></code>.</p>
+  <p class="why" data-testid="unreachable-why"></p>
+  <p>If Jarvis runs on another machine, start this app with <code>JARVIS_CONSOLE_URL=http://&lt;host&gt;:8199</code>.
+     If it runs here, bring the stack up (<code>make up</code>) — this page tries again every few seconds.</p>
+</main>
+<script>
+  // The URL and reason arrive as query parameters from the main process; they
+  // are written as TEXT, never as markup — a description Chromium hands back
+  // is not something to render.
+  const params = new URLSearchParams(location.search);
+  document.querySelector('[data-testid="unreachable-url"]').textContent = params.get('url') || '';
+  document.querySelector('[data-testid="unreachable-why"]').textContent = params.get('why') || '';
+</script>
+</body>
+</html>

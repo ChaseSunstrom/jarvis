@@ -199,7 +199,30 @@ async def async_write_event(writer: asyncio.StreamWriter, event: WyomingEvent) -
         raise WyomingConnectionError(str(err)) from err
 
 
+@contextlib.asynccontextmanager
+async def _deadline(seconds: float):
+    """`asyncio.timeout` for a Python without it: the body is cancelled after `seconds`."""
+    task = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+    handle = loop.call_later(seconds, lambda: task and task.cancel())
+    try:
+        yield
+    except asyncio.CancelledError:
+        if handle.when() <= loop.time():
+            return
+        raise
+    finally:
+        handle.cancel()
+
+
 # --- connection -------------------------------------------------------------
+#: How long a hang-up waits for a server that is still sending. Piper on a
+#: CPU produces a few seconds of speech per second; a reply of three sentences
+#: abandoned at its first word is several seconds of audio the server will
+#: write whether or not anyone reads it.
+ABANDON_GRACE = 8.0
+
+
 class WyomingConnection:
     """An open TCP connection to a Wyoming service (async context manager)."""
 
@@ -246,11 +269,48 @@ class WyomingConnection:
         except Exception:  # pragma: no cover - defensive
             _LOGGER.debug("Error closing Wyoming connection", exc_info=True)
 
+    async def end(self, grace: float = 1.0) -> None:
+        """Hang up politely: FIN first, then wait for the peer to finish.
+
+        `close()` straight after reading the last event tears the socket down
+        while the server's own `drain()` may still be in flight — and a peer
+        that closes with a write pending gets `ConnectionResetError('Connection
+        lost')` for its trouble. Both Wyoming containers logged exactly that,
+        at ERROR, on every `describe`, which turned the live suite's
+        stack-logs-clean check red for a conversation that had gone perfectly.
+        Sending EOF and reading until the server closes its side is the
+        difference between a hang-up and a slammed door. Bounded by `grace`:
+        a server that never closes costs a second, not a hang.
+        """
+        writer, reader = self._writer, self._reader
+        if writer is None or reader is None:
+            return
+        with contextlib.suppress(ConnectionError, OSError, NotImplementedError):
+            if writer.can_write_eof():
+                writer.write_eof()
+        with contextlib.suppress(Exception):
+            async with asyncio.timeout(grace) if hasattr(asyncio, "timeout") else _deadline(grace):
+                while await async_read_event(reader, grace) is not None:
+                    pass
+        await self.close()
+
     async def __aenter__(self) -> "WyomingConnection":
         return await self.connect()
 
     async def __aexit__(self, *exc_info: Any) -> None:
-        await self.close()
+        # Every exit hangs up politely, not only `describe`: a synthesis
+        # abandoned half-way (the listener went away, the turn was cancelled)
+        # left piper writing into a closed socket, and it logged
+        # `BrokenPipeError` at ERROR for a turn nobody was waiting on. The
+        # drain is longer than `describe`'s because a server mid-sentence has
+        # seconds of audio still to send, and shielded because the usual way
+        # here is a cancelled task, which would otherwise cut the drain short
+        # and slam the door after all.
+        try:
+            await asyncio.shield(self.end(grace=ABANDON_GRACE))
+        except BaseException:  # noqa: BLE001 - the door still shuts
+            await self.close()
+            raise
 
     async def write(self, event: WyomingEvent) -> None:
         if self._writer is None:
@@ -354,6 +414,8 @@ async def wyoming_info(
             if event is None:
                 raise WyomingError(f"{host}:{port} closed the connection before sending info")
             if event.type == TYPE_INFO:
+                # Politely, or the server logs a reset for every describe.
+                await conn.end()
                 return event.data
 
 

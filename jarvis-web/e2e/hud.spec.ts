@@ -58,17 +58,18 @@ test('a held action is answerable on the HUD, without it becoming the console', 
 
 	await expect(page.getByTestId('approval-args-lock_control')).toContainText('lock.front_door');
 
-	// Still the HUD. No nav, no console frame — the orb is still the page.
-	await expect(page.getByTestId('nav-devices')).toHaveCount(0);
-	await expect(page.getByTestId('orb')).toBeVisible();
+	// Still the voice screen. The bar is shared now (M49), so the nav IS here;
+	// what must not be is the console frame — the reactor is still the page.
+	await expect(page.locator('.console-body')).toHaveCount(0);
+	await expect(page.getByTestId('reactor')).toBeVisible();
 
-	// The buttons are dressed, not browser defaults. `.btn` is declared under
-	// `.console` in chrome.css, and the dock is not inside a `.console`; if that
-	// rule stops reaching here, APPROVE and DENY become grey system buttons on a
-	// black screen at the one moment somebody has to tell them apart.
+	// The buttons are dressed, not browser defaults: the library's `<Button>`
+	// sets the body face. If that stops reaching here, APPROVE and DENY become
+	// grey system buttons on a black screen at the one moment somebody has to
+	// tell them apart.
 	const approve = page.getByTestId('approve-lock_control');
 	const font = await approve.evaluate((el) => getComputedStyle(el).fontFamily.toLowerCase());
-	expect(font, 'the approvals dock has lost the console furniture').toContain('mono');
+	expect(font, 'the approvals dock has lost the library furniture').toContain('barlow');
 
 	await approve.click();
 	await expect(page.getByTestId('approvals')).toHaveCount(0, { timeout: 10_000 });
@@ -115,7 +116,7 @@ test('what a turn is doing is visible on the HUD, which is where the turn was sp
 		.toBe(true);
 
 	await expect(page.getByTestId('tool-row-lock_control')).toBeVisible();
-	await expect(page.getByTestId('nav-devices')).toHaveCount(0);
+	await expect(page.locator('.console-body')).toHaveCount(0);
 });
 
 test('the palette shortcut is left to the browser on the HUD, and taken in the console', async ({
@@ -158,9 +159,15 @@ test('the HUD scrolls to its controls on a short screen instead of clipping them
 	// landscape, or a long answer, pushed the readout and the mute button past
 	// the bottom edge with no way to reach either.
 	await page.setViewportSize({ width: 900, height: 360 });
+	// The boot sequence plays over the HUD on a first visit; under load (CI,
+	// verify-all on this box) the scroll below ran while it was still up
+	// and the mute button was "unreachable". Every other voice case skips
+	// it the same way.
+	await page.addInitScript(() => sessionStorage.setItem('jarvis:boot-played', '1'));
 	await page.goto('/');
 	const mic = page.getByTestId('mic');
 	await expect(mic).toBeVisible({ timeout: 10_000 });
+	await page.waitForTimeout(400);
 
 	const overflow = await page.evaluate(
 		() => getComputedStyle(document.querySelector('main')!).overflowY
@@ -237,190 +244,48 @@ test('a refused microphone leaves a way to speak, and says so out loud', async (
 		.toMatchObject({ end_stage: 'tts', input: { text: 'turn on the lab lights' } });
 });
 
-test('the orb stops moving when the reader has asked for reduced motion', async ({ page }) => {
-	// The CSS kill switch in base.css cannot reach a requestAnimationFrame loop,
-	// so the largest and brightest moving object in the app — three drifting
-	// blobs, two counter-rotating rings, a radar sweep and a breathing core —
-	// was the one thing that ignored the setting outright.
-	//
-	// `emulateMedia` rather than the `reducedMotion` fixture: the fixture did not
-	// reach the page in this configuration (matchMedia still reported false
-	// inside it), and a test that silently emulates nothing is a test that
-	// passes whatever the orb does.
+test('the reactor stops moving when the reader has asked for reduced motion', async ({ page }) => {
+	// The CSS kill switch in base.css reaches the instrument's own animations;
+	// what it cannot reach is the requestAnimationFrame loop that feeds the
+	// level, so the page stops that itself and the arc rests at zero.
 	await page.emulateMedia({ reducedMotion: 'reduce' });
 	await page.goto('/');
-	const orb = page.getByTestId('orb');
-	await expect(orb).toBeVisible({ timeout: 10_000 });
+	const reactor = page.getByTestId('reactor');
+	await expect(reactor).toBeVisible({ timeout: 10_000 });
 	expect(
 		await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
 		'the preference never reached the page'
 	).toBe(true);
-	expect(
-		await orb.evaluate((el) => el.tagName),
-		'no WebGL here, so this proves nothing about the shader loop'
-	).toBe('CANVAS');
-
-	// Wait for the warm-up to finish, then measure FRAMES.
-	//
-	// This used to be a fixed 1.2 s settle followed by comparing two PNGs 700 ms
-	// apart, and it failed on CI while passing everywhere else. The settle was
-	// the problem: it is a magic number tuned on a machine with a GPU, and a
-	// cold runner compiling this shader on SwiftShader can still be drawing its
-	// FIRST frame when the stopwatch starts. Every draw advances `uTime` and the
-	// blob phases, so one late warm-up frame is byte-for-byte indistinguishable
-	// from an animation — the test could not tell "slow to start" from "never
-	// stopped".
-	//
-	// `data-frames` answers the actual question. A paused orb's count is
-	// constant however long the first frame took; an animating one climbs at
-	// display rate. Nothing here is weaker than before: a genuinely animating
-	// orb never settles, so `settle` exhausts its deadline and the strict
-	// comparisons below still run and still fail.
-	const frames = async () => Number(await orb.getAttribute('data-frames'));
-	const settle = async (deadlineMs = 15_000) => {
-		const until = Date.now() + deadlineMs;
-		let seen = await frames();
-		while (Date.now() < until) {
-			await page.waitForTimeout(250);
-			const now = await frames();
-			if (now === seen) return true;
-			seen = now;
-		}
-		return false;
-	};
-	expect(await settle(), 'the orb never stopped drawing').toBe(true);
-
-	const before = await frames();
-	expect(before, 'the orb never drew at all, so this proves nothing').toBeGreaterThan(0);
-	const boxBefore = await orb.boundingBox();
-	const first = await orb.screenshot();
-	await page.waitForTimeout(700);
-	const second = await orb.screenshot();
-
-	// The direct measurement: no frames at all in the window.
-	expect(await frames(), 'the orb is still drawing frames').toBe(before);
-	expect(await orb.boundingBox(), 'the page moved under the orb').toEqual(boxBefore);
-
-	// And the pixels agree, which also covers anything drawn outside the loop.
-	//
-	// MEASURED, not byte-compared. This was `Buffer.compare(first, second) === 0`
-	// and it went red intermittently — deep in a full run, never on its own —
-	// with the frame counter above passing in the same breath. The orb had drawn
-	// exactly one frame and drawn nothing since; the DOM over that spot was
-	// static; the box had not moved. What differed was 49 pixels of 175142
-	// (0.03%) in one 6x9 block on the rim, where a multisampled buffer gets
-	// resolved. Byte-exactness of a software-rasterised composite is not
-	// something the product promises, so the assertion was failing on a
-	// property nobody implements.
-	//
-	// The tolerance is not a guess, it is the gap between two measurements.
-	// An orb that is actually animating differs by 67% of its pixels over a
-	// SINGLE 16ms frame — 117984 of them, the smallest real animation this can
-	// be asked to catch. The resolve noise is 49. The threshold sits at 1%,
-	// which is 35x the noise and 67x below one frame of movement; there is no
-	// value in between that either measurement comes near. A second draw path
-	// outside the loop repaints the orb, not a rim tile, so it lands on the
-	// far side of that gap with everything else.
-	const changed = await pixelsChanged(page, first, second);
-	expect(
-		changed.fraction,
-		`the orb is still animating: ${changed.differing} of ${changed.total} pixels ` +
-			`changed (${(changed.fraction * 100).toFixed(3)}%) with no new frame drawn`
-	).toBeLessThan(0.01);
+	await page.waitForTimeout(600);
+	const running = await reactor.evaluate(
+		(el) => el.getAnimations({ subtree: true }).filter((a) => a.playState === 'running').length
+	);
+	expect(running, 'the instrument is still animating').toBe(0);
+	await expect(reactor).toHaveAttribute('data-level', '0.00');
+	// And it is still the instrument: the state is reported, so a paused
+	// reactor still says which of five things Jarvis is doing.
+	await expect(reactor).toHaveAttribute('data-state', /idle|listening|thinking|speaking|error/);
 });
 
-/**
- * Fraction of pixels that differ between two PNGs.
- *
- * Decoded in the page rather than by a node PNG library, so this costs no
- * dependency: the browser under test already has `createImageBitmap` and a 2D
- * context, and the images came from it in the first place.
- */
-async function pixelsChanged(
-	page: import('@playwright/test').Page,
-	a: Buffer,
-	b: Buffer
-): Promise<{ differing: number; total: number; fraction: number }> {
-	const result = await page.evaluate(
-		async ([aB64, bB64]) => {
-			const load = async (b64: string) => {
-				const bin = atob(b64);
-				const bytes = new Uint8Array(bin.length);
-				for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-				const bmp = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
-				const canvas = new OffscreenCanvas(bmp.width, bmp.height);
-				const ctx = canvas.getContext('2d');
-				if (!ctx) throw new Error('no 2d context to decode the screenshots with');
-				ctx.drawImage(bmp, 0, 0);
-				return { data: ctx.getImageData(0, 0, bmp.width, bmp.height).data, w: bmp.width, h: bmp.height };
-			};
-			const A = await load(aB64);
-			const B = await load(bB64);
-			// Different sizes means the canvas resized under us, which is a real
-			// failure and not something to average away.
-			if (A.w !== B.w || A.h !== B.h) return { differing: -1, total: 0 };
-			let differing = 0;
-			for (let i = 0; i < A.data.length; i += 4) {
-				if (
-					A.data[i] !== B.data[i] ||
-					A.data[i + 1] !== B.data[i + 1] ||
-					A.data[i + 2] !== B.data[i + 2] ||
-					A.data[i + 3] !== B.data[i + 3]
-				) {
-					differing++;
-				}
-			}
-			return { differing, total: A.w * A.h };
-		},
-		[a.toString('base64'), b.toString('base64')] as [string, string]
-	);
-
-	expect(result.differing, 'the orb canvas changed size between the two captures').not.toBe(-1);
-	return { ...result, fraction: result.differing / result.total };
-}
-
-test('the orb does move when nobody has asked it not to', async ({ page }) => {
+test('the reactor does move when nobody has asked it not to', async ({ page }) => {
 	// The other half of the pair: reduced motion must be the reason it stopped,
-	// not a shader that quietly stopped drawing.
+	// not an instrument that quietly stopped turning.
 	await page.goto('/');
-	const orb = page.getByTestId('orb');
-	await expect(orb).toBeVisible({ timeout: 10_000 });
-	expect(await orb.evaluate((el) => el.tagName)).toBe('CANVAS');
-
-	// The counter-check, measured the same way, so the pair cannot both pass by
-	// the orb simply never drawing.
-	const frames = async () => Number(await orb.getAttribute('data-frames'));
+	const reactor = page.getByTestId('reactor');
+	await expect(reactor).toBeVisible({ timeout: 10_000 });
 	await expect
-		.poll(frames, { timeout: 10_000, message: 'the orb never drew a frame' })
-		.toBeGreaterThan(0);
-
-	const before = await frames();
-	const first = await orb.screenshot();
+		.poll(
+			() =>
+				reactor.evaluate(
+					(el) => el.getAnimations({ subtree: true }).filter((a) => a.playState === 'running').length
+				),
+			{ timeout: 10_000, message: 'nothing on the instrument is animating' }
+		)
+		.toBeGreaterThan(3);
+	// The blades turn: two readings of the ring's rotation, apart in time, differ.
+	const angle = () =>
+		reactor.evaluate((el) => getComputedStyle(el.querySelector('.blades')!).transform);
+	const first = await angle();
 	await page.waitForTimeout(700);
-	const second = await orb.screenshot();
-	expect(await frames(), 'the orb stopped drawing on its own').toBeGreaterThan(before);
-
-	// Measured here too, and for a reason that only became visible once the
-	// noise floor was known. This was `Buffer.compare(first, second) !== 0` —
-	// satisfied by a SINGLE differing byte. The rim's multisample resolve
-	// supplies about 49 of them for free, so a shader that faithfully drew a
-	// frame every tick while rendering an identical picture — uTime unwired,
-	// the phases never integrated — would pass both assertions above and be
-	// reported as animating while visibly frozen. The frame counter cannot see
-	// that: it counts draws, not movement.
-	//
-	// The threshold is set from the adversarial case, not the quiet one. Pinning
-	// every uniform while leaving the loop running — draws counted, picture
-	// identical — still moves 3.1% of the pixels, because a live 60fps composite
-	// dithers where a paused one does not. A real animation moves 62-79% over
-	// this window and never less than 67% over a single frame. 10% sits in that
-	// gap with 20x clearance below and 6x above; the 0.03% floor the paused orb
-	// shows is not the number to size this against.
-	const changed = await pixelsChanged(page, first, second);
-	expect(
-		changed.fraction,
-		`the orb is drawing frames but not moving: only ${changed.differing} of ` +
-			`${changed.total} pixels changed (${(changed.fraction * 100).toFixed(3)}%), ` +
-			'which is the rim resolving, not an animation'
-	).toBeGreaterThan(0.1);
+	expect(await angle(), 'the blades are not turning').not.toBe(first);
 });

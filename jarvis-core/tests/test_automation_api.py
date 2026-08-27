@@ -348,3 +348,49 @@ async def test_there_is_no_way_to_invent_a_device(jarvis):
     register_builtin_tools(registry)
     assert registry.get("create_device") is None
     assert registry.get("create_entity") is None
+
+
+# ---------------------------------------------------------------------------
+# M97: a routine authored by voice is read back, and listed
+# ---------------------------------------------------------------------------
+def test_describe_reads_a_routine_the_way_a_person_would_say_it():
+    from jarvis.automation.authored import describe
+
+    weekday_kitchen = {
+        "alias": "Kitchen at seven",
+        "trigger": [{"platform": "time", "at": "07:00"}],
+        "condition": [{"condition": "time", "weekday": ["mon", "tue", "wed", "thu", "fri"]}],
+        "action": [{"service": "light.turn_on", "target": {"entity_id": "light.kitchen_lights"}}],
+    }
+    assert describe(weekday_kitchen) == "weekdays at 07:00: turn on light.kitchen_lights"
+    assert describe({"trigger": {"platform": "state", "entity_id": "binary_sensor.hall", "to": "on"},
+                     "action": {"service": "light.turn_on", "entity_id": "light.hall"}}) == "when binary_sensor.hall becomes on: turn on light.hall"
+    assert describe({"trigger": {"platform": "numeric_state", "entity_id": "sensor.garage_temperature", "below": 5},
+                     "action": {"service": "climate.set_temperature", "target": {"entity_id": "climate.thermostat"}}}) == "when sensor.garage_temperature goes below 5: set temperature climate.thermostat"
+    assert describe({"trigger": {"platform": "sun", "event": "sunset"}, "action": {"service": "light.turn_on", "entity_id": "light.porch"}}) == "at sunset: turn on light.porch"
+    assert describe({}) == "never: nothing"
+
+
+async def test_create_automation_reads_the_routine_back_and_list_automations_names_it(jarvis):
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+    jarvis.data["llm_tools"] = registry
+    created = await registry.call("create_automation", {
+        "alias": "Kitchen at seven",
+        "trigger": [{"platform": "time", "at": "07:00"}],
+        "condition": [{"condition": "time", "weekday": ["mon", "tue", "wed", "thu", "fri"]}],
+        "action": [{"service": "light.turn_on", "target": {"entity_id": "light.kitchen_lights"}}],
+    }, None)
+    assert created["status"] == "ok"
+    assert created["readback"] == "weekdays at 07:00: turn on light.kitchen_lights"
+    assert "has not run yet" in created["note"]
+
+    listed = await registry.call("list_automations", {}, None)
+    assert listed["status"] == "ok"
+    assert [a["alias"] for a in listed["authored"]] == ["Kitchen at seven"]
+    assert listed["authored"][0]["readback"] == "weekdays at 07:00: turn on light.kitchen_lights"
+    names = {a["name"] for a in listed["installed"]}
+    assert "Hallway motion" in names or any("hallway" in str(a).lower() for a in listed["installed"])
+    assert listed["count"] >= 2

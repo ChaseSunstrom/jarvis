@@ -8,6 +8,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import java.util.concurrent.CopyOnWriteArrayList
+import ai.jarvis.app.BuildConfig
 
 /**
  * Reads notifications so an automation can react to one. Nothing else.
@@ -43,6 +44,14 @@ class JarvisNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        // Phone automation is off (M22). Notification content is other apps'
+        // private data — messages, one-time codes, everything — and reading it
+        // is part of the feature that is not shipped.
+        if (!BuildConfig.PHONE_AUTOMATION) {
+            Log.i(TAG, "phone automation is disabled in this build; ignoring notifications")
+            NotificationBus.connected = false
+            return
+        }
         NotificationBus.connected = true
         Log.i(TAG, "notification access connected")
     }
@@ -54,6 +63,9 @@ class JarvisNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        // The same guard as `onListenerConnected`, because a listener that was
+        // already connected when the build changed keeps delivering.
+        if (!BuildConfig.PHONE_AUTOMATION) return
         val notification = sbn?.notification ?: return
         val pkg = sbn.packageName
 

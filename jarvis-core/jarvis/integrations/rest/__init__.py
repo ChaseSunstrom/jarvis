@@ -448,7 +448,19 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
             continue
 
         scan_interval = float(block.get("scan_interval", DEFAULT_SCAN_INTERVAL))
-        headers = block.get("headers") or {}
+        headers = dict(block.get("headers") or {})
+        bearer = str(block.get("bearer") or "").strip()
+        if bearer:
+            # `bearer:` rather than making the operator write
+            # `Authorization: "Bearer {{ token }}"` by hand. The token comes
+            # out of `!env_var` or `!secret` verbatim — there is no way to
+            # prepend a word to it in YAML — so a sensor pointed at anything
+            # behind a key had no way to authenticate. That was not
+            # hypothetical: the shipped `/v1/models` readout polled the model
+            # gateway every thirty seconds with no header at all, earned a 401
+            # every time, and reported the model server DOWN while the
+            # assistant was talking to it through the same URL.
+            headers.setdefault("Authorization", f"Bearer {bearer}")
         auth = _auth_from(block)
 
         shared: RestData | None = None

@@ -1,9 +1,11 @@
 package ai.jarvis.app.automation
 
+import ai.jarvis.app.automation.phone.PhoneAutomation
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
+import ai.jarvis.app.BuildConfig
 
 /**
  * The meeting point for four modules that must not import each other.
@@ -319,6 +321,16 @@ object AutomationBridge {
     // --- convenience --------------------------------------------------------
 
     /**
+     * Whether an action id belongs to the phone-automation feature (M22).
+     *
+     * Those actions are gated at compile time and refused here as well: the
+     * bridge is the door every action comes through, and a door with a rule on
+     * it is worth more than a rule that lives only in the thing behind it.
+     */
+    private fun isPhoneAutomation(action: String): Boolean =
+        PhoneAutomation.owns(action)
+
+    /**
      * Dispatch with a `command_id`, picking the richer overload when the
      * registered dispatcher supports it.
      *
@@ -333,6 +345,10 @@ object AutomationBridge {
         reason: String,
         commandId: String?
     ): JSONObject? {
+        if (isPhoneAutomation(actionId) && !BuildConfig.PHONE_AUTOMATION) {
+            Log.i(TAG, "refusing $actionId: phone automation is disabled in this build")
+            return null
+        }
         val target = dispatcher ?: return null
         val body = if (target is CommandAwareDispatcher) {
             target.dispatch(actionId, params, tier, reason, commandId)

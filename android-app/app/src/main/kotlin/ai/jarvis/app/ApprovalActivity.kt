@@ -5,7 +5,6 @@ import ai.jarvis.app.ui.ConsentGate
 import ai.jarvis.app.ui.JarvisUi
 import android.app.Activity
 import android.app.KeyguardManager
-import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
@@ -21,6 +20,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * The Tier-3 consent screen.
@@ -230,16 +230,19 @@ class ApprovalActivity : Activity() {
         tierLabel: String,
     ): ViewGroup {
         val ctx = this
-        val root = FrameLayout(ctx).apply { setBackgroundColor(0xF204070C.toInt()) }
+        val root = FrameLayout(ctx).apply { setBackgroundColor(JarvisTokens.Color.SCRIM_APPROVAL) }
         val column = JarvisUi.column(ctx, padDp = JarvisUi.Space.WIDE)
 
+        // The tier, in the held colour: this is a HELD action, which on every
+        // other surface is gold with a rule beside it — not red, which is what
+        // a refusal looks like, and nothing has been refused yet.
         column.addView(
             TextView(ctx).apply {
                 text = tierLabel
-                setTextColor(JarvisUi.DENY)
-                textSize = 12f
-                letterSpacing = 0.24f
-                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+                setTextColor(JarvisUi.GOLD)
+                textSize = JarvisUi.Type.LABEL
+                letterSpacing = JarvisUi.TRACK_WIDE
+                typeface = JarvisUi.LABEL_FACE
                 gravity = Gravity.CENTER
             }
         )
@@ -249,7 +252,8 @@ class ApprovalActivity : Activity() {
             TextView(ctx).apply {
                 text = "Jarvis wants to do something that cannot be quietly undone."
                 setTextColor(JarvisUi.DIM)
-                textSize = 13f
+                textSize = JarvisUi.Type.BODY
+                typeface = JarvisUi.BODY_FACE
                 gravity = Gravity.CENTER
             }
         )
@@ -258,8 +262,10 @@ class ApprovalActivity : Activity() {
         column.addView(
             TextView(ctx).apply {
                 text = actionId.ifEmpty { "(no action id)" }
-                setTextColor(Color.WHITE)
-                textSize = 19f
+                setTextColor(JarvisTokens.Color.TEXT_BRIGHT)
+                textSize = JarvisUi.Type.RESPONSE
+                // Mono: an action id is data, and it is the one line on this
+                // screen a reader has to match character for character.
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 setTextIsSelectable(true)
                 // AN ACTION ID IS NOT A SENTENCE. TalkBack reads
@@ -283,8 +289,8 @@ class ApprovalActivity : Activity() {
                     // From the device-local action table: this text is ours.
                     text = description
                     setTextColor(JarvisUi.DIM)
-                    textSize = 14f
-                    setPadding(0, JarvisUi.dp(ctx, 4), 0, 0)
+                    textSize = JarvisUi.Type.BODY
+                    setPadding(0, JarvisUi.dp(ctx, JarvisUi.Space.TIGHT), 0, 0)
                 }
             )
         }
@@ -294,10 +300,12 @@ class ApprovalActivity : Activity() {
             TextView(ctx).apply {
                 // Remote text. Rendered as text and nothing else.
                 text = reason.ifEmpty { "(no reason given — treat that as suspicious)" }
-                setTextColor(if (reason.isEmpty()) JarvisUi.DENY else Color.WHITE)
+                // Danger as words is the danger TEXT colour; DENY is the mark's.
+                setTextColor(if (reason.isEmpty()) JarvisUi.DENY_TEXT else JarvisTokens.Color.TEXT_BRIGHT)
                 textSize = JarvisUi.Type.FIELD
+                typeface = JarvisUi.BODY_FACE
                 setTextIsSelectable(true)
-                setLineSpacing(JarvisUi.dp(ctx, 3).toFloat(), 1f)
+                setLineSpacing(JarvisUi.dp(ctx, JarvisUi.Space.TIGHT).toFloat(), 1f)
             }
         )
 
@@ -309,7 +317,7 @@ class ApprovalActivity : Activity() {
             JarvisUi.label(ctx, "Exactly what will run"),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        paramsHeader.addView(JarvisUi.ghost(ctx, "RAW") { toggleRaw() })
+        paramsHeader.addView(JarvisUi.button(ctx, "RAW") { toggleRaw() })
         column.addView(paramsHeader)
 
         // Starts hidden; refreshGate() fills it in once the device is unlocked.
@@ -321,7 +329,7 @@ class ApprovalActivity : Activity() {
             textSize = JarvisUi.Type.HINT
             typeface = Typeface.MONOSPACE
             gravity = Gravity.CENTER
-            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Space.SECTION), 0, JarvisUi.dp(ctx, 8))
+            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Space.SECTION), 0, JarvisUi.dp(ctx, JarvisUi.Space.STEP))
             // A prompt that auto-denies is one a user has a limited time to
             // answer, and the only thing saying so is this line. Nothing read
             // it out; the countdown ran to zero in silence and the action was
@@ -348,7 +356,7 @@ class ApprovalActivity : Activity() {
             denyButton,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        buttons.addView(View(ctx), LinearLayout.LayoutParams(JarvisUi.dp(ctx, 14), 1))
+        buttons.addView(View(ctx), LinearLayout.LayoutParams(JarvisUi.dp(ctx, JarvisUi.Size.CHIP), 1))
         buttons.addView(
             approveButton,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -383,13 +391,6 @@ class ApprovalActivity : Activity() {
         }
         root.addView(
             scroll,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-        root.addView(
-            JarvisUi.CornerBrackets(ctx, JarvisUi.DENY),
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT

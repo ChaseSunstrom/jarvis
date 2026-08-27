@@ -74,8 +74,11 @@ reads.
 
 from __future__ import annotations
 
+import inspect
+import json
 import logging
 import math
+import re
 from typing import TYPE_CHECKING, Any
 
 from ...api.devices import (
@@ -96,6 +99,13 @@ from ...api.devices import (
 )
 from ...bus import Context
 from ...services import ServiceCall
+# The task registry's own status words. Aliased, because this module already
+# has a `STATUS_ERROR` that means something else — a dispatch outcome, not a
+# task state — and two identical names for two different vocabularies is how
+# somebody writes the wrong one.
+from ...tasks import STATUS_DONE as TASK_DONE
+from ...tasks import STATUS_ERROR as TASK_ERROR
+from ...tasks import STATUS_RUNNING as TASK_RUNNING
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...core import Jarvis
@@ -332,6 +342,140 @@ class DeviceControl:
         )
         return self._report(link, entry, outcome, escalated, context)
 
+    async def run_sequence(
+        self,
+        steps: Any,
+        reason: str = "",
+        context: Any = None,
+        on_step: Any = None,
+    ) -> dict[str, Any]:
+        """Several actions in order, with what each one produced available to
+        the next, stopping the moment one fails.
+
+        A plan is not a list of independent calls. "Find the window called
+        Notes, then type into it, then check it saved" is three steps where the
+        second needs the first's answer and the third exists to say whether the
+        second worked — and a model asked to do that with three separate tool
+        calls has to carry the state itself, in its own context, correctly,
+        every time.
+
+            steps = [
+                {"device": "desk", "action": "ui_find", "params": {"title": "Notes"},
+                 "save": "window"},
+                {"device": "desk", "action": "ui_type",
+                 "params": {"target": "{window.id}", "text": "hello"}},
+                {"device": "desk", "action": "ui_read", "params": {"target": "{window.id}"},
+                 "verify": {"contains": "hello"}},
+            ]
+
+        Four things it does that a loop in the model's head does not:
+
+        * **Carries state.** `save:` names what a step's result is called;
+          `{name.field}` in a later step's params is replaced with it. Nothing
+          else is interpolated — this is a lookup, not a template language, and
+          a name that does not resolve is an error rather than a literal brace
+          reaching a device.
+        * **Stops on failure.** A sequence whose second step was denied does
+          not run the third. What already ran is reported; what did not is
+          listed as `skipped`, because "it half worked" is the thing the user
+          actually needs to know.
+        * **Keeps each step's own tier.** The gate is on the device, per
+          action, exactly as for a single call. A sequence cannot be used to
+          smuggle a Tier-3 action past a prompt, and a held step ends the
+          sequence with `approval_required` rather than continuing without it.
+        * **Verifies.** `verify:` on a step checks the result before the next
+          one runs — the difference between an automation that reports success
+          and one that had it.
+        """
+        plan = [dict(step) for step in (steps or []) if isinstance(step, dict)]
+        if not plan:
+            return _refusal(STATUS_ERROR, "a sequence needs at least one step")
+        if len(plan) > MAX_SEQUENCE_STEPS:
+            return _refusal(
+                STATUS_ERROR,
+                f"a sequence may have at most {MAX_SEQUENCE_STEPS} steps; this had {len(plan)}",
+            )
+
+        saved: dict[str, Any] = {}
+        results: list[dict[str, Any]] = []
+        for index, step in enumerate(plan):
+            try:
+                params = _resolve_params(step.get("params"), saved)
+            except KeyError as err:
+                results.append(
+                    {
+                        "step": index + 1,
+                        "action": step.get("action"),
+                        "status": STATUS_ERROR,
+                        "error": f"step {index + 1} refers to {err.args[0]}, which no earlier "
+                                 "step saved",
+                    }
+                )
+                return self._sequence_report(results, plan, index)
+
+            outcome = await self.run(
+                device=step.get("device") or step.get("device_id"),
+                action=step.get("action"),
+                params=params,
+                reason=str(step.get("reason") or reason),
+                context=context,
+            )
+            record = {"step": index + 1, "action": step.get("action"), **outcome}
+
+            verify = step.get("verify")
+            if verify and str(outcome.get("status")) == STATUS_OK:
+                failure = _verify(outcome.get("result"), verify)
+                if failure:
+                    record["status"] = STATUS_ERROR
+                    record["error"] = failure
+                    record["verified"] = False
+                else:
+                    record["verified"] = True
+
+            results.append(record)
+            if on_step is not None:
+                try:
+                    maybe = on_step(record)
+                    if inspect.isawaitable(maybe):
+                        await maybe
+                except Exception:  # noqa: BLE001 - a watcher must not stop the work
+                    _LOGGER.debug("a sequence step listener raised", exc_info=True)
+
+            if str(record.get("status")) != STATUS_OK:
+                return self._sequence_report(results, plan, index)
+
+            name = str(step.get("save") or "").strip()
+            if name:
+                saved[name] = outcome.get("result") if isinstance(outcome.get("result"), dict) else outcome
+
+        return self._sequence_report(results, plan, len(plan) - 1)
+
+    def _sequence_report(
+        self, results: list[dict[str, Any]], plan: list[dict[str, Any]], stopped_at: int
+    ) -> dict[str, Any]:
+        """What ran, what did not, and — for a model — what to SAY about it."""
+        failed = [r for r in results if str(r.get("status")) != STATUS_OK]
+        skipped = [
+            {"step": i + 1, "action": step.get("action"), "status": "skipped"}
+            for i, step in enumerate(plan)
+            if i > stopped_at
+        ]
+        payload: dict[str, Any] = {
+            "status": STATUS_OK if not failed else str(failed[0].get("status") or STATUS_ERROR),
+            "steps": results + skipped,
+            "completed": len(results) - len(failed),
+            "total": len(plan),
+        }
+        if failed:
+            first = failed[0]
+            payload["failed_step"] = first.get("step")
+            payload["error"] = first.get("error") or first.get("message") or "a step did not finish"
+            payload["message"] = (
+                f"Step {first.get('step')} of {len(plan)} did not finish, so the rest did not "
+                "run. Tell the user which part worked and which did not — do not say it is done."
+            )
+        return payload
+
     def _report(
         self,
         link: DeviceLink,
@@ -395,16 +539,12 @@ class DeviceControl:
     def tool_description(self) -> str:
         links = self.devices()
         lines = [
-            "Do something on one of the user's OWN devices — their phone, laptop "
-            "or desktop — rather than in the house. Locking a machine, reading "
-            "what is on its screen, sending a text, checking a battery.",
+            "Act on one of the user's OWN devices — phone, laptop, desktop — "
+            "rather than in the house.",
             "",
         ]
         if not links:
-            lines.append(
-                "No device is connected right now, so nothing can be run. Say so "
-                "rather than pretending otherwise."
-            )
+            lines.append("Nothing is connected, so nothing can run. Say so.")
         else:
             lines.append("Connected right now:")
             for link in links:
@@ -503,6 +643,73 @@ def _clean_params(params: Any) -> dict[str, Any]:
     if params in (None, "", []):
         return {}
     return {"value": params}
+
+
+#: The longest plan `run_sequence` will accept.
+#:
+#: Twelve, and the limit is about the person watching: a sequence is one
+#: approval decision's worth of trust, and a plan longer than a screen is one
+#: nobody reads before saying yes.
+MAX_SEQUENCE_STEPS = 12
+
+#: `{name.field}` — a lookup into what an earlier step saved, and nothing else.
+_PLACEHOLDER = re.compile(r"^\{([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z0-9_.]+))?\}$")
+
+
+def _resolve_params(params: Any, saved: dict[str, Any]) -> dict[str, Any]:
+    """Replace `{name}` / `{name.field}` with what an earlier step produced.
+
+    Deliberately not a template language: a value is either entirely a
+    placeholder or entirely literal. Substituting INTO a string would make
+    `"rm -rf {dir}"` a thing this could build, and the whole point of a
+    sequence is that each step is still a named action with pinned parameters.
+    """
+    if not isinstance(params, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, value in params.items():
+        if isinstance(value, str):
+            match = _PLACEHOLDER.match(value.strip())
+            if match:
+                name, path = match.group(1), match.group(2)
+                if name not in saved:
+                    raise KeyError(name)
+                current: Any = saved[name]
+                for part in (path or "").split(".") if path else []:
+                    if isinstance(current, dict) and part in current:
+                        current = current[part]
+                    else:
+                        raise KeyError(f"{name}.{path}")
+                out[key] = current
+                continue
+        out[key] = value
+    return out
+
+
+def _verify(result: Any, want: Any) -> str:
+    """"" if the step's result matches, else why it did not.
+
+    Three checks, because they are the three a plan actually needs: something
+    is present, something is absent, a field equals a value. A verification
+    language richer than that becomes a program nobody reviews, which is the
+    same argument the live rig's fixture format makes.
+    """
+    if not isinstance(want, dict):
+        return ""
+    text = json.dumps(result, default=str) if not isinstance(result, str) else result
+    contains = want.get("contains")
+    if contains and str(contains) not in text:
+        return f"expected the result to contain {contains!r}"
+    absent = want.get("absent")
+    if absent and str(absent) in text:
+        return f"the result still contains {absent!r}"
+    equals = want.get("equals")
+    if isinstance(equals, dict):
+        for key, value in equals.items():
+            actual = result.get(key) if isinstance(result, dict) else None
+            if actual != value:
+                return f"expected {key}={value!r}, got {actual!r}"
+    return ""
 
 
 def _refusal(
@@ -610,6 +817,25 @@ def _register_services(jarvis: "Jarvis", manager: DeviceControl) -> None:
             ]
         }
 
+    async def run_sequence(call: ServiceCall) -> dict[str, Any]:
+        return await manager.run_sequence(
+            steps=call.get("steps"),
+            reason=str(call.get("reason") or ""),
+            context=getattr(call, "context", None),
+        )
+
+    jarvis.services.register(
+        DOMAIN,
+        "run_sequence",
+        run_sequence,
+        supports_response=True,
+        description="Several device actions in order, stopping at the first failure.",
+        fields={
+            "steps": {"description": "[{device, action, params, save?, verify?}]", "required": True},
+            "reason": {"description": "why, for the device's prompt", "required": False},
+        },
+    )
+
     jarvis.services.register(
         DOMAIN,
         "list_actions",
@@ -645,7 +871,89 @@ def _register_tools(jarvis: "Jarvis", manager: DeviceControl) -> None:
         handler=control_device,
         # Tier 1 here on purpose: the gate for these actions lives on the device
         # that runs them, and it is the strict one. Holding a second approval
-        # here would double every prompt without adding a decision.
+        # here would double every prompt without adding a decision. The same
+        # goes for the taint rule: after untrusted content `_report` raises the
+        # device's tier to CONFIRM with the reason verbatim, so the phone asks
+        # — the registry holding the call as well would ask a second time and
+        # name the tool, not the action.
+        tier=TIER_DIRECT,
+        escalates_itself=True,
+    )
+
+    async def run_device_sequence(args: dict[str, Any], context: Any) -> Any:
+        steps = [s for s in (args.get("steps") or []) if isinstance(s, dict)]
+        tasks = getattr(jarvis, "tasks", None)
+        task = None
+        if tasks is not None and steps:
+            # A plan is exactly the shape the task UI was built for: several
+            # named steps, one at a time, some of which stop for a human. A
+            # sequence that reported only at the end would be a spinner for the
+            # length of the automation — which is the failure `TaskProgressView`
+            # and the console's task detail page exist to prevent.
+            task = await tasks.async_add(
+                f"{len(steps)} step(s) on {steps[0].get('device') or 'a device'}",
+                kind="automation",
+                steps=[f"{s.get('action')}" for s in steps],
+                source="llm",
+            )
+            await tasks.async_update(task.id, status=TASK_RUNNING)
+
+        async def watch(record: dict[str, Any]) -> None:
+            if task is None or tasks is None:
+                return
+            ok = str(record.get("status")) == STATUS_OK
+            await tasks.async_update(
+                task.id,
+                step=int(record.get("step") or 1),
+                step_status=TASK_DONE if ok else TASK_ERROR,
+                detail=str(record.get("action") or ""),
+            )
+            tasks.output(
+                task.id,
+                f"{record.get('step')}. {record.get('action')}: {record.get('status')}\n",
+                stream="stdout" if ok else "stderr",
+            )
+
+        outcome = await manager.run_sequence(
+            steps=args.get("steps"),
+            reason=str(args.get("reason") or ""),
+            context=context,
+            on_step=watch,
+        )
+        if task is not None and tasks is not None:
+            done = str(outcome.get("status")) == STATUS_OK
+            await tasks.async_update(
+                task.id,
+                status=TASK_DONE if done else TASK_ERROR,
+                result=str(outcome.get("message") or f"{outcome.get('completed')} step(s) ran"),
+                error="" if done else str(outcome.get("error") or ""),
+            )
+            outcome = {**outcome, "task_id": task.id}
+        return outcome
+
+    registry.register(
+        name="run_device_sequence",
+        description=(
+            "Device actions in order. Step: {device, action, params}; `save` "
+            "names its result, `{name.field}` uses it later, `verify` checks it. "
+            "Stops at the first failure."
+        ),
+        parameters=schema_object(
+            {
+                "steps": {
+                    "type": "array",
+                    "description": f"up to {MAX_SEQUENCE_STEPS} steps, in order",
+                    "items": {"type": "object"},
+                },
+                "reason": {"type": "string", "description": "why, for the device's prompt"},
+            },
+            ["steps"],
+        ),
+        handler=run_device_sequence,
+        # Tier 1 for the same reason as `control_device`: every step is gated on
+        # the device that runs it, at that action's own tier. A second gate here
+        # would double a prompt without adding a decision — and a sequence
+        # cannot lower a step's tier, which is the property that matters.
         tier=TIER_DIRECT,
     )
 
@@ -700,6 +1008,15 @@ def _register_companion_tools(jarvis: "Jarvis", manager: DeviceControl, registry
         link = manager.resolve_device(value)
         return link.device_id if link is not None else str(value)
 
+    def _asking_device(context: Any) -> str | None:
+        try:
+            from ...api.devices import device_of
+
+            device = device_of(jarvis, context)
+        except Exception:  # noqa: BLE001 - never a reason to lose the message
+            return None
+        return str(device.get("id")) if device and device.get("id") else None
+
     async def _call(service: str, data: dict[str, Any], context: Any) -> Any:
         ctx = context if isinstance(context, Context) else Context(origin="llm")
         return await jarvis.services.async_call(
@@ -716,7 +1033,9 @@ def _register_companion_tools(jarvis: "Jarvis", manager: DeviceControl, registry
                 "message": message,
                 "kind": "say" if args.get("aloud") else "notify",
                 "importance": str(args.get("importance") or "normal"),
-                "device_id": _device_id(args.get("device")),
+                # No device named: the one the request came from (M94), when
+                # the turn came from one — presence routing otherwise.
+                "device_id": _device_id(args.get("device")) or _asking_device(context),
             },
             context,
         )

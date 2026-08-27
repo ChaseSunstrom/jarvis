@@ -1,0 +1,58 @@
+{
+  "$note": "The catalogue that ships with Jarvis: this folder's own skills, so a fresh install has something to browse. It is read through the same file:// path an operator's folder is (extensions/catalog.py read_local_catalog) and it is NOT a list of remote origins — every url below is a folder beside this file, inside the package that is already running. Descriptions, versions and permissions are copied from each SKILL.md and tests/test_extensions.py holds them equal; the ref is the skill's version, since the bundle has no tags of its own.",
+  "entries": [
+    {
+      "id": "diary",
+      "kind": "skill",
+      "url": "diary",
+      "version": "1",
+      "ref": "v1",
+      "author": "Jarvis",
+      "description": "Reading and changing the calendar — what to check before booking, and what to say when the diary is full.",
+      "permissions": [
+        "read_state",
+        "act"
+      ]
+    },
+    {
+      "id": "homelab-status",
+      "kind": "skill",
+      "url": "homelab-status",
+      "version": "1",
+      "ref": "v1",
+      "author": "Jarvis",
+      "description": "Answering \"how is the homelab doing\" from the recorded measurements rather than from a guess.",
+      "permissions": [
+        "read_state"
+      ]
+    },
+    {
+      "id": "note-taking",
+      "kind": "skill",
+      "url": "note-taking",
+      "version": "1",
+      "ref": "v1",
+      "author": "Jarvis",
+      "description": "When something belongs in a note rather than in memory or in the conversation, and how to write one worth reading later.",
+      "permissions": [
+        "read_state",
+        "memory_read",
+        "memory_write"
+      ]
+    },
+    {
+      "id": "research-report",
+      "kind": "skill",
+      "url": "research-report",
+      "version": "1",
+      "ref": "v1",
+      "author": "Jarvis",
+      "description": "Answering a question that needs sources — how deep to go, what to read, and how to write the answer down.",
+      "permissions": [
+        "read_state",
+        "network",
+        "memory_write"
+      ]
+    }
+  ]
+}

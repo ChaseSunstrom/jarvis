@@ -288,6 +288,83 @@ class AuthoredStore:
         return True
 
 
+def describe(config: Any) -> str:
+    """One sentence a person can check a routine by (M97): the trigger, then
+    the actions — "weekdays at 07:00: turn on light.kitchen_lights".
+
+    Read back after `create_automation`, because hearing "at seven" when you
+    said "at seven in the evening" is how a wrong trigger gets caught before
+    it runs; and listed by `list_automations`. Best effort: a shape this does
+    not know is named by its platform rather than dropped.
+    """
+    cfg = config if isinstance(config, dict) else {}
+    triggers = _as_list(cfg.get("trigger"))
+    conditions = _as_list(cfg.get("condition"))
+    actions = _as_list(cfg.get("action"))
+    days = ""
+    for cond in conditions:
+        if isinstance(cond, dict) and str(cond.get("condition") or "") == "time" and cond.get("weekday"):
+            names = [str(d).lower()[:3] for d in _as_list(cond.get("weekday"))]
+            if set(names) == {"mon", "tue", "wed", "thu", "fri"}:
+                days = "weekdays"
+            elif set(names) == {"sat", "sun"}:
+                days = "weekends"
+            else:
+                days = ", ".join(names)
+    when: list[str] = []
+    for trig in triggers:
+        if not isinstance(trig, dict):
+            continue
+        platform = str(trig.get("platform") or trig.get("trigger") or "").lower()
+        if platform == "time":
+            at = str(trig.get("at") or "").strip()
+            when.append(f"{days} at {at}".strip() if at else (days or "at a time"))
+        elif platform == "time_pattern":
+            minutes = trig.get("minutes"); hours = trig.get("hours")
+            if minutes not in (None, ""):
+                when.append(f"every {str(minutes).lstrip('/') or ''} minute(s)".replace("every  minute", "every minute"))
+            elif hours not in (None, ""):
+                when.append(f"every {str(hours).lstrip('/')} hour(s)")
+            else:
+                when.append("on a timer")
+        elif platform == "state":
+            entity = ", ".join(str(e) for e in _as_list(trig.get("entity_id")))
+            to = trig.get("to"); frm = trig.get("from")
+            if to not in (None, ""):
+                when.append(f"when {entity} becomes {to}")
+            elif frm not in (None, ""):
+                when.append(f"when {entity} leaves {frm}")
+            else:
+                when.append(f"when {entity} changes")
+        elif platform == "numeric_state":
+            entity = ", ".join(str(e) for e in _as_list(trig.get("entity_id")))
+            if trig.get("above") not in (None, ""):
+                when.append(f"when {entity} goes above {trig.get('above')}")
+            elif trig.get("below") not in (None, ""):
+                when.append(f"when {entity} goes below {trig.get('below')}")
+            else:
+                when.append(f"when {entity} crosses a threshold")
+        elif platform == "sun":
+            when.append(f"at {trig.get('event') or 'sunset'}")
+        else:
+            when.append(f"on {platform or 'a trigger'}")
+    does: list[str] = []
+    for act in actions:
+        if not isinstance(act, dict):
+            continue
+        service = str(act.get("service") or act.get("action") or "").strip()
+        target = act.get("target") if isinstance(act.get("target"), dict) else {}
+        entity = ", ".join(str(e) for e in _as_list(target.get("entity_id") or act.get("entity_id")))
+        if service:
+            verb = service.split(".", 1)[-1].replace("_", " ")
+            does.append(f"{verb} {entity}".strip())
+        elif act.get("delay"):
+            does.append(f"wait {act.get('delay')}")
+        else:
+            does.append("do something")
+    return f"{'; '.join(when) or 'never'}: {', '.join(does) or 'nothing'}"
+
+
 def get_authored(jarvis: "Jarvis") -> AuthoredStore:
     """The shared store, created on first use."""
     store = jarvis.data.get(DATA_AUTHORED)

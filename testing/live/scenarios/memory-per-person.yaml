@@ -1,0 +1,26 @@
+name: memory-per-person
+capability: memory
+gated-on: M100
+intent: >
+  Whose fact it is. The voice gate names the speaker (M71) and memory used to
+  drop the name: "remember that I take my tea with honey" was filed under "the
+  user", and two people's preferences became one muddle. The rig enrols its own
+  Piper voice as a person called Rig, speaks a preference, and reads the entry
+  back from the house with `person: Rig`; then asks what Jarvis knows about it
+  and hears the honey, and nothing filed under another name.
+variants: [voice]
+setup:
+  clear: [memory]
+  settings:
+    voice.speaker.mode: observe
+  enrol:
+    label: Rig
+turns:
+  - say: "Remember that I take my tea with honey."
+    expect:
+      memory: {recalls: "honey", person: "Rig"}
+      reply_means: says it will remember (or has noted) that the speaker takes tea with honey
+  - say: "What do you know about me?"
+    expect:
+      reply_contains: "honey"
+      reply_means: says the speaker takes their tea with honey, and does not attribute it to anyone else

@@ -26,7 +26,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ..auth import TokenInfo, extract_bearer_token, get_auth
 from ..const import VERSION
@@ -391,6 +391,14 @@ async def entity_registry_update(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.post("/config/entity_registry/remove")
+async def entity_registry_remove(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_remove_entity(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.get("/config/device_registry/list")
 async def device_registry_list(request: Request) -> list[dict[str, Any]]:
     return common.device_registry_payload(get_jarvis(request))
@@ -400,6 +408,14 @@ async def device_registry_list(request: Request) -> list[dict[str, Any]]:
 async def device_registry_update(request: Request) -> dict[str, Any]:
     try:
         return await common.async_update_device(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/config/device_registry/remove")
+async def device_registry_remove(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_remove_device(get_jarvis(request), await json_body(request))
     except ApiError as err:
         raise _api_error(err) from err
 
@@ -436,6 +452,28 @@ async def area_registry_delete(request: Request) -> dict[str, Any]:
 @api_router.get("/config/companion/list")
 async def companion_list(request: Request) -> list[dict[str, Any]]:
     return common.companion_list_payload(get_jarvis(request))
+
+
+@api_router.get("/tools")
+async def tools_list(request: Request) -> dict[str, Any]:
+    """The model's own toolbox. `/config/tool/list` is the editable subset."""
+    try:
+        return common.tools_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/tools/call")
+async def tools_call(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_call_tool(
+            get_jarvis(request),
+            str(body.get("name") or ""),
+            body.get("arguments"),
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
 
 
 @api_router.get("/config/tool/list")
@@ -506,6 +544,382 @@ async def conversation_rename(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+# --- tasks -----------------------------------------------------------------
+@api_router.get("/tasks")
+async def task_list(request: Request) -> dict[str, Any]:
+    """Every tracked job, newest first.
+
+    `?kind=research` filters; `?active=1` hides finished ones, which is what a
+    progress strip wants and a task page does not.
+    """
+    params = request.query_params
+    active = str(params.get("active") or "").strip().lower() in ("1", "true", "yes")
+    try:
+        return common.task_list_payload(
+            get_jarvis(request), kind=params.get("kind") or None, active_only=active
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/tasks/{task_id}")
+async def task_get(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return common.task_get_payload(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/tasks/{task_id}/cancel")
+async def task_cancel(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_cancel_task(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/tasks/{task_id}")
+async def task_delete(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_delete_task(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/tasks/clear_finished")
+async def task_clear_finished(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_clear_finished_tasks(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+# --- scheduled jobs ---------------------------------------------------------
+@api_router.get("/schedule")
+async def schedule_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.schedule_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/schedule")
+async def schedule_add(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_add_scheduled(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/schedule/{job_id}")
+async def schedule_remove(request: Request, job_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_remove_scheduled(get_jarvis(request), job_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/schedule/{job_id}/enabled")
+async def schedule_enabled(request: Request, job_id: str) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_enable_scheduled(
+            get_jarvis(request), job_id, bool(body.get("enabled", True))
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+# --- Jarvis Code ------------------------------------------------------------
+@api_router.get("/code")
+async def code_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.code_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/code/jobs")
+async def code_start(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_start_code_job(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/code/repos")
+async def code_create_repo(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_create_code_repository(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/code/repos/{name}")
+async def code_forget_repo(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return await common.async_forget_code_repository(get_jarvis(request), name)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/code/clone")
+async def code_clone_repo(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_clone_code_repository(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/code/push")
+async def code_push(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_push_code_branch(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/code/jobs/{task_id}")
+async def code_result(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return common.code_result_payload(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+# --- notifications ----------------------------------------------------------
+@api_router.get("/notifications")
+async def notifications_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.notifications_payload(
+            get_jarvis(request),
+            unread_only=str(request.query_params.get("unread") or "").lower()
+            in ("1", "true", "yes"),
+            limit=int(request.query_params.get("limit") or 100),
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/notifications/{notification_id}/read")
+async def notification_read(request: Request, notification_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_notification_read(
+            get_jarvis(request), entry_id=notification_id
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/notifications/{notification_id}")
+async def notification_dismiss(request: Request, notification_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_notification_dismiss(
+            get_jarvis(request), entry_id=notification_id
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+# --- notes ------------------------------------------------------------------
+#
+# Ordinary CRUD, because a note is an ordinary document. The files on disk are
+# the notes; this is one way in among several (the console, the phone, an
+# editor, a sync client), which is the point of them being markdown.
+@api_router.get("/notes")
+async def notes_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.notes_list_payload(
+            get_jarvis(request),
+            tag=str(request.query_params.get("tag") or ""),
+            query=str(request.query_params.get("q") or request.query_params.get("query") or ""),
+            limit=int(request.query_params.get("limit") or 200),
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/notes")
+async def notes_create(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_note_create(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/notes/{note_id}")
+async def notes_get(request: Request, note_id: str) -> dict[str, Any]:
+    try:
+        return common.note_payload(get_jarvis(request), note_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.put("/notes/{note_id}")
+async def notes_update(request: Request, note_id: str) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_note_update(get_jarvis(request), note_id, body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/notes/{note_id}/append")
+async def notes_append(request: Request, note_id: str) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_note_append(
+            get_jarvis(request), note_id, str(body.get("text") or "")
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/notes/{note_id}")
+async def notes_delete(request: Request, note_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_note_delete(get_jarvis(request), note_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+# --- memory -----------------------------------------------------------------
+#
+# The export route is the one that matters: "it is your data" is a claim, and a
+# claim about data is only true if you can leave with it.
+@api_router.get("/traces")
+async def traces_list(request: Request) -> dict[str, Any]:
+    return common.traces_payload(
+        get_jarvis(request),
+        limit=int(request.query_params.get("limit") or 50),
+        kind=str(request.query_params.get("kind") or ""),
+    )
+
+
+@api_router.get("/traces/{trace_id}")
+async def trace_get(request: Request, trace_id: str) -> dict[str, Any]:
+    return common.trace_payload(get_jarvis(request), trace_id=trace_id)
+
+
+@api_router.get("/memory")
+async def memory_list(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_memory_list_payload(
+            get_jarvis(request),
+            tag=str(request.query_params.get("tag") or ""),
+            query=str(request.query_params.get("query") or ""),
+            limit=int(request.query_params.get("limit") or 200),
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/memory/export")
+async def memory_export(request: Request) -> Any:
+    fmt = str(request.query_params.get("format") or "json")
+    try:
+        payload = common.memory_export_payload(get_jarvis(request), fmt)
+    except ApiError as err:
+        raise _api_error(err) from err
+    if payload.get("format") == "markdown":
+        # As a file, not as JSON with a string in it: this is the route
+        # somebody uses to keep their own copy.
+        return PlainTextResponse(
+            payload["text"],
+            media_type="text/markdown; charset=utf-8",
+            headers={"content-disposition": 'attachment; filename="jarvis-memory.md"'},
+        )
+    return payload
+
+
+@api_router.delete("/memory/{entry_id}")
+async def memory_forget(request: Request, entry_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_memory_forget(get_jarvis(request), entry_id=entry_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+# --- skills -----------------------------------------------------------------
+#
+# Read-only over HTTP, deliberately: a skill is created by putting a folder on
+# disk, which is the operator's own filesystem and not an API surface. `reload`
+# is the one write, and it only re-reads what is already there.
+@api_router.get("/skills")
+async def skills_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.skills_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/skills/{name}")
+async def skill_get(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return common.skill_payload(get_jarvis(request), name)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/skills/reload")
+async def skills_reload(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_reload_skills(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+# --- MCP servers ------------------------------------------------------------
+@api_router.get("/mcp/servers")
+async def mcp_servers(request: Request) -> dict[str, Any]:
+    try:
+        return common.mcp_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/mcp/servers/{name}/inspect")
+async def mcp_server_inspect(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return common.mcp_inspect_payload(get_jarvis(request), name)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/mcp/servers")
+async def mcp_server_add(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_add_mcp_server(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/mcp/servers/{name}")
+async def mcp_server_remove(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return await common.async_remove_mcp_server(get_jarvis(request), name)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/mcp/reconnect")
+async def mcp_reconnect(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_reconnect_mcp(
+            get_jarvis(request), str(body.get("name") or "")
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.post("/pair/new")
 async def pair_new(request: Request) -> dict[str, Any]:
     """Mint a pairing code for the console to draw as a QR.
@@ -569,7 +983,7 @@ async def speaker_status(request: Request) -> dict[str, Any]:
     from . import speaker as speaker_api
 
     try:
-        return speaker_api.status(get_jarvis(request))
+        return speaker_api.status(get_jarvis(request), request.query_params.get("label"))
     except speaker_api.EnrolError as err:
         raise HTTPException(status_code=err.status, detail=str(err)) from err
 
@@ -580,7 +994,9 @@ async def speaker_enrol(request: Request) -> dict[str, Any]:
 
     Raw PCM is accepted because the phone already has the samples in that shape
     and wrapping them in a container to send them back would be ceremony. The
-    rate and width can be named in the query string for anything else.
+    rate and width can be named in the query string for anything else, and
+    `label` names the person — "owner" when absent, which is who every client
+    written before labels existed was enrolling.
     """
     from . import speaker as speaker_api
 
@@ -591,6 +1007,7 @@ async def speaker_enrol(request: Request) -> dict[str, Any]:
             request.headers.get("content-type", ""),
             int(request.query_params.get("rate") or 16000),
             int(request.query_params.get("width") or 2),
+            request.query_params.get("label"),
         )
     except speaker_api.EnrolError as err:
         raise HTTPException(status_code=err.status, detail=str(err)) from err
@@ -598,9 +1015,29 @@ async def speaker_enrol(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"bad rate/width: {err}") from err
 
 
+@api_router.post("/voice/speaker/enrolling")
+async def speaker_enrolling(request: Request) -> dict[str, Any]:
+    """A client is about to record an enrolment phrase (M79).
+
+    The phrases read aloud for a voiceprint reach the house's listeners as
+    sentences, and a sentence is a command. This marks an enrolment in
+    progress for `ENROLLING_WINDOW` seconds — every pipeline turn that starts
+    inside it yields — and a sample or a test refreshes the mark, so a client
+    calls it once per phrase, before it records.
+    """
+    from . import speaker as speaker_api
+
+    speaker_api.mark_enrolling(get_jarvis(request))
+    return {"enrolling": True, "window_seconds": speaker_api.ENROLLING_WINDOW}
+
+
 @api_router.post("/voice/speaker/verify")
 async def speaker_verify(request: Request) -> dict[str, Any]:
-    """Score a sample without enrolling it — how you find your threshold."""
+    """Score a sample without enrolling it — how you find your threshold.
+
+    With no `label` the sample is compared with everyone and the verdict names
+    who it was; with one, with that person only.
+    """
     from . import speaker as speaker_api
 
     try:
@@ -610,6 +1047,7 @@ async def speaker_verify(request: Request) -> dict[str, Any]:
             request.headers.get("content-type", ""),
             int(request.query_params.get("rate") or 16000),
             int(request.query_params.get("width") or 2),
+            request.query_params.get("label"),
         )
     except speaker_api.EnrolError as err:
         raise HTTPException(status_code=err.status, detail=str(err)) from err
@@ -619,10 +1057,13 @@ async def speaker_verify(request: Request) -> dict[str, Any]:
 
 @api_router.delete("/voice/speaker")
 async def speaker_forget(request: Request) -> dict[str, Any]:
+    """Forget one person (`label`), or everyone when no label is given."""
     from . import speaker as speaker_api
 
     try:
-        return await speaker_api.async_forget(get_jarvis(request))
+        return await speaker_api.async_forget(
+            get_jarvis(request), request.query_params.get("label")
+        )
     except speaker_api.EnrolError as err:
         raise HTTPException(status_code=err.status, detail=str(err)) from err
 
@@ -637,18 +1078,34 @@ async def settings_list(request: Request) -> dict[str, Any]:
     return common.settings_payload(jarvis)
 
 
+@api_router.get("/llm/models")
+async def llm_models(request: Request) -> dict[str, Any]:
+    """What the model servers actually serve, resolved through the gateway."""
+    return await common.async_llm_models_payload(get_jarvis(request))
+
+
 @api_router.post("/config/settings/set")
-async def settings_set(request: Request) -> dict[str, Any]:
+async def settings_set(
+    request: Request, token: TokenInfo = Depends(require_token)
+) -> dict[str, Any]:
     try:
-        return await common.async_set_setting(get_jarvis(request), await json_body(request))
+        # The token is the audit line's "who"; the write path is the same one
+        # the websocket and the model's `change_setting` use.
+        return await common.async_set_setting(
+            get_jarvis(request), await json_body(request), context=_context(token)
+        )
     except ApiError as err:
         raise _api_error(err) from err
 
 
 @api_router.post("/config/settings/reset")
-async def settings_reset(request: Request) -> dict[str, Any]:
+async def settings_reset(
+    request: Request, token: TokenInfo = Depends(require_token)
+) -> dict[str, Any]:
     try:
-        return await common.async_reset_setting(get_jarvis(request), await json_body(request))
+        return await common.async_reset_setting(
+            get_jarvis(request), await json_body(request), context=_context(token)
+        )
     except ApiError as err:
         raise _api_error(err) from err
 

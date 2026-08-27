@@ -7,7 +7,10 @@ Configuration::
       model: qwen3:8b
       persona_file: prompts/jarvis.txt
       max_tool_rounds: 5
-      approval_ttl: 300
+      max_concurrent: 2        # model calls in flight at once (subagents)
+      call_timeout: 300        # seconds for one whole model call, stall or not
+      approval_ttl: 300        # seconds a held ACTION waits for a yes
+      question_ttl: 1800       # seconds a QUESTION (ask_user) waits for its answer
       options: {temperature: 0.6}
       expose:
         domains: [light, switch, cover, climate, media_player]
@@ -50,8 +53,12 @@ before calling :func:`async_setup`.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
 import time
+from urllib.parse import urlparse
+
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -72,6 +79,7 @@ from ...llm.openai_compat import OpenAICompatClient
 from ...llm.authored_tools import get_authored_tools
 from ...llm.tools import (
     DEFAULT_APPROVAL_TTL,
+    DEFAULT_QUESTION_TTL,
     EVENT_APPROVAL_REQUIRED,
     Exposure,
     ToolRegistry,
@@ -106,6 +114,9 @@ DATA_TOOLS = "llm_tools"
 #: under `<config>/.storage/`. The API layer reads the first without importing
 #: this module, the way every other registry is reached.
 DATA_HISTORY = "llm_history"
+#: How many model calls may be in flight at once. Read by `llm/pool.py` through
+#: `max_concurrent_for`; see `DEFAULT_MAX_CONCURRENT` there for why it is two.
+DATA_MAX_CONCURRENT = "llm_max_concurrent"
 HISTORY_STORE_KEY = "conversations"
 
 AGENT_ID = "jarvis"
@@ -143,6 +154,29 @@ def _as_dict(config: Any) -> dict[str, Any]:
     if isinstance(config, list) and config and isinstance(config[0], dict):
         return config[0]
     return {}
+
+
+def _bounded_concurrency(value: Any) -> int:
+    """A sane `max_concurrent`, whatever the config file says.
+
+    Bounded at eight because this is one model server: a config that asked for
+    forty would not get forty times the work, it would get a queue inside
+    llama-swap instead of one here, where it can be seen.
+    """
+    from ...llm.pool import DEFAULT_MAX_CONCURRENT
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_CONCURRENT
+    return max(1, min(number, 8))
+
+
+def max_concurrent_for(jarvis: "Jarvis") -> int:
+    """What the operator set, or the default if the llm block never loaded."""
+    from ...llm.pool import DEFAULT_MAX_CONCURRENT
+
+    return _bounded_concurrency(jarvis.data.get(DATA_MAX_CONCURRENT) or DEFAULT_MAX_CONCURRENT)
 
 
 def create_http_client(jarvis: "Jarvis", timeout: float) -> httpx.AsyncClient:
@@ -299,9 +333,69 @@ def _build_model_client(
     )
 
 
-#: Public alias. `integrations/vision` builds its own model client and had no
-#: way to honour `backend:`/`api_key:` without duplicating the logic above.
+#: Public aliases. `integrations/vision` builds its own model client and had no
+#: way to honour `backend:`/`api_key:` without duplicating the logic above; it
+#: infers the wire from a url with the same rule, so the two blocks cannot read
+#: one `LLM_URL` two ways.
 build_model_client = _build_model_client
+detect_backend = _detect_backend
+
+
+
+# ---------------------------------------------------------------------------
+# "100% local", checked rather than trusted
+# ---------------------------------------------------------------------------
+
+#: Networks a model server may live on: this machine, the LAN, a link-local
+#: address, or the CGNAT range Tailscale and similar overlays use. Everything
+#: else is somebody else's computer.
+_PRIVATE_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
+
+def is_local_url(url: str) -> tuple[bool, str]:
+    """Does this URL point at a machine the operator plausibly owns?
+
+    Returns `(ok, why not)`. A name that does not resolve is NOT treated as a
+    failure: a compose service that has not started yet is the ordinary case on
+    a first boot, and refusing to start because DNS was not ready would be a
+    worse bug than the one this prevents.
+    """
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError as err:
+        return False, f"{url!r} is not a URL: {err}"
+    if not host:
+        return False, f"{url!r} names no host"
+    if host in ("localhost", "host.docker.internal") or host.endswith(".local"):
+        return True, ""
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except (socket.gaierror, UnicodeError):
+        # Unresolvable today, and possibly a container that is still starting.
+        return True, ""
+    for address in addresses:
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:  # pragma: no cover
+            continue
+        if not any(parsed in network for network in _PRIVATE_NETWORKS):
+            return False, (
+                f"{host} resolves to {address}, which is a public address. "
+                "Jarvis runs its model locally by design; point `llm: url:` at a "
+                "server you run, or set `llm: local_only: false` if you really "
+                "mean to send every conversation off this network."
+            )
+    return True, ""
 
 
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
@@ -309,15 +403,44 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
 
     url = str(options.get("url") or options.get("host") or DEFAULT_URL)
     model = str(options.get("model") or DEFAULT_MODEL)
+
+    # The promise the whole project rests on, checked rather than trusted.
+    # Nothing else in the code stops `url:` naming a cloud endpoint, and a
+    # promise nothing verifies is a hope.
+    if options.get("local_only", True):
+        local, why = is_local_url(url)
+        if not local:
+            _LOGGER.error("llm: refusing to use a non-local model server. %s", why)
+            return False
     timeout = float(options.get("timeout") or DEFAULT_TIMEOUT)
+    # The absolute bound on ONE call, as distinct from `timeout`, which is
+    # httpx's per-read one and is reset by every keepalive byte. See
+    # `OllamaClient.call_timeout`: without this a stalled server hangs a turn
+    # for ever, which is what it did.
+    call_timeout = float(options.get("call_timeout") or 0.0)
     max_tool_rounds = int(options.get("max_tool_rounds") or DEFAULT_MAX_TOOL_ROUNDS)
+    address = str(options.get("address") or "Sir").strip() or "Sir"
+    # Kept on the instance rather than read where it is used: the pool is built
+    # lazily by whoever fans out first, and by then the config is gone.
+    jarvis.data[DATA_MAX_CONCURRENT] = _bounded_concurrency(options.get("max_concurrent"))
     approval_ttl = float(options.get("approval_ttl") or DEFAULT_APPROVAL_TTL)
+    # Its own clock, never derived from `approval_ttl`: the two are different
+    # waits for different reasons (see `DEFAULT_QUESTION_TTL`), and an
+    # operator shortening approvals to a minute should not have every
+    # question lapse in a minute too.
+    question_ttl = float(options.get("question_ttl") or DEFAULT_QUESTION_TTL)
 
     client = create_http_client(jarvis, timeout)
     ollama = _build_model_client(options, url, model, timeout, client)
+    if call_timeout:
+        # Never below the per-read timeout: raising `timeout` must not quietly
+        # lower the real bound.
+        ollama.call_timeout = max(call_timeout, timeout)
 
     exposure = Exposure.from_config(options.get("expose"))
-    registry = ToolRegistry(jarvis, exposure=exposure, approval_ttl=approval_ttl)
+    registry = ToolRegistry(
+        jarvis, exposure=exposure, approval_ttl=approval_ttl, question_ttl=question_ttl
+    )
     register_builtin_tools(registry, _as_dict(options.get("user_context")))
 
     specs: list[Any] = []
@@ -378,6 +501,8 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         persona=options.get("persona"),
         persona_file=options.get("persona_file"),
         max_tool_rounds=max_tool_rounds,
+        address=address,
+        constrained_retry=bool(options.get("constrained_tool_calls", True)),
         memory=memory,
         options=_as_dict(options.get("options")),
         language=str(options.get("language") or "en"),
@@ -420,12 +545,23 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     # server cannot be reached, which is the single most common way this
     # install is misconfigured and previously produced no output at all until
     # somebody spoke to it.
-    jarvis.async_create_task(_probe_model_server(ollama, url))
+    jarvis.async_create_task(_probe_model_server(ollama, url, agent))
     return True
 
 
-async def _probe_model_server(client: Any, url: str) -> None:
-    """Warm the model list and say plainly if the server is not there."""
+async def _probe_model_server(client: Any, url: str, agent: Any = None) -> None:
+    """Warm the model list, and say plainly what is wrong before anybody speaks.
+
+    Two failures, both of which used to be silent until the first turn:
+
+    * the server is not there at all;
+    * the server is there and does not have the model this install is set to.
+      That is not hypothetical — putting the LiteLLM gateway in front of the
+      model server (M40) renamed every model, and a `llm.model` an operator had
+      chosen in the console went on pointing at the OLD name. Each turn then
+      came back as a 400 from the proxy with the model name in it, which is a
+      log line that means nothing to anybody who did not build the gateway.
+    """
     try:
         models = await client.list_models()
     except Exception as err:
@@ -437,6 +573,20 @@ async def _probe_model_server(client: Any, url: str) -> None:
         )
         return
     _LOGGER.info("Model server at %s is serving %d model(s)", url, len(models))
+
+    # Only when the server actually answered with a list: an endpoint that
+    # serves no `/models` at all is not evidence that the model is missing.
+    wanted = str(getattr(agent, "model", "") or getattr(client, "model", "") or "")
+    if wanted and models and wanted not in models:
+        _LOGGER.error(
+            "The model this install is set to (%r) is not one %s serves. It has: %s. "
+            "Every turn will fail until this is changed — in the console under "
+            "Settings, or by clearing the stored `llm.model` override so the "
+            "LLM_MODEL environment variable is used again.",
+            wanted,
+            url,
+            ", ".join(sorted(models)[:12]) or "nothing",
+        )
 
 
 def _bridge_questions_to_the_phone(jarvis: "Jarvis", registry: ToolRegistry) -> None:
@@ -502,6 +652,13 @@ async def _ask_on_a_device(
                 # than the request lives would put a live-looking prompt in
                 # somebody's hand for an answer nothing can still accept.
                 "timeout": max(5.0, float(data.get("expires_at", 0)) - time.time()),
+                # The single voice (M66): a question raised by a spoken turn is
+                # said once, by the reply, on the surface the user spoke to.
+                # The phone gets it as a card to tap and does not read it out
+                # again — it used to, and the operator heard the question
+                # twice. A typed turn's question is still spoken by the phone,
+                # because nothing else will say it.
+                "spoken": bool(data.get("spoken")),
             },
             blocking=True,
             return_response=True,

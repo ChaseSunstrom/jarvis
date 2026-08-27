@@ -1,5 +1,6 @@
 package ai.jarvis.app.testing
 
+import ai.jarvis.app.MainActivity
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.JarvisUi
 import android.app.Activity
@@ -55,7 +56,7 @@ class TestHostActivity : Activity() {
 
         orb = JarvisOrbView(this).apply {
             chromeEnabled = true
-            setStateLabel("TAP TO SPEAK")
+            setStateLabel(MainActivity.IDLE_CAPTION)
             // Matches MainActivity's cold-start branch: the orb waits at a point
             // for the sequence to ignite it rather than playing its entrance.
             beginBoot()

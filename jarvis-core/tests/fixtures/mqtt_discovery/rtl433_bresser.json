@@ -1,0 +1,40 @@
+{
+  "source": "rtl_433 25.12 -F mqtt with HA discovery (rtl_433_mqtt_hass shape) — Bresser 7-in-1 weather station",
+  "topic": "homeassistant/sensor/Bresser-7in1-1234/temperature_F/config",
+  "payload": {
+    "device_class": "temperature",
+    "name": "Bresser-7in1-1234-T",
+    "unit_of_measurement": "°F",
+    "value_template": "{{ value|float|round(1) }}",
+    "state_class": "measurement",
+    "state_topic": "rtl_433/9b0a/devices/Bresser-7in1/1234/temperature_F",
+    "unique_id": "Bresser-7in1-1234-T",
+    "device": {
+      "identifiers": [
+        "Bresser-7in1-1234"
+      ],
+      "name": "Bresser-7in1-1234",
+      "model": "Bresser-7in1",
+      "manufacturer": "rtl_433"
+    }
+  },
+  "state_topic": "rtl_433/9b0a/devices/Bresser-7in1/1234/temperature_F",
+  "state": "54.5",
+  "neighbour": {
+    "topic": "homeassistant/sensor/Schrader-TPMS-8877/pressure_kPa/config",
+    "payload": {
+      "device_class": "pressure",
+      "name": "Schrader-TPMS-8877-P",
+      "unit_of_measurement": "kPa",
+      "state_topic": "rtl_433/9b0a/devices/Schrader/8877/pressure_kPa",
+      "unique_id": "Schrader-TPMS-8877-P",
+      "device": {
+        "identifiers": [
+          "Schrader-TPMS-8877"
+        ],
+        "model": "Schrader",
+        "manufacturer": "rtl_433"
+      }
+    }
+  }
+}

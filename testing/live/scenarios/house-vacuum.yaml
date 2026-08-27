@@ -1,0 +1,15 @@
+name: house-vacuum
+capability: house
+gated-on: M92
+intent: "The robot vacuum, started by voice."
+variants: [voice, text]
+setup:
+  states:
+    vacuum.robot_vacuum: docked
+turns:
+  - say: "Start the vacuum."
+    expect:
+      service: {domain: vacuum, service: start, entity_id: vacuum.robot_vacuum}
+      state: {vacuum.robot_vacuum: cleaning}
+      reply_means: "confirms the vacuum has started"
+      capability: house

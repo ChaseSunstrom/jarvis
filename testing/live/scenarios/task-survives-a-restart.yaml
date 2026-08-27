@@ -1,0 +1,48 @@
+name: task-survives-a-restart
+capability: task
+gated-on: M85
+ground: stack
+intent: >
+  "Look into every sensor and tell me when it is done" was answered "under
+  way, Sir" and then Jarvis restarted (an upgrade, a crash, the operator's own
+  `make up`); the job ended "interrupted when Jarvis restarted" and nobody was
+  told. A job the engine can run again is picked back up after the restart,
+  finishes, and the completion says it was picked back up — a real SIGTERM
+  and a real restart between the two turns, as memory-remember-and-recall does.
+variants: [text]
+turns:
+  # A job that runs long enough to be interrupted and short enough to finish
+  # again inside the five minutes the completion is given: every sensor took
+  # the model four to six minutes on the sixteenth house, and the completion
+  # came after the window.
+  - say: >
+      Put this in the background rather than answering now: read every light
+      and switch in the house, list which are on, and write it up as a short
+      note. Tell me when it is done.
+    expect:
+      task: {kind: background, within: 45}
+      reply_means: "says the work is under way and that it will report back"
+  # Restarted almost at once: on the rebuilt house the audit finished inside
+  # twenty seconds, before the restart it was meant to survive, and the card
+  # said "Finished" with nothing to pick back up.
+  - say: "Is that finished yet?"
+    restart: true
+    wait: 3
+    expect:
+      notification:
+        kind: task
+        source: jarvis_task_completed
+        title_contains: "picked back up"
+        # Eight minutes: on the eighteenth house the job was picked back up
+        # three seconds after the restart and said so, and listing every
+        # light and switch through the model took longer than five under the
+        # box's load. The pick-up is the promise; the clock is the box's.
+        within: 480
+      # Three seconds after the restart the job has just been picked back
+      # up, so "running again" is the truthful answer; the completion that
+      # follows is what the notification above asserts on.
+      reply_means: >
+        says the work is running (on whatever step), running again, was picked
+        back up, is finishing, or finished — any of these; a progress report
+        such as "on step two of five" counts; it must NOT say the job failed,
+        was interrupted, or that there is no such job

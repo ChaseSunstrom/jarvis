@@ -149,6 +149,20 @@ async def test_describe_says_where_each_value_came_from(tmp_path):
     assert rows["llm.model"]["apply"] == "live"
 
 
+async def test_a_choice_written_as_a_yaml_boolean_shows_its_word_and_an_absent_switch_its_default(tmp_path):
+    """`voice: speaker: mode: off` is `False` by the time YAML is done with it,
+    and a choice row against [off, observe, enforce] then matched nothing;
+    `demo.enabled` absent from the YAML showed `null` for a fixture house that
+    was up (the server audit, 27 Aug 2026)."""
+    overlay = await _overlay(tmp_path, {})
+    raw = {"voice": {"speaker": {"mode": False}}, "jarvis": {"name": "Jarvis"}}
+    rows = {row["key"]: row for row in overlay.describe(raw, {})}
+    assert rows["voice.speaker.mode"]["value"] == "off"
+    assert rows["voice.speaker.mode"]["source"] == "yaml"
+    assert rows["demo.enabled"]["value"] is True
+    assert rows["demo.enabled"]["source"] == "default"
+
+
 async def test_the_allowlist_is_membership_not_a_prefix(tmp_path):
     """`llm.model` is editable; `llm.expose` decides what the model can see."""
     assert spec_for("llm.model").key == "llm.model"
@@ -288,3 +302,23 @@ async def test_a_dropped_overlay_entry_does_not_stop_startup(tmp_path, caplog):
     assert "voice.tts_voice not applied" in caplog.text
 
     await jarvis.async_stop()
+
+
+def test_the_voice_pace_is_a_setting_that_says_where_the_real_knob_is():
+    """M70: the pace the house speaks at is on Settings › Voice as a number,
+    marked restart — Piper takes its length scale at start, from
+    PIPER_LENGTH_SCALE — with the note naming that variable and the container
+    to restart, so the row cannot promise a change the next reply will not
+    make. Bounds keep it a pace a person can follow."""
+    from jarvis.settings import APPLY_RESTART, SETTINGS_BY_KEY, SettingsError
+
+    spec = SETTINGS_BY_KEY["voice.tts.length_scale"]
+    assert spec.path == ("voice", "tts", "length_scale")
+    assert spec.group == "Voice" and spec.type == "number"
+    assert spec.apply == APPLY_RESTART
+    assert "PIPER_LENGTH_SCALE" in spec.note and "wyoming-piper" in spec.note
+    assert spec.validate is not None
+    assert spec.validate("0.9") == 0.9
+    for bad in ("0.2", "3", "fast"):
+        with pytest.raises(SettingsError):
+            spec.validate(bad)

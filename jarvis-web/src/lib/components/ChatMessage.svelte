@@ -14,6 +14,8 @@
 	 * conclusion.
 	 */
 	import { summariseArgs, type ChatMessage } from '$lib/chat';
+	import Markdown from '$lib/components/Markdown.svelte';
+	import { looksLikeMarkdown } from '$lib/markdown';
 
 	let { message }: { message: ChatMessage } = $props();
 
@@ -81,10 +83,18 @@
 		{/if}
 
 		{#if message.content}
-			<p class="text" data-testid="chat-text">{message.content}{#if showCaret}<span
-						class="caret"
-						aria-hidden="true"
-					></span>{/if}</p>
+			<!-- A reply with headings, bullets or bold reads as it was written
+			     (M106); a plain sentence, and every word the user typed, stays a
+			     paragraph. Rendered only once the turn has settled: a half-streamed
+			     `**` would flicker between bold and asterisks. -->
+			{#if message.role === 'assistant' && !showCaret && looksLikeMarkdown(message.content)}
+				<div class="text" data-testid="chat-text"><Markdown text={message.content} /></div>
+			{:else}
+				<p class="text" data-testid="chat-text">{message.content}{#if showCaret}<span
+							class="caret"
+							aria-hidden="true"
+						></span>{/if}</p>
+			{/if}
 		{:else if message.pending}
 			<p class="text waiting" data-testid="chat-waiting">
 				{#if running}
@@ -93,15 +103,63 @@
 					<span class="sr">Thinking</span><span class="caret" aria-hidden="true"></span>
 				{/if}
 			</p>
+		{:else if message.role === 'assistant'}
+			<!--
+				A settled assistant turn with no text at all.
+
+				jarvis-core no longer produces one — a turn that would have been
+				empty now falls back to a sentence — but an older backend does,
+				and this branch did not exist: both arms above were false and
+				the bubble rendered nothing, leaving a permanent blank under a
+				collapsed "REASONING · N words". A blank is indistinguishable
+				from a client that lost the message, so it is worth saying.
+			-->
+			<p class="text empty" data-testid="chat-empty">
+				No answer came back for this one.{#if message.thinking}
+					Only reasoning — open it above.{/if}
+			</p>
 		{/if}
 
 		{#if message.error}
 			<p class="error" role="alert" data-testid="chat-error">{message.error}</p>
 		{/if}
+
+		{#if message.memoryUsed?.length}
+			<!--
+			  Why this answer, in the only honest form: the notes the model was
+			  actually given. Collapsed, because it is provenance rather than
+			  content — and present, because personalisation nobody can inspect
+			  is indistinguishable from a machine making things up about them.
+			-->
+			<details class="why" data-testid="chat-memory-used">
+				<summary>WHY THIS ANSWER · {message.memoryUsed.length} remembered</summary>
+				<ul>
+					{#each message.memoryUsed as note, index (index)}
+						<li>{note}</li>
+					{/each}
+				</ul>
+			</details>
+		{/if}
 	</div>
 </article>
 
 <style>
+	.why {
+		margin-top: var(--jv-space-2);
+	}
+	.why summary {
+		color: var(--jv-text-faint);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-xs);
+		letter-spacing: var(--jv-track-chrome);
+		cursor: pointer;
+	}
+	.why ul {
+		margin: var(--jv-space-1) 0 0;
+		padding-left: var(--jv-space-4);
+		color: var(--jv-text-dim);
+		font-size: var(--jv-fs-xs);
+	}
 	.msg {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
@@ -120,7 +178,7 @@
 		border-left: 1px solid var(--jv-line-soft);
 		border-radius: 0;
 		margin-left: auto;
-		max-width: min(46rem, 88%);
+		max-width: min(calc(var(--jv-space-7) * 15.3333), 88%);
 	}
 	.msg.assistant {
 		border-left: 2px solid var(--jv-accent);
@@ -157,9 +215,13 @@
 	.msg.assistant .text {
 		color: var(--jv-text-bright);
 	}
+	.text.empty {
+		color: var(--jv-text-faint);
+		font-style: italic;
+	}
 	.text.waiting {
 		color: var(--jv-text-faint);
-		min-height: 1.5em;
+		min-height: var(--jv-rel-line);
 	}
 	.sr {
 		font-family: var(--jv-font-chrome);
@@ -170,12 +232,12 @@
 	.caret {
 		display: inline-block;
 		width: 0.5ch;
-		height: 1.05em;
+		height: var(--jv-rel-caret);
 		margin-left: 0.15em;
 		vertical-align: -0.15em;
 		background: var(--jv-accent);
 		box-shadow: var(--jv-glow-sm);
-		animation: caret 1s steps(2) infinite;
+		animation: caret var(--jv-dur-enter) steps(2) infinite;
 	}
 	@keyframes caret {
 		0%,
@@ -216,11 +278,11 @@
 		outline-offset: var(--jv-focus-offset);
 	}
 	.spark {
-		width: 6px;
-		height: 6px;
+		width: var(--jv-radius-md);
+		height: var(--jv-radius-md);
 		border-radius: 50%;
 		background: var(--jv-amber);
-		box-shadow: 0 0 8px var(--jv-amber);
+		box-shadow: 0 0 calc(var(--jv-space-1) * 2) var(--jv-amber);
 	}
 	.thinking p {
 		margin: 0;
@@ -231,7 +293,7 @@
 		color: var(--jv-text-faint);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
-		max-height: 22rem;
+		max-height: calc(var(--jv-space-7) * 7.33333);
 		overflow-y: auto;
 	}
 
@@ -242,7 +304,7 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--jv-rule-live);
 	}
 	.tools li {
 		display: grid;
@@ -255,15 +317,15 @@
 		animation: jv-rise var(--jv-dur-fast) var(--jv-ease-out) both;
 	}
 	.dot {
-		width: 6px;
-		height: 6px;
+		width: var(--jv-radius-md);
+		height: var(--jv-radius-md);
 		border-radius: 50%;
 		background: var(--jv-line);
 		justify-self: center;
 	}
 	li.running .dot {
 		background: var(--jv-accent);
-		animation: jv-tool-pulse 1s ease-in-out infinite;
+		animation: jv-tool-pulse var(--jv-dur-enter) ease-in-out infinite;
 	}
 	li.ok .dot {
 		background: var(--jv-ok);

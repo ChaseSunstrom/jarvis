@@ -6,6 +6,7 @@ import ai.jarvis.app.assist.TtsPlayer
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.JarvisUi
+import ai.jarvis.app.ui.theme.JarvisTokens
 import ai.jarvis.app.ui.ReadabilityScrim
 import android.Manifest
 import android.app.Activity
@@ -96,6 +97,13 @@ class CompanionAskActivity : Activity() {
 
     /** So unlocking the phone does not re-read the question from the top. */
     private var spokeQuestion = false
+
+    /**
+     * The reply this question belongs to is being read aloud elsewhere (M66):
+     * the card is shown and answerable, and [askAloud] stays silent — on
+     * arrival and again after an unlock.
+     */
+    private var spoken = false
     private var dismissRequested = false
     private var listening = false
 
@@ -176,6 +184,7 @@ class CompanionAskActivity : Activity() {
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
         ConversationRegistry.remember(this, conversationId)
+        spoken = intent?.getBooleanExtra(CompanionMessageHandler.EXTRA_SPOKEN, false) ?: false
 
         // A question is only answerable while it is genuinely in flight, and
         // there are two different ways for that not to be true:
@@ -214,8 +223,10 @@ class CompanionAskActivity : Activity() {
                 // in a car, or across the room, which is where a voice
                 // assistant asking a question is most likely to be useful.
                 // Reported as *"it should be able to ask me questions over
-                // voice"*.
-                askAloud()
+                // voice"*. Unless the reply already says it (`spoken`, M66):
+                // then the card is enough, and reading it out again was
+                // *"it says both the response and the question"*.
+                if (!spoken) askAloud()
             }
             // A message the server wanted spoken, opened from the notification
             // it fell back to. Say it now.
@@ -350,27 +361,29 @@ class CompanionAskActivity : Activity() {
             background = ReadabilityScrim()
         }
 
+        // The label recipe (Panel.svelte's head), in the accent: this is the
+        // one eyebrow on a screen whose whole purpose is the question under it.
         column.addView(
-            TextView(ctx).apply {
-                text = if (mode == CompanionProtocol.MODE_ASK) "JARVIS ASKS" else "JARVIS"
-                setTextColor(JarvisUi.ACCENT)
-                textSize = 12f
-                letterSpacing = 0.24f
-                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-                gravity = Gravity.CENTER
-            }
+            JarvisUi.labelText(
+                ctx,
+                if (mode == CompanionProtocol.MODE_ASK) "JARVIS ASKS" else "JARVIS",
+                JarvisUi.ACCENT,
+            ).apply { gravity = Gravity.CENTER }
         )
 
         questionView = TextView(ctx).apply {
             text = CompanionAskGate.HIDDEN_TEXT
-            setTextColor(Color.WHITE)
+            // The one line to read first, in the colour and face the reply
+            // line uses everywhere else. Pure white is not on the palette.
+            setTextColor(JarvisTokens.Color.TEXT_BRIGHT)
+            typeface = JarvisUi.DISPLAY_FACE
             // Was 21f against `JarvisUi.responseView`'s 20f, for no reason
             // anybody could state — which is the argument for the scale. This
             // IS Jarvis speaking, so it is the response step.
             textSize = JarvisUi.Type.RESPONSE
             gravity = Gravity.CENTER
             setLineSpacing(JarvisUi.dp(ctx, JarvisUi.Space.TIGHT).toFloat(), 1f)
-            setPadding(0, JarvisUi.dp(ctx, 18), 0, JarvisUi.dp(ctx, JarvisUi.Space.ROW))
+            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Size.INSET), 0, JarvisUi.dp(ctx, JarvisUi.Space.ROW))
             // Remote text: rendered as text and nothing else.
             setTextIsSelectable(false)
             // The question changes under the user twice: once when the keyguard
@@ -400,14 +413,14 @@ class CompanionAskActivity : Activity() {
             else column.addView(buildFreeAnswer())
         }
 
-        dismissButton = JarvisUi.ghost(
+        dismissButton = JarvisUi.button(
             ctx,
             if (mode == CompanionProtocol.MODE_ASK) "NOT NOW" else "CLOSE"
         ) { answer(CompanionProtocol.STATUS_DISMISSED) }
         val dismissRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, JarvisUi.dp(ctx, 14), 0, 0)
+            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Size.CHIP), 0, 0)
             addView(dismissButton)
         }
         column.addView(dismissRow)
@@ -448,13 +461,6 @@ class CompanionAskActivity : Activity() {
                 Gravity.CENTER
             )
         )
-        root.addView(
-            JarvisUi.CornerBrackets(ctx, JarvisUi.ACCENT),
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
         return root
     }
 
@@ -465,7 +471,7 @@ class CompanionAskActivity : Activity() {
             gravity = Gravity.CENTER
         }
         for (option in options) {
-            val button = JarvisUi.pill(ctx, option) {
+            val button = JarvisUi.button(ctx, option) {
                 // Belt and braces: the enabled state is the gate, and this is
                 // the same question asked again at the moment of the tap.
                 if (CompanionAskGate.answerEnabled(isLocked(), armed, answered, importance)) {
@@ -485,7 +491,7 @@ class CompanionAskActivity : Activity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 ).apply {
-                    val m = JarvisUi.dp(ctx, 6)
+                    val m = JarvisUi.dp(ctx, JarvisUi.Space.SNUG)
                     setMargins(m, m, m, m)
                 }
             )
@@ -503,7 +509,7 @@ class CompanionAskActivity : Activity() {
         // Tap to start, tap again when you have finished — not press-and-hold.
         // The label used to say HOLD, which is a control this screen does not
         // have: holding does nothing and the user gets no transcript.
-        val mic = JarvisUi.pill(ctx, MIC_IDLE_LABEL) { toggleListening() }.apply {
+        val mic = JarvisUi.button(ctx, MIC_IDLE_LABEL) { toggleListening() }.apply {
             isEnabled = false
             alpha = 0.4f
             filterTouchesWhenObscured = true
@@ -532,7 +538,7 @@ class CompanionAskActivity : Activity() {
             )
         )
 
-        val send = JarvisUi.ghost(ctx, "SEND") {
+        val send = JarvisUi.primary(ctx, "SEND") {
             submitTyped(answerField?.text?.toString().orEmpty())
         }.apply {
             isEnabled = false
@@ -632,7 +638,7 @@ class CompanionAskActivity : Activity() {
      * once, so the question is not lost — it just waits for its owner.
      */
     private fun askAloud() {
-        if (spokeQuestion || answered) return
+        if (spoken || spokeQuestion || answered) return
         if (questionText.isBlank() || !config.isConfigured) return
         if (!CompanionAskGate.textVisible(isLocked(), importance)) return
         spokeQuestion = true

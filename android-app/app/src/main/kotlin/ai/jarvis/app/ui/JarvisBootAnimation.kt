@@ -12,7 +12,6 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.Shader
-import android.graphics.Typeface
 import android.provider.Settings
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -21,6 +20,7 @@ import android.view.ViewGroup
 import android.view.animation.LinearInterpolator
 import kotlin.math.max
 import kotlin.math.min
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * The Jarvis power-on: a black screen, a hairline scan, an arc reactor igniting
@@ -96,12 +96,15 @@ class JarvisBootAnimation @JvmOverloads constructor(
     private val scanPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val scanGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val flarePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    // The same faces the settled screen uses, so the letters that resolve in
+    // are the letters that stay: the wordmark in the label face, the checks in
+    // mono (they are data — a line typed by a machine).
     private val letterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        typeface = JarvisUi.LABEL_FACE
         textAlign = Paint.Align.CENTER
     }
     private val checkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.MONOSPACE
+        typeface = JarvisUi.MONO_FACE
         textAlign = Paint.Align.RIGHT
     }
     private val caretPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -359,7 +362,9 @@ class JarvisBootAnimation @JvmOverloads constructor(
             val w = glyphWidths[i]
             if (a > 0.004f) {
                 letterPaint.maskFilter = blurFilter(BootTimeline.letterBlur(t, i))
-                letterPaint.color = withAlpha(JarvisUi.ACCENT, (240f * a).toInt())
+                // Bright, not the accent: the wordmark is a word, and what is
+                // lit on this screen is the instrument under it.
+                letterPaint.color = withAlpha(JarvisTokens.Color.TEXT_BRIGHT, (240f * a).toInt())
                 canvas.drawText(WORDMARK, i, i + 1, x + w / 2f, baseY, letterPaint)
             }
             x += w + gap
@@ -371,7 +376,7 @@ class JarvisBootAnimation @JvmOverloads constructor(
     private fun drawChecks(canvas: Canvas, t: Long, chrome: Float) {
         if (lines.isEmpty()) return
         checkPaint.textSize = dp(12.5f)
-        checkPaint.letterSpacing = 0.14f
+        checkPaint.letterSpacing = JarvisUi.TRACK_CHROME
 
         val right = width - dp(26f)
         val lineHeight = dp(20f)
@@ -465,7 +470,7 @@ class JarvisBootAnimation @JvmOverloads constructor(
         private const val WORDMARK = "JARVIS"
 
         /** The scan line itself: near-white, faintly cyan. */
-        private const val SCAN_WHITE = 0xFFDFF8FF.toInt()
+        private const val SCAN_WHITE = JarvisTokens.Color.TEXT_BRIGHT
 
         /**
          * The action count the last successful registration recorded, for the

@@ -769,9 +769,13 @@ from `accessibility`, so if that seam is renamed, one file changes.
 
 ### The UI module
 
-`ai.jarvis.app.automation.ui.AutomationsActivity` is declared in the manifest and
-launched by name from `JarvisScreens` — it is not implemented here. What it
-needs:
+`ai.jarvis.app.automation.ui.AutomationsActivity` is declared in the manifest,
+launched by name from `JarvisScreens`, and implemented — as are
+`AuditLogActivity` and `ActionPolicyActivity` beside it. Launching by name is
+still how it is done, so the dependency stays one-way and this module can be
+built and reviewed on its own; `JarvisScreens.isPresent` keeps a missing class
+a toast rather than a crash, which is what a build that strips the module
+would get. The runtime surface these screens are written against:
 
 ```kotlin
 val runtime = AutomationRuntime.ensure(context)

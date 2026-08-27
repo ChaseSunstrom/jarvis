@@ -309,7 +309,14 @@ def build_specs() -> tuple[list[ServiceSpec], list[ToggleSpec]]:
         (DOMAIN_FAN, fan_on, fan_off),
         (DOMAIN_SIREN, siren_on, siren_off),
     ):
-        toggles.append(ToggleSpec(domain, on, off, DEFAULT_ON_STATES, f"Toggle {domain} entities."))
+        # Said as the flip it is: "turn on the coffee machine" reached
+        # switch.toggle on the live house (27 Aug), which is right once and
+        # wrong the next time — the named services are the ones to reach for.
+        toggles.append(ToggleSpec(
+            domain, on, off, DEFAULT_ON_STATES,
+            f"Flip {domain} entities to their other state. Only when asked to toggle or flip; "
+            f"'turn on' and 'turn off' are {domain}.turn_on and {domain}.turn_off.",
+        ))
 
     # --- cover ------------------------------------------------------------
     cover_open = ServiceSpec(
@@ -338,7 +345,11 @@ def build_specs() -> tuple[list[ServiceSpec], list[ToggleSpec]]:
                 ),
             ),
             _v_position,
-            "Move a cover to a position.",
+            # "Close the living room window" reached this with position 0 on
+            # the seventeenth house (27 Aug 2026): true, and not what a person
+            # would call it. The named services are the ones to reach for.
+            "Move a cover part-way, to a position between open and closed. "
+            "To open or close it fully use open_cover and close_cover.",
         ),
     ]
     # Generic verbs for covers. Callers that dispatch uniformly (`<domain>.turn_on`
@@ -355,7 +366,9 @@ def build_specs() -> tuple[list[ServiceSpec], list[ToggleSpec]]:
     ]
     toggles.append(
         ToggleSpec(
-            DOMAIN_COVER, cover_open, cover_close, ON_STATES[DOMAIN_COVER], "Open or close a cover."
+            DOMAIN_COVER, cover_open, cover_close, ON_STATES[DOMAIN_COVER],
+            "Flip a cover to its other state: open if closed, closed if open. Only when asked to "
+            "toggle; 'open' and 'close' are cover.open_cover and cover.close_cover.",
         )
     )
 

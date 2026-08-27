@@ -17,6 +17,7 @@ import ai.jarvis.app.update.UpdateChecker
 import ai.jarvis.app.ui.ConsoleFrame
 import ai.jarvis.app.ui.JarvisScreens
 import ai.jarvis.app.ui.JarvisUi
+import ai.jarvis.app.ui.SectionStrip
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
@@ -85,6 +86,19 @@ class SettingsActivity : Activity() {
     private var wakingStart = 0
     private var wakingEnd = 0
 
+    /**
+     * The console's section strip, as an in-page one (M64): each segment
+     * scrolls the column to its section's heading, and the current segment
+     * follows the column. [anchors] are those headings, in the strip's order;
+     * the column is one long scroll on purpose — see [SectionStrip].
+     */
+    private lateinit var sectionStrip: SectionStrip
+    private val anchors = ArrayList<View>()
+    private lateinit var scroll: ScrollView
+
+    /** A section heading that the strip can jump to. */
+    private fun anchor(view: TextView): TextView = view.also { anchors += it }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = JarvisConfig(this)
@@ -94,32 +108,37 @@ class SettingsActivity : Activity() {
     private fun buildUi(): ViewGroup {
         val ctx = this
         val root = FrameLayout(ctx).apply { setBackgroundColor(JarvisUi.BG) }
-        val col = JarvisUi.column(ctx, padDp = 20)
+        val col = JarvisUi.column(ctx, padDp = JarvisUi.Space.SCREEN)
 
-        col.addView(JarvisUi.title(ctx, "JARVIS"))
+        // The console's ScreenTitle: what this screen is, in a sentence — not
+        // a wordmark over a tracked caps word. The brand is the bar's.
+        col.addView(JarvisUi.screenTitle(ctx, "Phone", getString(R.string.settings_lede)), matchWidth())
+        sectionStrip = SectionStrip(ctx, SECTIONS) { index ->
+            val target = anchors.getOrNull(index) ?: return@SectionStrip
+            scroll.smoothScrollTo(0, (target.top - JarvisUi.dp(ctx, JarvisUi.Space.GAP)).coerceAtLeast(0))
+        }
+        sectionStrip.tag = SectionStrip.TAG
         col.addView(
-            TextView(ctx).apply {
-                text = "SETTINGS"
-                setTextColor(JarvisUi.DIM)
-                textSize = 11f
-                letterSpacing = 0.3f
-                gravity = Gravity.CENTER
-            }
+            sectionStrip,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = JarvisUi.dp(ctx, JarvisUi.Space.STEP) },
         )
 
         // One control for the fourteen paragraphs below it. See [explain].
-        explanationsToggle = JarvisUi.ghost(ctx, explanationsLabel()) { toggleExplanations() }
+        explanationsToggle = JarvisUi.button(ctx, explanationsLabel()) { toggleExplanations() }
         col.addView(
             explanationsToggle,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = JarvisUi.dp(ctx, 12) },
+            ).apply { topMargin = JarvisUi.dp(ctx, JarvisUi.Space.GAP) },
         )
 
         // --- server ---------------------------------------------------------
 
-        col.addView(JarvisUi.label(ctx, "Server URL"))
+        col.addView(anchor(JarvisUi.label(ctx, "Server URL")))
         urlField = JarvisUi.field(ctx, "http://192.168.2.10:8123", config.serverUrl)
         col.addView(urlField, matchWidth())
         col.addView(
@@ -131,8 +150,8 @@ class SettingsActivity : Activity() {
         col.addView(tokenField, matchWidth())
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "PASTE") { pasteToken() },
-                JarvisUi.ghost(ctx, "SCAN QR") { scanToken() },
+                JarvisUi.button(ctx, "PASTE") { pasteToken() },
+                JarvisUi.button(ctx, "SCAN QR") { scanToken() },
             )
         )
         col.addView(
@@ -152,7 +171,7 @@ class SettingsActivity : Activity() {
 
         // --- voice ----------------------------------------------------------
 
-        col.addView(JarvisUi.label(ctx, "Voice"))
+        col.addView(anchor(JarvisUi.label(ctx, "Voice")))
         wakeEnabled = switchRow(ctx, "Listen for \"Hey Jarvis\"", config.wakeWordEnabled)
         col.addView(wakeEnabled, matchWidth())
         col.addView(
@@ -166,23 +185,23 @@ class SettingsActivity : Activity() {
         // above is only true until the next reboot — and the failure is silent,
         // which is exactly how it was found: by the phone quietly not
         // listening until the app was opened again.
-        listenStatus = TextView(ctx).apply { textSize = 12f }
+        listenStatus = TextView(ctx).apply { textSize = JarvisUi.Type.HINT }
         col.addView(listenStatus)
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "ALLOW BACKGROUND") { requestBackgroundStart() },
-                JarvisUi.ghost(ctx, "DISPLAY OVER APPS") { openOverlaySetting() },
+                JarvisUi.button(ctx, "ALLOW BACKGROUND") { requestBackgroundStart() },
+                JarvisUi.button(ctx, "DISPLAY OVER APPS") { openOverlaySetting() },
             )
         )
         overlayStatus = TextView(ctx).apply {
             setTextColor(JarvisUi.DIM)
-            textSize = 12f
+            textSize = JarvisUi.Type.HINT
         }
         col.addView(overlayStatus)
 
         // --- on this phone ----------------------------------------------------
 
-        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.GAP))
         col.addView(JarvisUi.label(ctx, "On this phone"))
         col.addView(
             explain(ctx, getString(R.string.settings_on_device_explain))
@@ -196,12 +215,12 @@ class SettingsActivity : Activity() {
             if (::modelStatus.isInitialized) refreshModelStatus()
         }
         col.addView(wakeOnDevice, matchWidth())
-        modelStatus = TextView(ctx).apply { textSize = 12f }
+        modelStatus = TextView(ctx).apply { textSize = JarvisUi.Type.HINT }
         col.addView(modelStatus)
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "DOWNLOAD MODELS") { downloadModels() },
-                JarvisUi.ghost(ctx, "DELETE MODELS") { deleteModels() },
+                JarvisUi.button(ctx, "DOWNLOAD MODELS") { downloadModels() },
+                JarvisUi.button(ctx, "DELETE MODELS") { deleteModels() },
             )
         )
 
@@ -210,7 +229,7 @@ class SettingsActivity : Activity() {
         // with transcription. "I have the models downloaded, why isn't it
         // transcribing on my phone" is that confusion, and it is the app's
         // fault for putting one switch under the other with no label between.
-        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.GAP))
         col.addView(JarvisUi.label(ctx, "Speech to text"))
         col.addView(
             explain(ctx, getString(R.string.settings_stt_explain))
@@ -220,7 +239,7 @@ class SettingsActivity : Activity() {
             if (::sttStatus.isInitialized) refreshSttStatus()
         }
         col.addView(sttOnDevice, matchWidth())
-        sttStatus = TextView(ctx).apply { textSize = 12f }
+        sttStatus = TextView(ctx).apply { textSize = JarvisUi.Type.HINT }
         col.addView(sttStatus)
 
         // --- in the car -------------------------------------------------------
@@ -231,20 +250,20 @@ class SettingsActivity : Activity() {
         // option explicitly does not cover Car App Library apps. Nothing in
         // this app can change that, so the only useful thing it can do is stop
         // the user concluding the feature is broken.
-        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.GAP))
         col.addView(JarvisUi.label(ctx, "In the car"))
         col.addView(
             explain(ctx, getString(R.string.settings_car_explain))
         )
 
         // --- whose voice ------------------------------------------------------
-        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.GAP))
         col.addView(JarvisUi.label(ctx, "Whose voice"))
         col.addView(
             explain(ctx, getString(R.string.settings_voice_identity_explain))
         )
         col.addView(
-            JarvisUi.ghost(ctx, "TEACH JARVIS MY VOICE") {
+            JarvisUi.button(ctx, "TEACH JARVIS MY VOICE") {
                 startActivity(Intent(this, VoiceIdentityActivity::class.java))
             },
             matchWidth()
@@ -267,8 +286,8 @@ class SettingsActivity : Activity() {
         // unknown rather than as false, and the explanation below says exactly
         // what happens then. See `WakeWordGate.decide`.
 
-        col.addView(JarvisUi.spacer(ctx, 12))
-        col.addView(JarvisUi.label(ctx, "When to listen"))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.GAP))
+        col.addView(anchor(JarvisUi.label(ctx, "When to listen")))
         wakeInCar = switchRow(ctx, "While car Bluetooth is connected", config.wakeInCar)
         col.addView(wakeInCar, matchWidth())
         wakeAtHome = switchRow(ctx, "While at home, during waking hours", config.wakeAtHome)
@@ -287,8 +306,8 @@ class SettingsActivity : Activity() {
         // Off by default is deliberate and stays: plugging in a headset must
         // never silently move the microphone off the phone.
 
-        col.addView(JarvisUi.spacer(ctx, 16))
-        col.addView(JarvisUi.label(ctx, "Headset"))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.SECTION))
+        col.addView(anchor(JarvisUi.label(ctx, "Headset")))
         headsetMode = switchRow(ctx, "Capture through a connected headset", config.headsetMode)
         col.addView(headsetMode, matchWidth())
         headsetButton = switchRow(ctx, "Let its button summon Jarvis", config.headsetButton)
@@ -311,16 +330,16 @@ class SettingsActivity : Activity() {
         // breaks without it. Sending people there is strictly better than a
         // worse copy of it.
 
-        col.addView(JarvisUi.spacer(ctx, 12))
-        col.addView(JarvisUi.label(ctx, "Permissions"))
-        permissionStatus = TextView(ctx).apply { textSize = 12f }
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.GAP))
+        col.addView(anchor(JarvisUi.label(ctx, "Permissions")))
+        permissionStatus = TextView(ctx).apply { textSize = JarvisUi.Type.HINT }
         col.addView(permissionStatus)
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "SYSTEM CHECK") {
+                JarvisUi.button(ctx, "SYSTEM CHECK") {
                     startActivity(Intent(this, ai.jarvis.app.ui.SystemCheckActivity::class.java))
                 },
-                JarvisUi.ghost(ctx, "APP INFO") { openAppInfo() },
+                JarvisUi.button(ctx, "APP INFO") { openAppInfo() },
             )
         )
         col.addView(
@@ -329,8 +348,8 @@ class SettingsActivity : Activity() {
 
         // --- other screens --------------------------------------------------
 
-        col.addView(JarvisUi.spacer(ctx, 12))
-        col.addView(JarvisUi.label(ctx, "More"))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.GAP))
+        col.addView(anchor(JarvisUi.label(ctx, "More")))
         col.addView(
             row(
                 // NOT "automations". The console has a page by that name and it
@@ -338,10 +357,10 @@ class SettingsActivity : Activity() {
                 // itself, which is a different thing that happened to share a
                 // word — and sharing it made the app feel like a slightly wrong
                 // copy of the console rather than the other half of it.
-                JarvisUi.ghost(ctx, "PHONE TASKS") {
+                JarvisUi.button(ctx, "PHONE TASKS") {
                     JarvisScreens.open(this, JarvisScreens.AUTOMATIONS, "Phone tasks")
                 },
-                JarvisUi.ghost(ctx, "AUDIT LOG") {
+                JarvisUi.button(ctx, "AUDIT LOG") {
                     JarvisScreens.open(this, JarvisScreens.AUDIT_LOG, "The audit log")
                 },
             )
@@ -351,7 +370,7 @@ class SettingsActivity : Activity() {
         )
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "CRASH LOGS") {
+                JarvisUi.button(ctx, "CRASH LOGS") {
                     startActivity(Intent(this, ai.jarvis.app.ui.CrashLogActivity::class.java))
                 },
                 // SHARES A ROW rather than taking one of its own.
@@ -365,7 +384,7 @@ class SettingsActivity : Activity() {
                 // that introduced them, over something none of them tests. A
                 // row that already exists costs no height, and the sentence
                 // explaining it goes in the hint that was already here.
-                JarvisUi.ghost(ctx, "APPROVALS") {
+                JarvisUi.button(ctx, "APPROVALS") {
                     JarvisScreens.open(this, JarvisScreens.ACTION_POLICY, "Action approvals")
                 },
             )
@@ -376,43 +395,43 @@ class SettingsActivity : Activity() {
 
         // --- updates ----------------------------------------------------------
 
-        col.addView(JarvisUi.spacer(ctx, 16))
-        col.addView(JarvisUi.label(ctx, "Updates"))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.SECTION))
+        col.addView(anchor(JarvisUi.label(ctx, "Updates")))
         updateStatus = TextView(ctx).apply {
             text = "Version ${appVersionName()} (build ${appVersionCode()})"
             setTextColor(JarvisUi.DIM)
-            textSize = 12f
+            textSize = JarvisUi.Type.HINT
         }
         col.addView(updateStatus)
         prereleaseUpdates = switchRow(ctx, "Include test builds", config.allowPrereleaseUpdates)
         col.addView(prereleaseUpdates)
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "CHECK FOR UPDATES") { checkForUpdates() },
-                JarvisUi.ghost(ctx, "RELEASES") { openReleasesPage() },
+                JarvisUi.button(ctx, "CHECK FOR UPDATES") { checkForUpdates() },
+                JarvisUi.button(ctx, "RELEASES") { openReleasesPage() },
             )
         )
         // The grant without which none of the above can finish. Declared in the
         // manifest since the app was written, and a per-app user decision since
         // Android 8 — so it is another one that looked handled and was not.
         col.addView(
-            JarvisUi.ghost(ctx, "INSTALL PERMISSION") { openInstallPermission() },
+            JarvisUi.button(ctx, "INSTALL PERMISSION") { openInstallPermission() },
             matchWidth()
         )
 
         // --- save -----------------------------------------------------------
 
-        col.addView(JarvisUi.spacer(ctx, 16))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.SECTION))
         col.addView(
-            JarvisUi.pill(ctx, "SAVE") { save() },
+            JarvisUi.primary(ctx, "SAVE") { save() },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
-        col.addView(JarvisUi.spacer(ctx, 24))
+        col.addView(JarvisUi.spacer(ctx, JarvisUi.Space.WIDE))
 
-        val scroll = ScrollView(ctx).apply {
+        scroll = ScrollView(ctx).apply {
             isFillViewport = true
             addView(
                 col,
@@ -421,6 +440,13 @@ class SettingsActivity : Activity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             )
+            // The strip follows the column: whichever heading last passed
+            // under the top of the screen is the section being read.
+            setOnScrollChangeListener { _, _, y, _, _ ->
+                sectionStrip.select(
+                    SectionStrip.sectionAt(anchors.map { it.top }, y, JarvisUi.dp(ctx, JarvisUi.Space.WIDE))
+                )
+            }
         }
 
         // The console's nav, above this screen exactly as it sits above the
@@ -431,16 +457,21 @@ class SettingsActivity : Activity() {
         // shared and the content is native, and PHONE stops being a screen off
         // to one side that you reach from somewhere else.
         val framed = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val bar = ConsoleFrame.tabBar(this, current = null, onPhone = true) { tab ->
+            // NOT startActivity directly. SAVE is the last control on a
+            // screen several screens long, and this strip is at the very
+            // top: tapping a tab after editing the token used to leave the
+            // screen and discard every edited field, silently, with the
+            // typing still on screen behind the new activity for a frame.
+            // See [leaveIfSaved].
+            leaveIfSaved { startActivity(ManagementActivity.intent(this, tab)) }
+        }
+        // The readout says what this screen can truthfully say: which server
+        // the phone is pointed at. It never dials, so it never claims a link.
+        val host = ServerUrl.originOf(config.serverUrl)?.host
+        if (host == null) bar.setStatus(NO_SERVER, ConsoleFrame.Tone.OFF) else bar.setStatus(host, ConsoleFrame.Tone.NEUTRAL)
         framed.addView(
-            ConsoleFrame.tabBar(this, current = null, onPhone = true) { tab ->
-                // NOT startActivity directly. SAVE is the last control on a
-                // screen several screens long, and this strip is at the very
-                // top: tapping a tab after editing the token used to leave the
-                // screen and discard every edited field, silently, with the
-                // typing still on screen behind the new activity for a frame.
-                // See [leaveIfSaved].
-                leaveIfSaved { startActivity(ManagementActivity.intent(this, tab)) }
-            },
+            bar,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -480,7 +511,7 @@ class SettingsActivity : Activity() {
                 TextView(ctx).apply {
                     text = "Waking hours"
                     setTextColor(JarvisUi.DIM)
-                    textSize = 14f
+                    textSize = JarvisUi.Type.BODY
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             )
@@ -493,7 +524,7 @@ class SettingsActivity : Activity() {
                 TextView(ctx).apply {
                     text = " to "
                     setTextColor(JarvisUi.FAINT)
-                    textSize = 14f
+                    textSize = JarvisUi.Type.BODY
                 }
             )
             addView(
@@ -1173,12 +1204,12 @@ class SettingsActivity : Activity() {
             // 14, not 8. Reported as "buttons are too close together": a row
             // of outlined ghost buttons with 8dp above it and 10dp between
             // reads as one control with lines through it rather than two.
-            setPadding(0, JarvisUi.dp(this@SettingsActivity, 14), 0, 0)
+            setPadding(0, JarvisUi.dp(this@SettingsActivity, JarvisUi.Space.SECTION), 0, 0)
             children.forEachIndexed { index, child ->
                 if (index > 0) {
                     addView(
                         android.view.View(this@SettingsActivity),
-                        LinearLayout.LayoutParams(JarvisUi.dp(this@SettingsActivity, 16), 1)
+                        LinearLayout.LayoutParams(JarvisUi.dp(this@SettingsActivity, JarvisUi.Space.SECTION), 1)
                     )
                 }
                 addView(
@@ -1193,8 +1224,8 @@ class SettingsActivity : Activity() {
             text = label
             isChecked = checked
             setTextColor(JarvisUi.DIM)
-            textSize = 14f
-            setPadding(0, JarvisUi.dp(ctx, 10), 0, JarvisUi.dp(ctx, 2))
+            textSize = JarvisUi.Type.BODY
+            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Space.ROW), 0, JarvisUi.dp(ctx, JarvisUi.Space.MICRO))
         }
 
     private fun toast(message: String) =
@@ -1202,6 +1233,16 @@ class SettingsActivity : Activity() {
 
     companion object {
         private const val REQ_SCAN = 5001
+
+        /**
+         * The strip's segments, in the column's order. Each names the heading
+         * [anchor] registers for it; a segment with no heading would scroll
+         * nowhere, which is why the two lists are built in the same pass.
+         */
+        private val SECTIONS = listOf("Server", "Voice", "Listen", "Headset", "Permissions", "More", "Updates")
+
+        /** The bar's readout when no server is set yet. */
+        private const val NO_SERVER = "NO SERVER"
 
         /** The de-facto standard scan intent; F-Droid scanners answer it. */
         private const val ZXING_SCAN = "com.google.zxing.client.android.SCAN"

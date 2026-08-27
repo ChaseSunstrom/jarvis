@@ -22,7 +22,10 @@ import { render } from 'svelte/server';
 import Approvals from './Approvals.svelte';
 import ChatMessage from './ChatMessage.svelte';
 import ChatPanel from './ChatPanel.svelte';
+import Models from './Models.svelte';
 import Pairing from './Pairing.svelte';
+import TaskCard from './TaskCard.svelte';
+import TaskDock from './TaskDock.svelte';
 import ToolActivity from './ToolActivity.svelte';
 import { assistantPlaceholder, userMessage } from '$lib/chat';
 
@@ -55,9 +58,27 @@ describe('server rendering', () => {
 		expect(timersArmedBy(ToolActivity, { conn: null })).toBe(0);
 	});
 
+	it('arms no timers in the task dock', () => {
+		// Third layout-level surface, and the one with a real timer on the
+		// client: it schedules a single wake-up for when a finished task should
+		// stop lingering. That lives in an `$effect`, which is exactly why it
+		// must not fire here — on the server there is no unmount to clear it.
+		expect(timersArmedBy(TaskDock, { conn: null })).toBe(0);
+	});
+
 	it('renders the pairing panel’s markup, which is the point of doing it at all', () => {
 		const { body } = render(Pairing);
 		expect(body).toContain('data-testid="pairing"');
+	});
+
+	it('arms no timers in the MODELS panel, and renders it loading with no connection', () => {
+		// The panel loads in an `$effect` once a connection arrives. On the
+		// server there is none, so the first paint is the skeleton — never a
+		// fetch, never a timer, never a `window`.
+		expect(timersArmedBy(Models, { conn: null, status: 'connecting' })).toBe(0);
+		const { body } = render(Models, { props: { conn: null, status: 'connecting' } });
+		expect(body).toContain('data-testid="models"');
+		expect(body).toContain('data-screen-state="loading"');
 	});
 
 	// --- chat mode ----------------------------------------------------------
@@ -107,6 +128,42 @@ describe('server rendering', () => {
 		expect(body).not.toContain('<details open');
 	});
 
+	it('never renders a settled assistant turn as a blank bubble', () => {
+		// The reported symptom: a model whose whole output was reasoning left
+		// `content` empty, `pending` false, and no error — and BOTH arms of the
+		// text block were false, so the bubble rendered a collapsed
+		// "REASONING · N words" and nothing else. A blank is indistinguishable
+		// from a client that lost the message.
+		const blank = {
+			...assistantPlaceholder(),
+			content: '',
+			thinking: 'a hundred and ninety-seven words of deliberation',
+			pending: false
+		};
+
+		const { body } = render(ChatMessage, { props: { message: blank } });
+
+		expect(body).toContain('No answer came back');
+		expect(body).toContain('Only reasoning');
+	});
+
+	it('says nothing extra when a turn genuinely answered', () => {
+		const answered = {
+			...assistantPlaceholder(),
+			content: 'Done, Sir.',
+			pending: false
+		};
+		const { body } = render(ChatMessage, { props: { message: answered } });
+		expect(body).toContain('Done, Sir.');
+		expect(body).not.toContain('No answer came back');
+	});
+
+	it('a turn still in flight shows the caret, not the empty notice', () => {
+		const waiting = { ...assistantPlaceholder(), content: '', pending: true };
+		const { body } = render(ChatMessage, { props: { message: waiting } });
+		expect(body).not.toContain('No answer came back');
+	});
+
 	it('renders the empty state and the composer with no conversation', () => {
 		const { body } = render(ChatPanel, {
 			props: {
@@ -126,4 +183,56 @@ describe('server rendering', () => {
 		expect(body).toContain('data-testid="chat-mic"');
 		expect(body).toContain('hello');
 	});
+
+	// --- tasks ----------------------------------------------------------------
+	it('renders a task card, steps and all', () => {
+		const { body } = render(TaskCard, { props: { task: researchTask() } });
+		expect(body).toContain('Read twelve pages');
+		expect(body).toContain('RUNNING');
+		// Open by default while the task is running: "which step" is the
+		// question exactly then, and only then.
+		expect(body).toContain('reading page 4');
+	});
+
+	it('gives a determinate bar a number a screen reader can announce', () => {
+		const { body } = render(TaskCard, {
+			props: { task: { ...researchTask(), fraction: 0.25 } }
+		});
+		expect(body).toContain('aria-valuenow="25"');
+	});
+
+	it('gives an indeterminate bar no number at all', () => {
+		// ARIA's own rule, and the only way a reader says "busy" rather than
+		// reading out a figure nobody computed. `aria-valuenow="0"` here would
+		// announce a task that is working as one that has done nothing.
+		const { body } = render(TaskCard, {
+			props: { task: { ...researchTask(), fraction: null } }
+		});
+		expect(body).toContain('role="progressbar"');
+		expect(body).not.toContain('aria-valuenow');
+	});
 });
+
+function researchTask() {
+	return {
+		id: 't1',
+		kind: 'research',
+		title: 'Read twelve pages',
+		status: 'running' as const,
+		steps: [
+			{ title: 'search', status: 'done' as const },
+			{ title: 'read', status: 'running' as const, detail: 'reading page 4' }
+		],
+		detail: '',
+		result: '',
+		error: '',
+		created: 1000,
+		updated: 1000,
+		source: '',
+		open_ended: false,
+		fraction: 0.5,
+		done_steps: 1,
+		total_steps: 2,
+		finished: false
+	};
+}

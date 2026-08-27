@@ -1,0 +1,65 @@
+{
+  "source": "Zigbee2MQTT 2.13 — Aqara WSDCGQ11LM temperature/humidity/pressure, device bundle",
+  "topic": "homeassistant/device/0x00158d0001a2b3c4/config",
+  "payload": {
+    "dev": {
+      "ids": [
+        "zigbee2mqtt_0x00158d0001a2b3c4"
+      ],
+      "name": "Garage climate",
+      "mf": "Aqara",
+      "mdl": "WSDCGQ11LM",
+      "sw": "3000-0001"
+    },
+    "o": {
+      "name": "Zigbee2MQTT",
+      "sw": "2.13.0",
+      "url": "https://www.zigbee2mqtt.io"
+    },
+    "cmps": {
+      "temperature": {
+        "p": "sensor",
+        "name": "Temperature",
+        "uniq_id": "0x00158d0001a2b3c4_temperature_zigbee2mqtt",
+        "stat_t": "zigbee2mqtt/Garage climate",
+        "val_tpl": "{{ value_json.temperature }}",
+        "unit_of_meas": "°C",
+        "dev_cla": "temperature",
+        "stat_cla": "measurement"
+      },
+      "humidity": {
+        "p": "sensor",
+        "name": "Humidity",
+        "uniq_id": "0x00158d0001a2b3c4_humidity_zigbee2mqtt",
+        "stat_t": "zigbee2mqtt/Garage climate",
+        "val_tpl": "{{ value_json.humidity }}",
+        "unit_of_meas": "%",
+        "dev_cla": "humidity",
+        "stat_cla": "measurement"
+      },
+      "battery": {
+        "p": "sensor",
+        "name": "Battery",
+        "uniq_id": "0x00158d0001a2b3c4_battery_zigbee2mqtt",
+        "stat_t": "zigbee2mqtt/Garage climate",
+        "val_tpl": "{{ value_json.battery }}",
+        "unit_of_meas": "%",
+        "dev_cla": "battery",
+        "ent_cat": "diagnostic"
+      }
+    },
+    "avty": [
+      {
+        "t": "zigbee2mqtt/bridge/state",
+        "val_tpl": "{{ value_json.state }}"
+      }
+    ]
+  },
+  "state_topic": "zigbee2mqtt/Garage climate",
+  "state": {
+    "temperature": 12.5,
+    "humidity": 61,
+    "battery": 87,
+    "linkquality": 120
+  }
+}

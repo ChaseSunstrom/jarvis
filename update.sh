@@ -1,0 +1,1 @@
+git pull && docker compose --profile agents down && docker compose --profile agents up -d --build && cd jarvis-core && docker compose --profile mqtt down && docker compose --profile mqtt up -d --build && cd ..

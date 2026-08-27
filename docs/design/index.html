@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · three visual directions</title>
+<style>
+@font-face{font-family:"IBM Plex Sans";font-weight:400;src:url(fonts/plex-sans-400.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:500;src:url(fonts/plex-sans-500.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:400;src:url(fonts/plex-mono-400.woff2) format("woff2")}
+:root{--bg:#07090c;--line:#1a2026;--text:#d9dde2;--dim:#8a939c;--faint:#565e66;--accent:#3fd8ff}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:400 14px/1.55 "IBM Plex Sans",sans-serif;padding:40px 48px}
+h1{font-weight:500;font-size:22px;letter-spacing:.02em}
+.brief{color:var(--dim);max-width:90ch;margin:6px 0 32px}
+.brief b{color:var(--text);font-weight:500}
+.direction{border-top:1px solid var(--line);padding:28px 0 36px}
+.head{display:grid;grid-template-columns:1fr 420px;gap:48px;align-items:start;margin-bottom:18px}
+.head h2{font-size:18px;font-weight:500}
+.head h2 small{color:var(--faint);font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.14em;margin-left:12px;text-transform:uppercase}
+.head p{color:var(--dim);margin-top:6px;max-width:80ch}
+.tokens{font-family:"IBM Plex Mono";font-size:11px;color:var(--faint);line-height:1.9}
+.sw{display:flex;gap:4px;margin:4px 0 8px}
+.sw i{width:26px;height:18px;border:1px solid var(--line)}
+.shots{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.shots figure{border:1px solid var(--line);background:#000}
+.shots img{display:block;width:100%;height:auto}
+.shots figcaption{font-family:"IBM Plex Mono";font-size:11px;color:var(--faint);padding:8px 10px;border-top:1px solid var(--line);letter-spacing:.06em;text-transform:uppercase}
+.foot{color:var(--faint);font-size:12px;border-top:1px solid var(--line);padding-top:16px;font-family:"IBM Plex Mono"}
+</style></head>
+<body>
+<h1>JARVIS — three visual directions</h1>
+<p class="brief">Brief: <b>restrained dark sci-fi HUD · near-black surfaces · one cyan accent used sparingly · dense but calm · motion subtle and purposeful · no purple gradients, no stock component-library look.</b> Each direction mocks the three signature screens at 1440×900 as static HTML with its tokens inlined (no framework). Whichever wins becomes <code>design/tokens.json</code> in milestone M01 and the component library in M02.</p>
+
+<section class="direction" data-dir="a-instrument">
+  <div class="head">
+    <div><h2>A · Instrument <small>flight deck</small></h2>
+      <p>The console as an instrument panel: a hairline modular grid, every panel labelled and numbered like a readout, monospace data with condensed uppercase headers, corner brackets on the focused panel. Cyan is spent only on what is <em>live right now</em> — the current step, the streaming value, the active nav underline, the one primary control — so the eye finds change without scanning. Dense by design (the task view shows queue, plan, tool calls, output, approval and timeline at once) and calm because nothing is filled, glowing or rounded; motion is limited to numbers ticking, hairline sweeps and a breathing core. This is the closest to today's chrome, refined rather than replaced, and the cheapest to reach.</p></div>
+    <div class="tokens">surfaces #04070c · #070c13 · #0a1219 &nbsp; lines #17323e · #0f2029<div class="sw"><i style="background:#04070c"></i><i style="background:#070c13"></i><i style="background:#0a1219"></i><i style="background:#17323e"></i><i style="background:#7fa3b0"></i><i style="background:#cfe6ee"></i><i style="background:#3fd8ff"></i><i style="background:#f2b84b"></i></div>type Barlow Condensed 500/600 + JetBrains Mono 400/500 · 10–44 px<br>space 4/8/12/16/24 · radius 2 px · motion 160 ms ease-out, 600 ms slow · shadow none</div>
+  </div>
+  <div class="shots">
+    <figure><img src="shots/a-instrument-chat.png" alt="Instrument — chat/voice"><figcaption>chat / voice</figcaption></figure>
+    <figure><img src="shots/a-instrument-task.png" alt="Instrument — live task"><figcaption>live task execution</figcaption></figure>
+    <figure><img src="shots/a-instrument-dashboard.png" alt="Instrument — dashboard"><figcaption>dashboard</figcaption></figure>
+  </div>
+</section>
+
+<section class="direction" data-dir="b-ledger">
+  <div class="head">
+    <div><h2>B · Ledger <small>the record</small></h2>
+      <p>No panels at all. The interface is a typographic document — a masthead, columns divided by hairlines, a marginalia column for timestamps and tool calls, figures set large and light, tables with tabular numerals — so the density comes from information, not chrome. Neutral near-black rather than blue-black, IBM Plex Sans at reading sizes with Plex Mono for anything measured. Cyan appears only as a 2 px rule beside the thing that is happening, a caret, and an underlined action, which keeps a tier-3 approval unmistakable without a coloured button. Motion is fades and a single breathing dot. It reads like Jarvis keeping a ledger of what it did and why — the most legible for long sessions, the least "HUD" of the three, and the furthest from the current UI.</p></div>
+    <div class="tokens">surfaces #0a0c0f · #0d1013 · #111519 &nbsp; lines #1f262c · #161b20<div class="sw"><i style="background:#0a0c0f"></i><i style="background:#0d1013"></i><i style="background:#111519"></i><i style="background:#1f262c"></i><i style="background:#8a939c"></i><i style="background:#d9dde2"></i><i style="background:#33c6e8"></i><i style="background:#d9a441"></i></div>type IBM Plex Sans 300/400/500 + IBM Plex Mono 400 · 11–44 px<br>space 4/8/12/16/24/32/48 · radius 0 · motion 200 ms, 900 ms slow · shadow none</div>
+  </div>
+  <div class="shots">
+    <figure><img src="shots/b-ledger-chat.png" alt="Ledger — chat/voice"><figcaption>chat / voice</figcaption></figure>
+    <figure><img src="shots/b-ledger-task.png" alt="Ledger — live task"><figcaption>live task execution</figcaption></figure>
+    <figure><img src="shots/b-ledger-dashboard.png" alt="Ledger — dashboard"><figcaption>dashboard</figcaption></figure>
+  </div>
+</section>
+
+<section class="direction" data-dir="c-reactor">
+  <div class="head">
+    <div><h2>C · Reactor <small>the orb</small></h2>
+      <p>Composition around a single light source. The orb (already Jarvis's identity on the phone and the HUD) becomes the organising centre; content sits on floating glass panels around it, tasks are a radial progress ring with the plan as arc segments, dashboards are cards on a dark field with the live series drawn as a glowing area. The deepest black and the brightest cyan of the three, with cyan doing real work as emitted light — glow on the current step, the push-to-talk ring, one filled APPROVE button — and everything else kept to thin rings and dim geometric type (Space Grotesk 300/400). Motion is slow rotation and breathing, always tied to state. The most cinematic, the most at risk of tipping into stock sci-fi if the glow budget is not policed, and the most work to build well.</p></div>
+    <div class="tokens">surfaces #020509 · glass rgba(10,21,32,.55) &nbsp; lines #123040 · rgba(79,227,255,.14)<div class="sw"><i style="background:#020509"></i><i style="background:#0a1520"></i><i style="background:#123040"></i><i style="background:#3f5c66"></i><i style="background:#7ea6b3"></i><i style="background:#d6eef5"></i><i style="background:#4fe3ff"></i><i style="background:#f2b84b"></i></div>type Space Grotesk 300/400/500 + JetBrains Mono 400 · 11–52 px<br>space 4/8/12/16/24/32/48 · radius 12 px, pill · blur 14 px · motion 220 ms, 1200 ms slow · glow rgba(79,227,255,.35)</div>
+  </div>
+  <div class="shots">
+    <figure><img src="shots/c-reactor-chat.png" alt="Reactor — chat/voice"><figcaption>chat / voice</figcaption></figure>
+    <figure><img src="shots/c-reactor-task.png" alt="Reactor — live task"><figcaption>live task execution</figcaption></figure>
+    <figure><img src="shots/c-reactor-dashboard.png" alt="Reactor — dashboard"><figcaption>dashboard</figcaption></figure>
+  </div>
+</section>
+
+<section class="direction" data-dir="c2-reactor">
+  <div class="head">
+    <div><h2>C · Reactor II <small>revised · chosen direction</small></h2>
+      <p>The same composition, taken further and made quieter. The reactor is now an instrument rather than a glowing sphere: a graduated bezel, a ring of blades with a glint travelling round it, a counter-rotating coil, a level arc that breathes with the microphone, and a dark lens with one thin luminous rim and two slow iris arcs inside — the same object drives the voice screen, the task ring (blades grouped by step) and the dashboard's hero figure. The glass blur, the pill nav and the filled-cyan chips are gone; panels are flat hairline surfaces, the tab strip is uppercase Barlow with a sliding underline and a live-count badge, and cyan is spent on the current step, the level, the one APPROVE. Everything moves on purpose: rotations at three speeds, entrance staggers, charts that draw in, figures that count up. UI text in Barlow, display lines in Space Grotesk 300, data in JetBrains Mono.</p></div>
+    <div class="tokens">surfaces #03070b · #070f16 · #0a141c &nbsp; lines #16323f · #0f2430 · #0b1b23<div class="sw"><i style="background:#03070b"></i><i style="background:#070f16"></i><i style="background:#0a141c"></i><i style="background:#16323f"></i><i style="background:#7c9ea9"></i><i style="background:#d3e6ec"></i><i style="background:#4fe3ff"></i><i style="background:#f2b84b"></i></div>type Barlow 400/500 · Space Grotesk 300 · JetBrains Mono 400/500 · 11–40 px<br>space 4/8/12/16/24/32/48 · radius 6 px · motion 160 / 260 / 900 ms · glow rgba(79,227,255,.28), current step + core only</div>
+  </div>
+  <div class="shots">
+    <figure><img src="shots/c2-reactor-chat.png" alt="Reactor II — chat/voice"><figcaption>chat / voice</figcaption></figure>
+    <figure><img src="shots/c2-reactor-task.png" alt="Reactor II — live task"><figcaption>live task execution</figcaption></figure>
+    <figure><img src="shots/c2-reactor-dashboard.png" alt="Reactor II — dashboard"><figcaption>dashboard</figcaption></figure>
+  </div>
+</section>
+
+<p class="foot">Rendered headlessly by docs/design/screenshot.mjs (Playwright Chromium, 1440×900). Fonts: Barlow Condensed, IBM Plex, JetBrains Mono, Space Grotesk — SIL Open Font License, bundled under docs/design/fonts/.</p>
+<script>
+const only = new URLSearchParams(location.search).get('only');
+if (only) document.querySelectorAll('.direction').forEach((d) => { if (d.dataset.dir !== only) d.remove(); });
+</script>
+</body></html>

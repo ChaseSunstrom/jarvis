@@ -1,0 +1,16 @@
+name: task-live-ui
+capability: task
+gated-on: M25
+intent: >
+  The same background task, watched through the console: the task dock has
+  to show the job while it runs, not once it is over. Driven through the
+  console (a browser variant), because only a page can show what a page
+  shows; the API variants of this request are task-background-plan.
+variants: [text-ui]
+turns:
+  - say: "Look into which lights are still on downstairs and then tell me what you found later."
+    expect:
+      task: {kind: background, within: 30}
+      ui:
+        - {testid: task-dock, contains: "lights", within: 45}
+        - {testid: task-dock-summary, contains: "running", within: 45}

@@ -1,0 +1,13 @@
+name: house-climate
+capability: house
+gated-on: M92
+intent: >
+  A thermostat is the second thing said to a house after a light, and the
+  rig never asked for one. Asserts on the service the house received.
+variants: [voice, text]
+turns:
+  - say: "Set the thermostat to twenty one degrees."
+    expect:
+      service: {domain: climate, service: set_temperature, entity_id: climate.thermostat}
+      reply_means: "confirms the thermostat is set to 21 degrees (or is being set)"
+      capability: house

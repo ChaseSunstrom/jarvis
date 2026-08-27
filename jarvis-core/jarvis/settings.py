@@ -31,6 +31,8 @@ construction is the specific lie this table exists to avoid.
 
 from __future__ import annotations
 
+import asyncio
+
 import copy
 import logging
 from collections.abc import Callable, Iterable
@@ -76,6 +78,10 @@ class SettingSpec:
     apply_hook: Callable[["Jarvis", Any], bool] | None = None
     #: Offer the console a list to choose from, when one can be discovered.
     choices_hook: Callable[["Jarvis"], list[str]] | None = None
+    #: What the integration uses when the key is absent from the YAML, so the
+    #: console draws the real state rather than an empty control: `demo.enabled`
+    #: showed `null` for a fixture house that was up (27 Aug 2026).
+    default: Any = None
 
 
 @dataclass(slots=True)
@@ -106,6 +112,17 @@ def _text(minimum: int = 1, maximum: int = 200) -> Callable[[Any], str]:
     return check
 
 
+def _optional_text(maximum: int = 200) -> Callable[[Any], str]:
+    """`_text`, with empty allowed — for a setting whose empty means "the default"."""
+    check_filled = _text(1, maximum)
+
+    def check(value: Any) -> str:
+        text = str(value if value is not None else "").strip()
+        return check_filled(text) if text else ""
+
+    return check
+
+
 def _number(low: float, high: float, integer: bool = False) -> Callable[[Any], Any]:
     def check(value: Any) -> Any:
         try:
@@ -117,6 +134,35 @@ def _number(low: float, high: float, integer: bool = False) -> Callable[[Any], A
         return number
 
     return check
+
+
+def _as_shown(spec: "SettingSpec", value: Any) -> Any:
+    """The value a row shows: the spec's default when nothing is set, and for a
+    choice, YAML's booleans as the words they were written as.
+
+    `voice: speaker: mode: off` reaches Python as `False` — YAML 1.1 reads
+    `off` as a boolean — and a choice row drawn against [off, observe, enforce]
+    then matched nothing (27 Aug 2026). The gate coerced it; the row did not.
+    """
+    if value is None:
+        return spec.default
+    if spec.type == "choice" and isinstance(value, bool):
+        return "on" if value else "off"
+    return value
+
+
+def _bool(value: Any) -> bool:
+    """A switch. Accepts what a form, a yaml file or a model sends for one —
+    true/false, yes/no, on/off, 1/0 — and refuses the rest, so "maybe" cannot
+    land in a config file as a truthy string."""
+    if isinstance(value, bool):
+        return value
+    text = str(value if value is not None else "").strip().lower()
+    if text in ("true", "yes", "on", "1", "enabled"):
+        return True
+    if text in ("false", "no", "off", "0", "disabled"):
+        return False
+    raise SettingsError("Expected on or off.")
 
 
 def _one_of(*allowed: str) -> Callable[[Any], str]:
@@ -178,6 +224,30 @@ def _apply_agent_attr(name: str) -> Callable[["Jarvis", Any], bool]:
     return hook
 
 
+def _apply_vision_model(jarvis: "Jarvis", value: Any) -> bool:
+    """Point the running vision analyser at another model.
+
+    `VisionConfig` is frozen and the analyser holds it whole, so this replaces
+    the record rather than poking a field — and sets the client's default too,
+    for the same reason `_apply_model` does: the call names `cfg.model`, the
+    fallback names the client's, and one of them stale is a setting that
+    works on alternate frames.
+    """
+    import dataclasses
+
+    store = jarvis.data.get("vision")
+    manager = store.get("manager") if isinstance(store, dict) else None
+    analyser = getattr(manager, "model", None)
+    config = getattr(analyser, "config", None)
+    if analyser is None or config is None:
+        return False
+    analyser.config = dataclasses.replace(config, model=value)
+    client = getattr(analyser, "ollama", None)
+    if client is not None:
+        client.model = value
+    return True
+
+
 def _apply_agent_option(name: str) -> Callable[["Jarvis", Any], bool]:
     def hook(jarvis: "Jarvis", value: Any) -> bool:
         agent = _llm_agent(jarvis)
@@ -210,6 +280,45 @@ def _apply_approval_ttl(jarvis: "Jarvis", value: Any) -> bool:
     if registry is None:
         return False
     registry.approval_ttl = value
+    return True
+
+
+def _apply_demo_enabled(jarvis: "Jarvis", value: Any) -> bool:
+    """Demo mode, live (M80): off removes every demo entity through the one
+    delete path; on builds the fixture house again. No restart — the operator
+    asked why the fake lamps were still there, and "after a restart" is not
+    an answer to that."""
+    from .integrations import demo as demo_integration
+
+    async def apply() -> None:
+        if value:
+            await demo_integration.async_setup(jarvis, {"enabled": True})
+        else:
+            await demo_integration.async_remove_all(jarvis)
+
+    jarvis.async_create_task(apply()) if hasattr(jarvis, "async_create_task") else asyncio.ensure_future(apply())
+    return True
+
+
+def _apply_speaker_mode(jarvis: "Jarvis", value: Any) -> bool:
+    """The voice gate's mode, live. Inert until somebody is enrolled — the
+    gate's own rule — which is why it may be chosen before enrolment: the
+    operator could not set it while enrolling on 26 Aug 2026 because the
+    screen only showed it."""
+    from .integrations.voice import get_voice_data
+
+    data = get_voice_data(jarvis)
+    if data is None or getattr(data, "speaker", None) is None:
+        return False
+    data.speaker.mode = str(value)
+    return True
+
+
+def _apply_question_ttl(jarvis: "Jarvis", value: Any) -> bool:
+    registry = jarvis.data.get("llm_tools")
+    if registry is None:
+        return False
+    registry.question_ttl = value
     return True
 
 
@@ -287,10 +396,39 @@ SETTINGS: tuple[SettingSpec, ...] = (
         group="Assistant",
         type="choice",
         apply=APPLY_LIVE,
-        note="The Ollama model every conversation runs on.",
+        note="The model every conversation runs on, as the server at LLM_URL "
+        "names it. Behind the gateway that is an alias (`house`); the MODELS "
+        "panel says which served model it stands for.",
         validate=_text(1, 120),
         apply_hook=_apply_model,
         choices_hook=_model_choices,
+    ),
+    SettingSpec(
+        key="llm.fast_model",
+        path=("llm", "fast_model"),
+        label="Fast model",
+        group="Assistant",
+        type="choice",
+        apply=APPLY_LIVE,
+        note="A smaller model for the voice path, named as LLM_URL names it: every "
+        "spoken turn is answered by this model when it is set (M60), and by the "
+        "conversation model when it is empty.",
+        validate=_optional_text(120),
+        apply_hook=_apply_agent_attr("fast_model"),
+        choices_hook=_model_choices,
+    ),
+    SettingSpec(
+        key="vision.model",
+        path=("vision", "model"),
+        label="Vision model",
+        group="Assistant",
+        type="string",
+        apply=APPLY_LIVE,
+        note="The model that looks at a camera frame, named as the vision "
+        "integration's own server names it. Only in effect when `vision:` is "
+        "configured.",
+        validate=_text(1, 120),
+        apply_hook=_apply_vision_model,
     ),
     SettingSpec(
         key="llm.options.temperature",
@@ -333,6 +471,44 @@ SETTINGS: tuple[SettingSpec, ...] = (
         apply_hook=_apply_approval_ttl,
     ),
     SettingSpec(
+        key="demo.enabled",
+        path=("demo", "enabled"),
+        label="Demo mode",
+        group="House",
+        type="boolean",
+        default=True,
+        note="The fixture house — fake lights, a lock, a garage door, sensors, a vacuum — for "
+        "trying Jarvis with no hardware. Off removes them at once; a real house wants it off.",
+        validate=_bool,
+        apply_hook=_apply_demo_enabled,
+    ),
+    SettingSpec(
+        key="llm.address",
+        path=("llm", "address"),
+        label="Form of address",
+        group="Assistant",
+        type="string",
+        note="What Jarvis calls you — Sir, Ma'am, a name — whoever is speaking. "
+        "\"none\" for no title at all.",
+        validate=_text(1, 40),
+        apply_hook=_apply_agent_attr("address"),
+    ),
+    SettingSpec(
+        key="llm.question_ttl",
+        path=("llm", "question_ttl"),
+        label="Question expiry",
+        group="Assistant",
+        type="number",
+        # Its own clock (M66): a question waits on a fact the person may have
+        # to walk to the console for; an approval waits on a yes. The
+        # operator's held question was answered after five minutes and told
+        # "expired" — this is the number that decides that.
+        note="Seconds a question the assistant asks waits for an answer before it "
+        "lapses. Longer than approval expiry: a person may be away from the console.",
+        validate=_number(30, 7200),
+        apply_hook=_apply_question_ttl,
+    ),
+    SettingSpec(
         key="llm.timeout",
         path=("llm", "timeout"),
         label="Model timeout",
@@ -371,6 +547,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Units",
         group="House",
         type="choice",
+        note="Metric or imperial: how temperatures and distances are shown and spoken.",
         validate=_one_of("metric", "imperial"),
         choices_hook=lambda jarvis: ["metric", "imperial"],
     ),
@@ -380,6 +557,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Currency",
         group="House",
         type="choice",
+        note="ISO 4217 code (GBP, EUR, USD) for anything priced.",
         validate=_text(3, 3),
         choices_hook=lambda jarvis: list(_CURRENCIES),
     ),
@@ -389,6 +567,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Country",
         group="House",
         type="choice",
+        note="ISO 3166 code (GB, US, DE): holiday calendars and regional defaults.",
         validate=_text(2, 2),
         choices_hook=lambda jarvis: list(_COUNTRIES),
     ),
@@ -398,6 +577,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Language",
         group="House",
         type="choice",
+        note="The language the assistant replies in, as a two-letter code.",
         validate=_text(2, 10),
         choices_hook=lambda jarvis: list(_LANGUAGES),
     ),
@@ -439,6 +619,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Log level",
         group="House",
         type="choice",
+        note="How much Jarvis writes to its log: debug for everything, error for only what broke.",
         validate=_one_of("debug", "info", "warning", "error"),
         apply_hook=_apply_log_level,
         choices_hook=lambda jarvis: ["debug", "info", "warning", "error"],
@@ -450,6 +631,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Speech language",
         group="Voice",
         type="choice",
+        note="The language speech is recognised and spoken in, as a two-letter code.",
         validate=_text(2, 10),
         apply_hook=_apply_voice_attr("language"),
         choices_hook=lambda jarvis: list(_LANGUAGES),
@@ -466,6 +648,38 @@ SETTINGS: tuple[SettingSpec, ...] = (
         validate=_text(1, 80),
         apply_hook=_apply_voice_attr("tts_voice"),
         choices_hook=lambda jarvis: _voice_catalogue(jarvis, "tts_voices"),
+    ),
+    SettingSpec(
+        key="voice.tts.length_scale",
+        path=("voice", "tts", "length_scale"),
+        label="Pace (Piper length scale)",
+        group="Voice",
+        type="number",
+        # Restart, and not Jarvis's: Piper takes its length scale at START,
+        # from PIPER_LENGTH_SCALE in .env, which docker-compose.yml hands to
+        # the wyoming-piper container. The configured value is read here so
+        # the screen can say what the house speaks at; the note says the one
+        # thing that makes the number true, or the row would promise a change
+        # the next reply does not make (the operator's 26 Aug 2026 ask).
+        apply=APPLY_RESTART,
+        note="A duration multiplier: 1.0 is the voice's own pace, 0.9 a tenth "
+        "quicker. Piper takes it at start — set PIPER_LENGTH_SCALE in .env to "
+        "the same number and restart wyoming-piper; with a Kokoro engine use "
+        "`speed:` instead.",
+        validate=_number(0.5, 1.5),
+    ),
+    SettingSpec(
+        key="voice.speaker.mode",
+        path=("voice", "speaker", "mode"),
+        label="Who may speak",
+        group="Voice",
+        type="choice",
+        note="off: anyone. observe: Jarvis says who spoke and answers everyone. enforce: a "
+        "voice that is not enrolled is refused. Choose it any time; it takes effect once a "
+        "voice is enrolled.",
+        validate=_one_of("off", "observe", "enforce"),
+        apply_hook=_apply_speaker_mode,
+        choices_hook=lambda jarvis: ["off", "observe", "enforce"],
     ),
     SettingSpec(
         key="voice.wake_word",
@@ -495,6 +709,86 @@ def spec_for(key: str) -> SettingSpec:
     if spec is None:
         raise SettingsError(f"{key!r} is not an editable setting.")
     return spec
+
+
+def _words(text: str) -> str:
+    """Lower-cased, with the separators a person or a model might use folded
+    to spaces, so `voice.tts_voice`, "TTS voice" and "tts-voice" compare equal."""
+    return " ".join(text.replace(".", " ").replace("_", " ").replace("-", " ").lower().split())
+
+
+def matching_settings(name: Any) -> list[SettingSpec]:
+    """Every spec `name` could mean, in registry order.
+
+    The exact key alone when it is one. Otherwise the specs whose label or
+    last path segment is the name — "temperature" is `llm.options.temperature`,
+    "wake word" is `voice.wake_word` — because that is how a person asks for a
+    setting and a model repeats it. Never a prefix or substring match: "mod"
+    is not a setting, and a match that loose would let a model change a
+    setting nobody named.
+
+    Still membership in `SETTINGS`, never a path the caller composed: a name
+    that matches nothing is not an editable setting, whatever the config file
+    contains under it.
+    """
+    text = str(name if name is not None else "").strip()
+    if not text:
+        return []
+    spec = SETTINGS_BY_KEY.get(text)
+    if spec is not None:
+        return [spec]
+    wanted = _words(text)
+    if not wanted:
+        return []
+    return [
+        candidate
+        for candidate in SETTINGS
+        if wanted in (_words(candidate.label), _words(candidate.path[-1]), _words(candidate.key))
+    ]
+
+
+def resolve_setting(name: Any) -> SettingSpec | None:
+    """The ONE spec `name` means, or None.
+
+    None for nothing and None for more than one: "model" names three settings
+    (`llm.model`, `llm.fast_model`, `vision.model`), and picking one of them
+    silently would change a setting nobody asked about. A caller that wants
+    to say which ones asks `matching_settings`.
+    """
+    matches = matching_settings(name)
+    return matches[0] if len(matches) == 1 else None
+
+
+def nearest_settings(name: Any, limit: int = 5) -> list[str]:
+    """The keys closest to `name`, best first, for a refusal to name.
+
+    "There is no setting called demo mode" is a dead end; "…the nearest are
+    llm.model, voice.wake_word" is something the next sentence can use. Scored
+    on words shared with the key, the label and the note, then on string
+    similarity to the key and the label, so "think" finds a note that mentions
+    thinking before a key that happens to share three letters. Deterministic —
+    ties fall back to registry order — because the sentence is repeated to a
+    person and must not change between two calls.
+    """
+    import difflib
+
+    wanted = _words(str(name if name is not None else ""))
+    if not wanted:
+        return [spec.key for spec in SETTINGS[:limit]]
+    wanted_words = set(wanted.split())
+    scored: list[tuple[float, int, str]] = []
+    for index, spec in enumerate(SETTINGS):
+        haystack = f"{_words(spec.key)} {_words(spec.label)} {_words(spec.note)}"
+        shared = len(wanted_words & set(haystack.split()))
+        similarity = max(
+            difflib.SequenceMatcher(None, wanted, _words(spec.key)).ratio(),
+            difflib.SequenceMatcher(None, wanted, _words(spec.label)).ratio(),
+        )
+        # A shared word outweighs any amount of letter overlap: "wake word"
+        # must find `voice.wake_word` before anything that merely looks alike.
+        scored.append((shared * 10 + similarity, -index, spec.key))
+    scored.sort(reverse=True)
+    return [key for _score, _order, key in scored[: max(1, limit)]]
 
 
 # --- the overlay ------------------------------------------------------------
@@ -662,7 +956,7 @@ class SettingsOverlay:
                     "type": spec.type,
                     "apply": spec.apply,
                     "note": spec.note,
-                    "value": self.values.get(spec.key, yaml_value),
+                    "value": _as_shown(spec, self.values.get(spec.key, yaml_value)),
                     "yaml_value": yaml_value,
                     "source": source,
                     "unapplied_reason": unapplied.get(spec.key),

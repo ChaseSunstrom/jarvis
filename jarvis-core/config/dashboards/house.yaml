@@ -1,0 +1,57 @@
+# The house at a glance, and the dashboard a fresh install opens on.
+#
+# Read-only: this ships with Jarvis, is owned by nobody, and appears for every
+# token. `order: 0` puts it ahead of the Homelab example, whose graphs are the
+# machine rather than the house. Copy it in the console (+ Widget on one you
+# own) to point the tiles at your own devices.
+#
+# Nothing here names a device nobody owns. The entity tile is the sun, which
+# every installation with `sun:` has; the readings, the camera, the sky and the
+# moments each draw whatever this house has — and when it has none, the widget
+# says what would be there and how it gets there, rather than drawing nothing.
+id: house
+title: House
+order: 0
+range: 24h
+widgets:
+  - id: sun
+    title: The sun
+    kind: entity
+    entity: sun.sun
+    x: 0
+    y: 0
+    w: 3
+    h: 2
+
+  - id: sky
+    title: Tonight
+    kind: sky
+    x: 3
+    y: 0
+    w: 3
+    h: 2
+
+  - id: camera
+    title: Camera
+    kind: camera
+    x: 6
+    y: 0
+    w: 6
+    h: 3
+
+  - id: readings
+    title: Readings
+    kind: readings
+    x: 0
+    y: 2
+    w: 6
+    h: 3
+
+  - id: moments
+    title: Moments
+    kind: moments
+    limit: 6
+    x: 6
+    y: 3
+    w: 6
+    h: 2

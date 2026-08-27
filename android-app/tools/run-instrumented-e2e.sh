@@ -154,6 +154,12 @@ sed 's/\x1b\[[0-9;]*m//g' artifacts/gradle-connected.log 2>/dev/null \
 if [ -s "${FAILURES}" ]; then
   echo "----- failing tests -----"
   cat "${FAILURES}"
+  # One annotation per failing test. The job log needs a token to read and
+  # the artifacts a browser; the check run's annotations are on the public
+  # API, and a run that says only "gradle exit 1" cannot be reproduced.
+  grep -E '^ai\.jarvis\.app\..* > .* FAILED' "${FAILURES}" | head -n 25 | while IFS= read -r line; do
+    echo "::error::${line}"
+  done
 fi
 
 if [ "${status}" != "0" ]; then
@@ -247,6 +253,13 @@ fi
 # --- logs -------------------------------------------------------------------
 adb logcat -d -v time > artifacts/logcat.txt 2>&1 || true
 adb logcat -b crash -d -v time > artifacts/logcat-crash.txt 2>&1 || true
+# The first crash, as an annotation too: a suite with no screenshots at all
+# is usually an app that died at launch, and "gradle exit 1" does not say so.
+if grep -q "FATAL EXCEPTION" artifacts/logcat-crash.txt 2>/dev/null; then
+  grep -m1 -A 8 "FATAL EXCEPTION" artifacts/logcat-crash.txt | head -n 9 | while IFS= read -r line; do
+    echo "::error::crash: ${line}"
+  done
+fi
 adb shell dumpsys package ai.jarvis.app > artifacts/dumpsys-package.txt 2>&1 || true
 
 # WHAT THE APP SAID DURING THE TEST THAT FAILED, in the job log.

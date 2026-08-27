@@ -82,6 +82,16 @@ def _clip(value: Any, limit: int = MAX_FIELD_CHARS) -> str:
     return text
 
 
+def _excerpt(text: str, needle: str, width: int = 160) -> str:
+    """The matched line, with enough either side to recognise it."""
+    where = text.lower().find(needle)
+    if where < 0:
+        return _clip(text, width)
+    start = max(0, where - width // 3)
+    piece = text[start : start + width].strip()
+    return ("…" if start else "") + piece + ("…" if start + width < len(text) else "")
+
+
 def _title_from(text: str) -> str:
     """A conversation's name, taken from the first thing that was said in it."""
     line = " ".join(str(text or "").split())
@@ -132,6 +142,8 @@ class ArchivedTurn:
     #: Only ever on an assistant turn.
     thinking: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    #: Only ever on a user turn: who the voice gate recognised (M100), or "".
+    speaker: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -139,6 +151,8 @@ class ArchivedTurn:
             "content": self.content,
             "timestamp": self.timestamp,
         }
+        if self.speaker:
+            out["speaker"] = self.speaker
         if self.thinking:
             out["thinking"] = self.thinking
         if self.tool_calls:
@@ -159,6 +173,7 @@ class ArchivedTurn:
             timestamp=float(raw.get("timestamp") or time.time()),
             thinking=_clip(raw.get("thinking")),
             tool_calls=[c for c in (calls or []) if isinstance(c, dict)][:MAX_TOOL_CALLS],
+            speaker=str(raw.get("speaker") or "")[:64] if role == "user" else "",
         )
 
     def as_message(self) -> dict[str, str]:
@@ -309,6 +324,7 @@ class ConversationArchive:
         tool_calls: Any = None,
         thinking: str = "",
         title: str = "",
+        speaker: str = "",
     ) -> ArchivedConversation | None:
         """Append one finished exchange. Never raises.
 
@@ -332,7 +348,7 @@ class ConversationArchive:
             conversation.title = _title_from(title)
 
         if user_text:
-            conversation.add(ArchivedTurn("user", user_text), self.max_turns)
+            conversation.add(ArchivedTurn("user", user_text, speaker=str(speaker or "")[:64]), self.max_turns)
         if assistant_text or tool_calls:
             conversation.add(
                 ArchivedTurn(
@@ -376,6 +392,48 @@ class ConversationArchive:
     def listing(self) -> list[dict[str, Any]]:
         """Every conversation as a summary row, most recent first."""
         return [c.summary() for c in self._sorted()]
+
+    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Conversations containing `query`, newest first, with the line that matched.
+
+        Plain substring matching over the archived turns, not an index. The
+        archive is bounded (`max_conversations` × `max_turns`) and lives in
+        memory already, so a search across all of it is a few milliseconds —
+        and an FTS index here would be a second store to keep in step with the
+        JSON file that is the actual record.
+
+        The MATCH is what makes this useful rather than a list of ids: a person
+        searching for "blue tin" wants to see the sentence, and the id it
+        belongs to is what they click.
+        """
+        needle = " ".join(str(query or "").split()).lower()
+        if not needle:
+            return []
+        out: list[dict[str, Any]] = []
+        for conversation in sorted(
+            self._conversations.values(), key=lambda c: c.last_active, reverse=True
+        ):
+            hits: list[dict[str, Any]] = []
+            for turn in conversation.turns:
+                if needle in turn.content.lower():
+                    hits.append(
+                        {
+                            "role": turn.role,
+                            "timestamp": turn.timestamp,
+                            "excerpt": _excerpt(turn.content, needle),
+                        }
+                    )
+                if len(hits) >= 3:
+                    break
+            if not hits:
+                continue
+            summary = conversation.summary()
+            summary["matches"] = hits
+            summary["match_count"] = len(hits)
+            out.append(summary)
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
 
     def messages(self, conversation_id: str, limit: int = 0) -> list[dict[str, str]]:
         """A reopened conversation as prompt messages, oldest last.

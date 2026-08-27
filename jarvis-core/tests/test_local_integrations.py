@@ -1226,3 +1226,73 @@ async def test_template_sensor_reads_demo_entity(tmp_path):
     jarvis.entity_object("sensor.outside_temperature").set_value(20.0)
     assert jarvis.states.get("sensor.feels_like").state == "14.6"
     await shutdown(jarvis)
+
+
+async def test_rest_bearer_authenticates_a_readout(tmp_path):
+    """The readout that called the model server down while it was answering.
+
+    A token from `!env_var` or `!secret` arrives verbatim, and YAML has no way
+    to prepend a word to it — so a sensor pointed at anything behind a key had
+    no way to send `Authorization: Bearer …`. The shipped `/v1/models` readout
+    polled the model gateway every thirty seconds with no header at all,
+    earned a 401 every time, and reported the model server DOWN while the
+    assistant was talking to it through the same URL.
+    """
+    jarvis = await make_jarvis(tmp_path, with_domains=True)
+    requests: list[httpx.Request] = []
+    jarvis.data["rest"] = {"transport": _rest_transport(requests)}
+
+    await rest_setup(
+        jarvis,
+        [
+            {
+                "resource": "http://gateway.test/status",
+                "bearer": "sk-litellm-1234",
+                "sensor": [{"name": "Gateway", "value_template": "{{ value_json.power }}"}],
+            }
+        ],
+    )
+    await jarvis.entity_object("sensor.gateway").async_update_state()
+    assert requests, "nothing was polled"
+    assert requests[0].headers.get("authorization") == "Bearer sk-litellm-1234"
+
+
+async def test_rest_bearer_never_overrides_an_explicit_header(tmp_path):
+    """`bearer:` is a convenience. An operator who wrote the header meant it."""
+    jarvis = await make_jarvis(tmp_path, with_domains=True)
+    requests: list[httpx.Request] = []
+    jarvis.data["rest"] = {"transport": _rest_transport(requests)}
+
+    await rest_setup(
+        jarvis,
+        [
+            {
+                "resource": "http://gateway.test/status",
+                "bearer": "sk-from-bearer",
+                "headers": {"Authorization": "Token sk-explicit"},
+                "sensor": [{"name": "Gateway", "value_template": "{{ value_json.power }}"}],
+            }
+        ],
+    )
+    await jarvis.entity_object("sensor.gateway").async_update_state()
+    assert requests[0].headers.get("authorization") == "Token sk-explicit"
+
+
+async def test_rest_an_empty_bearer_sends_no_header(tmp_path):
+    """A bare llama-swap or Ollama gets no Authorization at all."""
+    jarvis = await make_jarvis(tmp_path, with_domains=True)
+    requests: list[httpx.Request] = []
+    jarvis.data["rest"] = {"transport": _rest_transport(requests)}
+
+    await rest_setup(
+        jarvis,
+        [
+            {
+                "resource": "http://plain.test/status",
+                "bearer": "",
+                "sensor": [{"name": "Plain", "value_template": "{{ value_json.power }}"}],
+            }
+        ],
+    )
+    await jarvis.entity_object("sensor.plain").async_update_state()
+    assert "authorization" not in {k.lower() for k in requests[0].headers}
