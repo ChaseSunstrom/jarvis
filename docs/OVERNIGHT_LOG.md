@@ -1174,3 +1174,10 @@ is quiet. Done since:
   notice back in the main window; desktop e2e 6/6. The memory gate: the operator's profile (BLOCKERS) and one judge
   wording. Reds still to read as the run reaches them. A push loop now follows every CI wave; the twenty-third
   rebuilds the desktop package as well before its gates.
+- 18:20 UTC — verify-all on the twenty-first, gates 19–24: research red on the spoken briefing — the handbook's warranty
+  PDF was held as "composed" because the page carried the link relative (`href="warranty.pdf"`) and the model fetched it
+  resolved; a URL the turn saw by path or last segment counts as shown now, a query token from nowhere never does
+  (fff1a00). Subagents red on delegation-across-backends — run_background_task AND start_coding_job in one round with
+  the lead on offer, eight fetches by hand; a round like that is handed back once, unexecuted, with a note to make one
+  lead (the scripted-model test drives it). M23's own gate lists the six unticked as expected: M56, M77, M100 (the
+  operator's), M108, M111, M114 (the twenty-third's). 16 pass / 9 fail at gate 25.

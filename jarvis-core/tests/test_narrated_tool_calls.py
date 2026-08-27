@@ -72,7 +72,7 @@ class _Stream:
     the narrated call was hiding in the reported bug.
     """
 
-    def __init__(self, text: str = "", thinking: str = "", call=None) -> None:
+    def __init__(self, text: str = "", thinking: str = "", call=None, calls=None) -> None:
         self._text = text
         self._thinking = thinking
         self.on_thinking = None
@@ -80,7 +80,7 @@ class _Stream:
             content=text,
             role="assistant",
             thinking=thinking,
-            tool_calls=[call] if call else [],
+            tool_calls=list(calls) if calls else ([call] if call else []),
         )
 
     def __aiter__(self):
@@ -484,3 +484,50 @@ def test_a_report_that_something_is_running_is_not_a_claim_of_calling_it():
     # A bare participle with no modal in front of it still is one.
     assert narrated_tool_call("Now calling code_task.", NAMES) == "code_task"
     assert narrated_tool_call("I called code_task for you.", NAMES) == "code_task"
+
+
+
+async def test_two_jobs_started_by_hand_are_handed_back_for_one_lead(jarvis):
+    """Rule 4, enforced once: verify-all's subagents slice on the twenty-first
+    house (27 Aug 2026) had run_background_task AND start_coding_job in one
+    round with delegate_to_agents on offer. The round is handed back
+    unexecuted with a note; the next round makes the one lead."""
+    started: list[str] = []
+    registry = ToolRegistry(jarvis, exposure=Exposure())
+
+    def _starter(name):
+        async def _handler(args, context=None):
+            started.append(name)
+            return {"status": "started", "task_id": name}
+        return _handler
+
+    for name in ("run_background_task", "start_coding_job", "delegate_to_agents"):
+        registry.register(
+            name=name,
+            description=f"{name} for the test",
+            parameters=schema_object({"description": {"type": "string"}}, []),
+            handler=_starter(name),
+        )
+    client = _Scripted(
+        _Stream(
+            text="",
+            calls=[
+                ToolCall(name="run_background_task", arguments={"description": "read the handbook"}, id="a1"),
+                ToolCall(name="start_coding_job", arguments={"description": "run the tests"}, id="a2"),
+            ],
+        ),
+        _Stream(text="", call=ToolCall(name="delegate_to_agents", arguments={"description": "both"}, id="a3")),
+        _Stream(text="Under way, Sir — the handbook and the tests, one lead."),
+    )
+    agent = ConversationAgent(jarvis, client, registry)
+    said = await _say(agent, "Two things at once: read the handbook, and run the tests.")
+    assert "one lead" in said
+    assert started == ["delegate_to_agents"], started
+    note = [
+        m
+        for round_messages in client.messages
+        for m in round_messages
+        if m.get("role") == "user" and "two jobs at once" in str(m.get("content"))
+    ]
+    assert note, "the model was never told to make one lead of the two"
+    assert [c["name"] for c in agent.last_result.tool_calls] == ["delegate_to_agents"]

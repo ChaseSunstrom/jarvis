@@ -389,6 +389,8 @@ class ConversationResult:
     #: True when the model asked for reasoning on this turn. Also the flag the
     #: remaining rounds read — see `THINK_TOOL_NAME`.
     escalated: bool = False
+    #: Set once a round was handed back for one lead (two jobs by hand, rule 4).
+    lead_nudged: bool = False
     #: Which remembered notes went into this turn's system prompt, by id.
     #:
     #: The answer to "why did it say that?", and the only honest one: a model
@@ -2003,6 +2005,36 @@ class ConversationAgent:
         emit: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         emit = emit or self._turn_emitter(None)
+        # Two jobs started by hand in one round, with a lead on offer, is the
+        # pieces done by hand (rule 4): verify-all's subagents slice on the
+        # twenty-first house (27 Aug 2026) had run_background_task AND
+        # start_coding_job in one breath, eight fetches, and no lead anyone
+        # could follow. Once per turn the round is handed back unexecuted.
+        names = [str(call.name or "") for call in chat_result.tool_calls]
+        starters = {name for name in names if name in JOB_STARTERS}
+        if (
+            len(starters) >= 2
+            and DELEGATE_TOOL not in names
+            and DELEGATE_TOOL in self.tools.names()
+            and not getattr(result, "lead_nudged", False)
+        ):
+            result.lead_nudged = True
+            _LOGGER.info("Two jobs started by hand (%s) with %s offered; asking for one lead", ", ".join(sorted(starters)), DELEGATE_TOOL)
+            emit("tool_lead_nudged", {"jobs": sorted(starters), "round": result.rounds})
+            if chat_result.content:
+                messages.append(self._assistant_message_text(chat_result.content))
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"That is two jobs at once ({', '.join(sorted(starters))}). Do not start them "
+                        f"yourself: call {DELEGATE_TOOL} ONCE with both as its pieces, so there is one "
+                        "lead the person can follow, then acknowledge in one sentence naming the "
+                        "pieces. Nothing you just asked for was started."
+                    ),
+                }
+            )
+            return
         messages.append(self._assistant_message(chat_result))
         total = len(chat_result.tool_calls)
         for index, call in enumerate(chat_result.tool_calls):
@@ -2410,6 +2442,11 @@ _ACTION_REQUEST = re.compile(
     r"do the same|the same (?:for|with|to))\b",
     re.IGNORECASE,
 )
+#: The tools that start a job of their own. Two of these in one round, with
+#: the lead on offer, is what `_execute_tool_calls` hands back (rule 4).
+JOB_STARTERS = frozenset({"run_background_task", "start_coding_job", "deep_research", "code_task"})
+DELEGATE_TOOL = "delegate_to_agents"
+
 _ACTION_CLAIMED = re.compile(
     # "is off", "is now locked", "has been cancelled", "have been set": the
     # perfect forms were missing, and "The tea timer has been cancelled, Sir."
