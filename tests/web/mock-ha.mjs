@@ -3046,6 +3046,10 @@ index 1234567..89abcde 100644
 				}
 
 				// --- memory --------------------------------------------------
+				case 'jarvis/memory/reflect':
+					// M87: the day read once; what was new is on the list with source 'learned'.
+					ok(msg.id, { status: 'ok', turns: 2, learned: ['The user has a daughter called Mira, who is allergic to peanuts.'], skipped: [] });
+					break;
 				case 'jarvis/memory/list': {
 					const q = String(msg.query || '').toLowerCase();
 					const rows = memoryEntries.filter(

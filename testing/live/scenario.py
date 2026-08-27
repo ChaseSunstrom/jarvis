@@ -124,6 +124,10 @@ class Turn:
     #: stack ground that is `docker restart jarvis-core`; on the harness it is
     #: the process. Both answer the same question: what survived?
     restart: bool = False
+    #: The night happens before this turn: `memory.reflect` is called on the
+    #: house (M87), the way `restart` is a real restart. What survived, what was
+    #: learned — both are questions about the house, not the scenario.
+    reflect: bool = False
     #: Stop a container before this turn and bring it back at the end of the
     #: scenario. Stack ground only — there is nothing to kill on a harness.
     kill: str = ""
@@ -224,6 +228,7 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
         sound=sound,
         observe=observe,
         restart=bool(raw.get("restart")),
+        reflect=bool(raw.get("reflect")),
         new_conversation=bool(raw.get("new_conversation")),
         kill=str(raw.get("kill") or ""),
         do=do,

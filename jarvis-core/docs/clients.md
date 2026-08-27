@@ -129,6 +129,7 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/notes/delete` | `note_id`; removes the file |
 | `jarvis/notes/search` | `query` and/or `tag`; full text through SQLite FTS5, with a word-by-word fallback so a query containing punctuation returns notes rather than a syntax error |
 | `jarvis/memory/list` | optional `query`, `tag`, `limit`; every durable note, newest first, or the matches for a query — `{entries: [...], total, query, tag}`. The whole store rather than a page of it: the point of the route is that a person can read what is held about them |
+| `jarvis/memory/reflect` | M87: read the day's conversations once and keep the new durable facts as `learned` — `{status, turns, learned: [...], skipped: [{fact, reason}]}`; a note and a `reflection` card say what was learned; scheduled nightly by `memory: reflect_at`. |
 | `jarvis/memory/add` | `text`, optional `tags`, `pinned`, `allow_untrusted`. The console is a person typing, so it may store what the model may not |
 | `jarvis/memory/forget` | `entry_id` or `query`, or `all: true` for everything **including the vector sidecar** — a store that reported itself empty while an index still ranked the old text would be the least visible kind of broken promise |
 | `jarvis/memory/pin` | `entry_id`, `pinned`; a pinned note keeps its place in the prompt whatever the turn is about |

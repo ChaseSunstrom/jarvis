@@ -927,6 +927,13 @@ class WebSocketHandler:
             limit=int(msg.get("limit") or 200),
         )
 
+    async def _cmd_memory_reflect(self, msg: dict[str, Any]) -> Any:
+        """Reflect on the day now (M87): the console's "what did you learn?" button."""
+        reflection = self.jarvis.data.get("memory_reflection")
+        if reflection is None or not hasattr(reflection, "reflect"):
+            raise ApiError("not_configured", "the memory integration is not set up")
+        return await reflection.reflect()
+
     async def _cmd_memory_add(self, msg: dict[str, Any]) -> Any:
         payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
         return await common.async_memory_add(self.jarvis, payload)
@@ -1450,6 +1457,7 @@ WebSocketHandler._HANDLERS = {
     "jarvis/notes/delete": WebSocketHandler._cmd_notes_delete,
     "jarvis/notes/search": WebSocketHandler._cmd_notes_search,
     "jarvis/memory/list": WebSocketHandler._cmd_memory_list,
+    "jarvis/memory/reflect": WebSocketHandler._cmd_memory_reflect,
     "jarvis/memory/add": WebSocketHandler._cmd_memory_add,
     "jarvis/memory/forget": WebSocketHandler._cmd_memory_forget,
     "jarvis/memory/pin": WebSocketHandler._cmd_memory_pin,

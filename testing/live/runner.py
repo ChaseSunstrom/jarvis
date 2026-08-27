@@ -388,6 +388,13 @@ class Runner:
                         if ground.name == "stack"
                         else None
                     )
+                if turn.reflect:
+                    # The night, on demand (M87): the house reads its day and
+                    # keeps what it learned before the next thing is said.
+                    try:
+                        await observer.client.call_service("memory", "reflect")
+                    except Exception as err:  # noqa: BLE001 - the scenario must say so
+                        raise LiveError(f"memory.reflect failed: {err}") from err
                 if turn.restart:
                     # A background job an earlier scenario started must not be
                     # the thing this restart interrupts: the sensor audit that

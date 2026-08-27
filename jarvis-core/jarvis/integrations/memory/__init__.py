@@ -312,6 +312,8 @@ def _clean_tags(value: Any) -> list[str]:
 MIN_EXTRACTABLE_CHARS = 24
 MIN_FACT_CHARS = 8
 MAX_EXTRACTED_PER_TURN = 3
+#: Forgotten texts kept so a reflection never re-learns them (M87).
+MAX_FORGOTTEN = 200
 
 #: What a sentence worth extracting looks like. First person, stating something
 #: that keeps being true. Deliberately narrow: the cost of a miss is today's
@@ -467,6 +469,7 @@ class MemoryStore:
         self.context_limit = max(0, int(context_limit or 0))
         self.context_entries = max(1, int(context_entries or DEFAULT_CONTEXT_ENTRIES))
         self.entries: list[MemoryEntry] = []
+        self.forgotten: list[str] = []
         #: The ids that went into the most recent context block. See
         #: `get_context_block`; read by `ConversationAgent` as `memory_used`.
         self.last_used: list[str] = []
@@ -489,6 +492,10 @@ class MemoryStore:
                 loaded.append(entry)
         loaded.sort(key=lambda e: e.created)
         self.entries = loaded[-self.max_entries :]
+        # What the user asked to forget, by text, so a reflection (M87) never
+        # learns it back from the day's turns. Bounded; the texts, not the ids.
+        raw_forgotten = (data or {}).get("forgotten") if isinstance(data, dict) else None
+        self.forgotten = [str(t) for t in (raw_forgotten or []) if str(t).strip()][-MAX_FORGOTTEN:]
         # Read the sidecar BEFORE reconciling. Embedding is the expensive part
         # and the sidecar exists precisely so it survives a restart — without
         # this line `is_current` had nothing to compare against, so every boot
@@ -498,8 +505,21 @@ class MemoryStore:
             await self.vectors.async_load()
         await self._async_reindex()
 
+    def _note_forgotten(self, text: str) -> None:
+        plain = one_line(text).lower()
+        if plain and plain not in self.forgotten:
+            self.forgotten.append(plain)
+            del self.forgotten[:-MAX_FORGOTTEN]
+
+    def was_forgotten(self, text: str) -> bool:
+        """Did the user ask to forget this, or something it plainly restates?"""
+        plain = one_line(text).lower()
+        if not plain:
+            return False
+        return any(plain == gone or plain in gone or gone in plain for gone in self.forgotten)
+
     async def async_save(self) -> None:
-        await self.store.save({"entries": [e.as_dict() for e in self.entries]})
+        await self.store.save({"entries": [e.as_dict() for e in self.entries], "forgotten": self.forgotten})
 
     # --- housekeeping -----------------------------------------------------
     def purge_expired(self, now: float | None = None) -> int:
@@ -649,6 +669,8 @@ class MemoryStore:
 
         if forget_all and not entry_id and not query:
             removed = [e.as_dict() for e in self.entries]
+            for e in self.entries:
+                self._note_forgotten(e.text)
             self.entries = []
             await self.async_save()
             await self._async_reindex()
@@ -660,6 +682,7 @@ class MemoryStore:
             if entry is None:
                 return {"forgotten": [], "count": 0, "reason": f"no memory with id {entry_id!r}"}
             self.entries.remove(entry)
+            self._note_forgotten(entry.text)
             await self.async_save()
             await self._async_reindex()
             self._fire("forgotten", entry)
@@ -696,6 +719,7 @@ class MemoryStore:
                 "candidates": [e.as_dict() for e in matches[:5]],
             }
         for entry in matches:
+            self._note_forgotten(entry.text)
             self.entries.remove(entry)
         await self.async_save()
         await self._async_reindex()
@@ -1241,6 +1265,9 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     # The documented hook: the LLM agent reads this and calls
     # `get_context_block()` when it builds its system prompt.
     jarvis.data[DOMAIN] = memory
+    from .reflect import attach as _attach_reflection
+
+    _attach_reflection(jarvis, memory, options)
 
     _register_services(jarvis, memory)
     _register_export_services(jarvis, memory)

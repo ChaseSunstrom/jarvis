@@ -878,3 +878,9 @@ is quiet. Done since:
   asked as a question with Yes and No through companion.ask (the M66 table judges the yes), the offered
   service run only on the yes; the house's lock and garage rules carry theirs and do not wait for
   morning; narrate suite 15 (+4); gate offline 3/5, the two live checks wait for the rebuild.
+- 04:38 — M87 built: `memory.reflect` reads the day's conversations from the archive (never a channel or
+  background thread, never a fenced turn), asks the model once for what is new against what is known, keeps
+  it as `learned` with the day's tag, skips what the user asked to forget (the store now keeps the forgotten
+  texts across reloads) and what is already remembered, and says what it learned in a note and a card;
+  nightly at 03:30 on the house; `jarvis/memory/reflect` for the console; the rig's `reflect: true` turn is
+  the night on demand. Reflection suite 6, memory 20, rig 49; gate 4/6 offline, the live half waits.

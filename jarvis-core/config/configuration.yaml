@@ -457,6 +457,10 @@ llm:
 # a page cannot write itself into Jarvis's long-term memory by asking nicely.
 memory:
   max_entries: 500        # oldest non-pinned notes fall off the end
+  # Overnight reflection (M87): once a night the day's conversations are read
+  # and the few new durable facts kept as "learned", with a note and a card
+  # saying so. Absent means on demand only (`memory.reflect`).
+  reflect_at: "03:30"
   context_limit: 600      # characters of notes injected into the system prompt
   context_entries: 8      # and at most this many of them
 
