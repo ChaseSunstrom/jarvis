@@ -37,3 +37,11 @@ def test_the_rules_say_what_it_means_in_a_follow_up():
     assert '"It", "that", "the same" and "again" in a follow-up mean the thing this' in TOOL_RULES
     assert "Do the opposite of what" in TOOL_RULES
 
+
+def test_an_ambiguous_request_is_a_question_that_names_the_candidates():
+    """"Turn on the light." on the sixteenth house (27 Aug): by voice the model
+    turned on the ceiling lights and said so; typed, it asked "which light?"
+    and named none. The rule says ask, name them, do nothing."""
+    assert "When the words fit more than one thing" in TOOL_RULES
+    assert "NAME the candidates" in TOOL_RULES
+    assert "never pick\n  one, and never say it is done" in TOOL_RULES
