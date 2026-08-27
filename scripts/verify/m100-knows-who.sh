@@ -42,5 +42,5 @@ print("memory-per-person")
 ensure_web_build
 run_playwright "the Memory page: a person on the row, a filter by person" memory.spec.ts
 check_sh "on the house: the rig enrols its voice as Rig, says a preference, and the entry carries the person" \
-    'timeout 1200 bash scripts/verify/live_interaction.sh --full --only memory-per-person --no-browser 2>&1 | grep -v onnxruntime | tail -3'
+    'LIVE_ONLY=memory-per-person timeout 1200 bash scripts/verify/live_interaction.sh --full 2>&1 | grep -v onnxruntime | tail -5'
 verify_end
