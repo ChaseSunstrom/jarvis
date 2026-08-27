@@ -160,7 +160,9 @@
 			<div class="fill" class:failed={failed > 0} style="width: {percent}%"></div>
 		</div>
 
-		<ul>
+		<!-- A list of tool calls is data, not prose: the look rule (and the console
+		     pass) reads `data-mono` as that declaration. -->
+		<ul data-mono>
 			{#each rows as row (row.key)}
 				<li class={row.state} data-testid="tool-row-{row.name}">
 					<i aria-hidden="true"></i>
