@@ -362,6 +362,21 @@ def test_test_my_voice_says_who_it_heard() -> None:
     assert "RECOGNISED AS" in body and "NEAREST:" in body
 
 
+def test_test_my_voice_names_the_block_that_refused_and_shows_the_three() -> None:
+    """M105. The verdict's reason names a block that refused on its own
+    ("pitch-mismatch") and carries the three block scores; the phone says
+    which part of the voice was far, and shows the three in the order the
+    gate weighs them — the console's line, word for word."""
+    src = code(SCREEN)
+    test = re.search(r"private fun submitTest\(.*?\n    \}", src, re.S)
+    assert test, "submitTest is gone"
+    body = test.group(0)
+    assert '"-mismatch"' in body and '"reason"' in body, "a refusing block is not named"
+    assert 'optJSONObject("blocks")' in body, "the block scores are not read"
+    assert '"timbre", "variability", "pitch"' in body, "the blocks are not in the gate's order"
+    assert "Refused on" in body
+
+
 def test_the_document_names_people() -> None:
     text = DOC.read_text(encoding="utf-8")
     assert "?label=" in text, "docs/voice-identity.md does not say a sample is enrolled under a name"

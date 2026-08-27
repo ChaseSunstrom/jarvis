@@ -594,8 +594,20 @@ class VoiceIdentityActivity : Activity() {
             nearest.isNotEmpty() -> "NOT RECOGNISED (NEAREST: ${nearest.uppercase()})"
             else -> "NOT RECOGNISED"
         }
+        // WHICH PART (M105): a block that refused on its own names itself in
+        // the reason ("pitch-mismatch"), and the three block scores say which
+        // part of the voice the gate found far, or near — the same line the
+        // console draws, in the order the gate weighs them.
+        val reason = verdict?.let { textOf(it, "reason") }.orEmpty()
+        val vetoed = if (reason.endsWith("-mismatch")) reason.removeSuffix("-mismatch") else ""
+        val blocks = verdict?.optJSONObject("blocks")
+        val blockLine = listOf("timbre", "variability", "pitch")
+            .filter { blocks?.has(it) == true }
+            .joinToString(" · ") { String.format("%s %.2f", it, blocks!!.optDouble(it)) }
         detailView.text = buildString {
             append(String.format("score %.2f against threshold %.2f", score, threshold))
+            if (vetoed.isNotEmpty()) append("\nRefused on $vetoed: that part of the voice is far from the enrolment.")
+            if (blockLine.isNotEmpty()) append("\n$blockLine")
             append(if (blocked) "\nWith enforcement on, that turn would have been refused."
                    else "\nThat turn would have been allowed.")
             if (!accepted && !blocked) {
