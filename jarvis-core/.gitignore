@@ -1,3 +1,8 @@
 
 # The sky integration's cache (M58): a 17 MB ephemeris and the element files, downloaded, never committed.
 config/sky/
+
+# Notes the house writes (the notes integration, the nightly reflection, the rig’s
+# scenarios). Data, not configuration: two of them reached the tree on 27 Aug 2026
+# and a live run’s restore then showed them as deleted.
+config/notes/*.md
