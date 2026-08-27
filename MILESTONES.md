@@ -1422,13 +1422,15 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the tablet in the kitchen through the registry entry M99 keeps) — scenario `in-here-by-voice`, run by
     the gate's new live slice from the sixteenth rebuild on.
 
-- [ ] **M95 — Jarvis reads its own record** · size S · deps M17, M44 · parallel-ok M94, M96
+- [x] **M95 — Jarvis reads its own record** · size S · deps M17, M44 · parallel-ok M94, M96
   - Scope: `recent_moments` (the inbox: what Jarvis told you while you were out) and
     `explain_last_turn` (the tools and remembered notes the previous turn actually used, from the
     trace — never reconstructed) as Tier-1 tools; `memory_used` written into the trace; finished
     work *speaks* through `companion.notify` when the request said "tell me when it is done".
     Scenario `explain-yourself`.
   - Verify: `bash scripts/verify/m95-reads-its-own-record.sh`
+  - 27 Aug 12:19: ticked — gate 5/5 on the seventeenth's house (the 11:45 image): "why did you say that?" answered from
+    the trace, and "what have you told me?" from the notifications record, the reminder among the record's other entries.
 - [x] **M96 — Stop means stop** · size S · deps M24, M44 · parallel-ok M95, M97
   - Scope: an `assist_pipeline/stop` command ends the model round and the speech at the server
     (barge-in today only drops the client's socket); the run ends `interrupted` and the trace

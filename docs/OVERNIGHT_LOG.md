@@ -1065,3 +1065,4 @@ is quiet. Done since:
   does not read (a `reply_means` one level too shallow had loaded silently). CI's core leg: red again with nothing on
   the check run even with the tail annotation — the job log needs a token (BLOCKERS); the changed files pass under 3.12
   here (472), the full run is in progress.
+- 12:19 UTC — M95 ticked: 5/5 on the seventeenth's house (explain-yourself from the trace, what-did-you-tell-me from the record).
