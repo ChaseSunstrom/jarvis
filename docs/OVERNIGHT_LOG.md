@@ -948,3 +948,9 @@ is quiet. Done since:
   counts 87 pytest checks across the gates that still read the exit status — the conversion script is
   ready and runs once verify-all has stopped sourcing the gates. The fifteenth's launcher now runs every
   planned milestone's gate on the rebuilt house after the quiet pass.
+- 06:29 — CI on 17e9123 red twice for tonight's making: the M86 no-answer test had asked for two questions
+  from a sequence the narrator answers once (an entity's first state is not a change, and the second unlock
+  fell inside the per-entity debounce) — it starts from a known lock now, 400 s apart (sensors 199); the
+  reactor-motion mirror reads the first breath of the phone's onBusEvent and the M98 hook had pushed the
+  iris out (moved below the rows); the register said the prompt mirror had 19 checks, M98's made it 20.
+  The dashboards kind-picker spec passes alone 15 times running; its gate reds are load.

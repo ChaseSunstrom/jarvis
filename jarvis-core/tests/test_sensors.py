@@ -1838,10 +1838,16 @@ async def test_an_offer_is_asked_with_the_notice_and_a_yes_runs_it(jarvis):
 
 async def test_a_no_or_no_answer_leaves_the_house_as_it_was(jarvis):
     lock = FakeLock(jarvis)
-    _manager, companion = await narrate_setup(jarvis, {**LOCK_RULE, "min_interval": 0}, answers=["No", ""])
-    await flip(jarvis, "lock.back_door", "unlocked", {"friendly_name": "Back Door"})
-    await flip(jarvis, "lock.back_door", "locked", {"friendly_name": "Back Door"})
-    await flip(jarvis, "lock.back_door", "unlocked", {"friendly_name": "Back Door"})
+    # A clock that steps 400 s between reads: the second unlock must fall outside the
+    # rule's per-entity debounce (min_interval, 300 s by default), or it is one question.
+    _manager, companion = await narrate_setup(jarvis, LOCK_RULE, clock=Ticker(step=400.0), answers=["No", ""])
+    # First seen is not a change (the narrator ignores an entity's first state
+    # unless the rule says on_startup), so the lock is locked before it is
+    # found unlocked — twice, 400 s apart, past the per-entity debounce.
+    await flip(jarvis, "lock.side_door", "locked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "unlocked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "locked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "unlocked", {"friendly_name": "Side Door"})
     assert len(companion.questions) == 2
     assert lock.calls == []
     reasons = [e.reason for e in jarvis.data["narrate"].history if e.offer]
@@ -1851,8 +1857,8 @@ async def test_a_no_or_no_answer_leaves_the_house_as_it_was(jarvis):
 async def test_without_an_ask_service_the_offer_is_a_notice(jarvis):
     lock = FakeLock(jarvis)
     _manager, companion = await narrate_setup(jarvis, LOCK_RULE)
-    await flip(jarvis, "lock.back_door", "locked", {"friendly_name": "Back Door"})
-    await flip(jarvis, "lock.back_door", "unlocked", {"friendly_name": "Back Door"})
+    await flip(jarvis, "lock.garden_door", "locked", {"friendly_name": "Garden Door"})
+    await flip(jarvis, "lock.garden_door", "unlocked", {"friendly_name": "Garden Door"})
     assert len(companion.messages) == 1 and lock.calls == []
 
 
