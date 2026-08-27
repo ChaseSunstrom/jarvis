@@ -207,6 +207,13 @@ def ticked_milestones(ledger: Path | None = None) -> set[str]:
     return _TICKED
 
 
+#: Every key a turn may carry. Anything else is refused at load, not ignored.
+TURN_KEYS = frozenset({
+    "say", "sound", "audio", "observe", "wait", "expect", "do", "restart", "stop_after",
+    "reflect", "review", "new_conversation", "kill",
+})
+
+
 def _turn(raw: Any, index: int, name: str) -> Turn:
     if not isinstance(raw, dict):
         raise ValueError(f"{name}: turn {index} is not a mapping")
@@ -221,6 +228,17 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
     do = raw.get("do") or {}
     if not isinstance(do, dict):
         raise ValueError(f"{name}: turn {index}'s do is not a mapping")
+    # A key the rig does not read is a promise nobody keeps. `reply_means`
+    # indented one level too shallow sat on a turn instead of its `expect`,
+    # loaded without a word, and the scenario judged nothing (27 Aug 2026);
+    # an expectation typo has been refused since M25 — a turn typo is now.
+    unknown_turn = set(raw) - TURN_KEYS
+    if unknown_turn:
+        raise ValueError(
+            f"{name}: turn {index} has key(s) the rig does not read: "
+            f"{', '.join(sorted(unknown_turn))} (known: {', '.join(sorted(TURN_KEYS))}). "
+            "An expectation belongs under `expect:`; an action under `do:`."
+        )
     unknown_do = set(do) - {"extension", "mqtt_publish", "fixture_write", "states"}
     if unknown_do:
         raise ValueError(

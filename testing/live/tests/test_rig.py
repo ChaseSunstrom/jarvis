@@ -104,6 +104,20 @@ def test_a_typo_in_an_expectation_is_an_error_not_a_silent_pass():
         Expectation({"reply_contian": "hello"})
 
 
+def test_a_key_at_the_wrong_level_of_a_turn_is_refused(tmp_path):
+    """`reply_means` one level too shallow — on the turn, not its `expect` —
+    loaded silently and judged nothing (27 Aug 2026). A turn key the rig does
+    not read is refused at load, and the error says where it belongs."""
+    path = tmp_path / "shallow.yaml"
+    path.write_text(
+        "name: shallow\ncapability: answer\nturns:\n"
+        "  - say: hello\n    reply_means: says hello\n    expect: {reply_contains: hello}\n"
+    )
+    with pytest.raises(ValueError) as caught:
+        load_scenario(path)
+    assert "reply_means" in str(caught.value) and "under `expect:`" in str(caught.value)
+
+
 def test_every_shipped_scenario_loads():
     scenarios = load_all()
     assert scenarios, "no scenarios"
