@@ -1817,6 +1817,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     operator's exact folder among the cases), the switch set before ready from node_modules under xvfb, a closed port
     drawing the notice page in its own window, the packaged binary rebuilt and started from the folder naming the URL
     it tried, and the README saying so.
+  - 27 Aug 17:50: corrected after verify-all's desktop gate — with the process sandbox off, Electron 33's renderer
+    dies with its own sandbox still on (exit 5 on any page); `PROCESS_SANDBOX_OFF` now decides both, isolation and no
+    node kept, the notice back in the main window. Desktop e2e 6/6 under xvfb; the twenty-fourth's verify-all measures.
 - [ ] **M111 — Tasks on the voice tab are a brief** · size S · deps M76 · parallel-ok M108
   - Scope: the operator's report of 27 Aug 15:19 — "fix the tasks taking up the entire screen on the voice tab and
     causing a scroll; it should just be a simple brief with the task like it was before, on the sides or below the
