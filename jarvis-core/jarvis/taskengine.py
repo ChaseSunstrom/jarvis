@@ -237,7 +237,13 @@ class TaskEngine:
             if item is None:
                 continue
             task = self.registry.get(item.task_id)
-            if task is None or task.finished:
+            if task is None:
+                continue
+            # Finished work is not re-queued — except the one finish a restart
+            # wrote: a job the registry errored as interrupted, whose worker
+            # said it was idempotent, is kept so the block below can pick it up.
+            interrupted = task.status == STATUS_ERROR and task.error == RESTART_ERROR
+            if task.finished and not (interrupted and item.idempotent):
                 continue
             self.queue.append(item)
 
