@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import contextlib
 import json
 import os
@@ -38,6 +39,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 for extra in (REPO_ROOT, REPO_ROOT / "jarvis-core"):
@@ -395,6 +398,35 @@ class Runner:
                 print(f"       · {result.error}", flush=True)
 
     # --- one scenario ------------------------------------------------------
+    def _reset_coding_fixture(self, ground: Any) -> None:
+        """Every coding scenario starts from "the fixture, as it fails".
+
+        The copy is one per run and a job leaves it with a branch and a dirty
+        tree; the second variant of coding-fix-failing-tests on the twentieth
+        house (27 Aug 2026) was refused — "fixture has uncommitted changes" —
+        for the first's leavings. Back to the `fixture` branch, clean, and
+        the job branches gone; best effort, said in the log when it fails.
+        """
+        import subprocess
+
+        code = getattr(ground, "code", None) or {}
+        for repo in code.get("repositories") or []:
+            path = repo.get("path")
+            if not path:
+                continue
+            try:
+                subprocess.run(["git", "checkout", "-qf", "fixture"], cwd=path, check=True, capture_output=True)
+                subprocess.run(["git", "reset", "-q", "--hard"], cwd=path, check=True, capture_output=True)
+                subprocess.run(["git", "clean", "-qfd"], cwd=path, check=True, capture_output=True)
+                branches = subprocess.run(
+                    ["git", "branch", "--list", "jarvis/*", "--format=%(refname:short)"],
+                    cwd=path, check=True, capture_output=True, text=True,
+                ).stdout.split()
+                for branch in branches:
+                    subprocess.run(["git", "branch", "-qD", branch], cwd=path, check=False, capture_output=True)
+            except (subprocess.CalledProcessError, OSError) as err:
+                _LOGGER.warning("could not reset the coding fixture at %s: %s", path, err)
+
     async def _run_scenario(
         self, scenario: Scenario, variant: str, transports: dict[str, Any], ground: Ground
     ) -> ScenarioResult:
@@ -410,6 +442,8 @@ class Runner:
         )
         killed: list[str] = []
         self._approval_cursor = 0
+        if getattr(scenario, "ground", "") == "fixture":
+            self._reset_coding_fixture(ground)
         # The floor for "a task appeared": anything created before the
         # scenario began is history, not a result — but a task made in turn 0
         # and cancelled in turn 1 is this scenario's, so the floor is the
@@ -1004,6 +1038,23 @@ class Runner:
                     str(row["topic"]), str(payload), retain=bool(row.get("retain", False)), qos=1
                 )
                 await asyncio.sleep(0.2)
+            # A state that follows its discovery config by 0.2 s can land while
+            # the entity is still being made — the second variant of
+            # house-remove-by-voice read `sensor.probe_sensor` as '' on the
+            # twentieth house (27 Aug 2026), the first having removed the
+            # entity a minute before. Once the entity has had time to exist,
+            # every non-config row is said again.
+            states = [r for r in rows if isinstance(r, dict) and "/config" not in str(r.get("topic", ""))]
+            if states and len(rows) > len(states):
+                await asyncio.sleep(1.5)
+                for row in states:
+                    payload = row.get("payload", "")
+                    if isinstance(payload, (dict, list)):
+                        payload = json.dumps(payload)
+                    await client.publish(
+                        str(row["topic"]), str(payload), retain=bool(row.get("retain", False)), qos=1
+                    )
+                    await asyncio.sleep(0.2)
 
     # --- the assertions ----------------------------------------------------
     async def _check(

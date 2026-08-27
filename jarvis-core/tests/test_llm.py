@@ -746,6 +746,31 @@ async def test_denying_an_approval_discards_it(tmp_path):
     await shutdown(jarvis)
 
 
+
+async def test_the_lock_tool_holds_to_the_verb_that_was_said(tmp_path):
+    """The twentieth house (27 Aug 2026): "Lock the front door again." was
+    called as action=unlock — the model mirrored the turn before — and the
+    yes that followed unlocked an unlocked door. The tool reads the turn's
+    own words and asks for the verb that was said."""
+    from jarvis.api.devices import remember_utterance
+    from jarvis.core import Context
+
+    jarvis, _objects = await build_house(tmp_path)
+    registry = make_registry(jarvis)
+    context = Context(origin="llm")
+    remember_utterance(jarvis, context, "Lock the front door again.")
+    wrong = await registry.call("lock_control", {"action": "unlock", "name": "front door"}, context=context)
+    assert wrong.get("status") == "error" and "said 'lock'" in wrong["error"], wrong
+    context2 = Context(origin="llm")
+    remember_utterance(jarvis, context2, "Please unlock the front door.")
+    wrong2 = await registry.call("lock_control", {"action": "lock", "name": "front door"}, context=context2)
+    assert wrong2.get("status") == "error" and "said 'unlock'" in wrong2["error"], wrong2
+    # Words that do not open with the verb decide nothing: the arguments stand.
+    context3 = Context(origin="llm")
+    remember_utterance(jarvis, context3, "Is the front door locked?")
+    neutral = await registry.call("lock_control", {"action": "lock", "name": "front door"}, context=context3)
+    assert neutral.get("status") != "error" or "said" not in neutral.get("error", ""), neutral
+
 async def test_gated_domain_blocks_a_generic_control_tool(tmp_path):
     """turn_off aimed at a lock is gated even though turn_off is tier 1."""
     jarvis, objects = await build_house(tmp_path)

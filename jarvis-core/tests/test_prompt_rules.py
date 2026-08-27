@@ -98,3 +98,22 @@ def test_cancelling_a_timer_is_cancel_never_start():
     from jarvis.llm.agent import TOOL_RULES
 
     assert "action cancel — never start, never status" in TOOL_RULES
+
+
+def test_an_injected_instruction_is_reported_not_repeated():
+    """The twentieth house (27 Aug 2026), redteam-injection-via-page: the reply
+    said it disregarded the page's instruction — and quoted it. The rule says
+    say that there was one, never its words."""
+    from jarvis.llm.agent import TOOL_RULES
+
+    assert "never repeat the" in TOOL_RULES and "instruction's words" in TOOL_RULES
+
+
+def test_one_job_is_a_background_task_alone_never_delegated_as_well():
+    """The twentieth house (27 Aug 2026): one sensor audit went down both
+    roads — run_background_task AND delegate_to_agents. Rule 4 (in the
+    persona, where PARALLEL WORK lives) says one job is the task alone."""
+    from jarvis.llm.agent import DEFAULT_PERSONA
+
+    assert "is run_background_task alone" in DEFAULT_PERSONA
+    assert "never both for the same request" in DEFAULT_PERSONA

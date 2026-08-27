@@ -12,7 +12,9 @@ turns:
   - say: "Remind me in one minute that the audit ran."
     expect:
       schedule: {title_contains: "audit", within: 30}
-      reply_means: "confirms a reminder in about a minute"
+      reply_means: >
+        confirms the reminder — "in about a minute" or a clock time about a
+        minute ahead both count (the house says "at 11:38" on its own clock)
   - say: "What have you told me in the last few minutes?"
     wait: 75
     expect:

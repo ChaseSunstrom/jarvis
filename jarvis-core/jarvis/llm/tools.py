@@ -862,7 +862,9 @@ class Tool:
     #: would read "remove: everything" and show nothing of what it removes.
     #: Returning a sentence is the refusal, in the model's tool result, so the
     #: next round can ask for what was missing instead of retrying.
-    refuse: Callable[[dict[str, Any]], str | None] | None = None
+    #: A sentence that refuses the call before anything runs — given the
+    #: arguments, and the turn's context too when it takes two parameters.
+    refuse: Callable[..., str | None] | None = None
 
     def schema(self) -> dict[str, Any]:
         """Ollama / OpenAI function-calling schema for this tool."""
@@ -1093,6 +1095,26 @@ def _weaker_than(new: Tool, old: Tool) -> str:
     return ""
 
 
+def _refusal_takes_context(refuse: Any) -> bool:
+    """A refusal may read the turn (its second parameter); most read the arguments alone."""
+    try:
+        import inspect
+
+        return len(inspect.signature(refuse).parameters) >= 2
+    except (TypeError, ValueError):  # pragma: no cover - a builtin or a mock
+        return False
+
+
+def _utterance_of(jarvis: Any, context: Any) -> str:
+    """What the user said this turn, or "" — from the utterance store the memory policy reads."""
+    try:
+        from ..api.devices import get_turn_utterances
+
+        return get_turn_utterances(jarvis).get(context)
+    except Exception:  # pragma: no cover - a missing store reads as nothing said
+        return ""
+
+
 def _strings_in(value: Any, depth: int = 0) -> list[str]:
     """Every string inside a tool's arguments, however nested."""
     if depth > 4:
@@ -1145,7 +1167,7 @@ class ToolRegistry:
         escalates_itself: bool = False,
         hidden: bool = False,
         summarise: Callable[[dict[str, Any]], str] | None = None,
-        refuse: Callable[[dict[str, Any]], str | None] | None = None,
+        refuse: Callable[..., str | None] | None = None,
         replaces: str | None = None,
     ) -> Tool:
         """Add a tool. A re-registration may not quietly WEAKEN the one there.
@@ -1272,7 +1294,11 @@ class ToolRegistry:
         # approval, and the model is better told why than made to wait.
         if tool.refuse is not None:
             try:
-                sentence = tool.refuse(arguments)
+                sentence = (
+                    tool.refuse(arguments, context)
+                    if _refusal_takes_context(tool.refuse)
+                    else tool.refuse(arguments)
+                )
             except Exception:  # a broken check refuses, which is the safe way round
                 _LOGGER.exception("Refusal check for %s blew up; refusing", tool.name)
                 sentence = f"{tool.name} could not check its arguments; it was not run."
@@ -2396,8 +2422,28 @@ def register_builtin_tools(
         _merge_service_result(jarvis, result, changed, failed)
         return _outcome(changed, failed)
 
+    def _lock_verb_refusal(arguments: dict[str, Any], context: Any = None) -> str | None:
+        """The request's own verb is the one policy the arguments cannot carry.
+
+        "Lock the front door again." became action=unlock on the twentieth
+        house (27 Aug 2026) — the model mirrored the turn before — and the yes
+        that followed unlocked an unlocked door. Checked BEFORE the hold (a
+        refusal runs before the approval path), so the person is never asked
+        to approve the opposite of what they said.
+        """
+        action = str(arguments.get("action") or "lock").strip().lower()
+        said = _utterance_of(jarvis, context).lower()
+        opens_with = re.match(r"^\W*(?:please\s+|jarvis[,\s]+)?(lock|unlock)\b", said)
+        if opens_with and opens_with.group(1) != action:
+            return (
+                f"the request said {opens_with.group(1)!r}; call lock_control with "
+                f"action {opens_with.group(1)!r}, not {action!r}"
+            )
+        return None
+
     registry.register(
         name="lock_control",
+        refuse=_lock_verb_refusal,
         description=(
             "Lock or unlock a door. This ALWAYS requires the user's explicit approval "
             "outside this conversation — you cannot complete it yourself."

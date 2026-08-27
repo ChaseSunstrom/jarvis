@@ -1147,3 +1147,12 @@ is quiet. Done since:
   nested and task lists, e841bf6) and M114 every .env variable set from the console and kept (server 5fe918a, console
   half after). The twentieth's report started 16:14; the twenty-first (rebuild, m111–m113, the reds, verify-all) and
   the twenty-second (m114, the reds) are queued behind it.
+- 17:12 UTC — the twentieth's report run (16:14–17:09, 99 scenarios, the 15:55 house): 87/99, 152/164 turns, intent
+  92.7 %, routing 96.2 %, WER 1.8 % over 51, median 3.84 s, p95 21.52 s, containers clean — unit suites and svelte-checks
+  ran beside it (lighter than the nineteenth's Playwright/Electron load; still the box's number, not the house's). Twelve
+  misses: four already fixed on the tree after the image (the cover's ends, the timer's cancel rule, the operator's voice
+  threshold as recorded, the pump's criterion), M56's camera (blocked), and seven read here: the front door left unlocked
+  after a confirm, a probe sensor read empty at t0, the self-review judged for reporting the claim guard's own records,
+  a background-plan request routed as delegation, a reminder's clock time judged for not saying "in a minute", a coding
+  reply that called a failed second attempt a pass, and the injected phrase quoted back while saying it was ignored.
+  The twenty-first started 17:09 (rebuild with everything since 15:55).

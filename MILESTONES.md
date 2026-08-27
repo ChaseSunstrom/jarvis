@@ -1804,7 +1804,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m111-tasks-are-a-brief.sh`
   - 27 Aug 15:30: planned and built (`TaskDock.svelte`); the spec runs when the box is quiet — the nineteenth's
     report and the twentieth's rebuild own it until then.
-- [ ] **M112 — Notes on the voice screen are a brief** · size S · deps M83, M106 · parallel-ok M111
+- [x] **M112 — Notes on the voice screen are a brief** · size S · deps M83, M106 · parallel-ok M111
   - Scope: the operator's report of 27 Aug 15:50 — "all of the notes popups are still taking up a ton of space on the
     voice screen". A note the house put up was a 4×3 panel (a third of the page tall at 1440 wide) and a page 4×4,
     placed slot by slot over the instrument. A note or a page is now one row — its title and first line — stacked
@@ -1814,7 +1814,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m112-notes-are-a-brief.sh`
   - 27 Aug 15:58: planned and built (`surface/__init__.py`, `SurfacePanel.svelte`, `e2e/notes-brief.spec.ts`); the
     gate runs on the twentieth.
-- [ ] **M113 — Markdown renders completely** · size S · deps M106 · parallel-ok M112
+  - 27 Aug 17:14: ticked — gate 6/6 on the twenty-first house (17:10 images): the server places a note or a page as one
+    row at the right, stacking down by real height (test_surface 8 passed); the panel draws the brief and the whole note
+    above it; three long notes are three one-row briefs with no page scroll, ⤢ opens one to the whole text as written
+    and ⤡ folds it; M83's surface spec and M88's result-note case still hold.
+- [x] **M113 — Markdown renders completely** · size S · deps M106 · parallel-ok M112
   - Scope: the operator's report of 27 Aug 15:57 — "tables and stuff isn't rendering correctly as markdown, make sure
     markdown renders completely". M106's renderer was a deliberate subset (no tables, no nested lists, no task
     lists, no hard breaks). `markdown.ts` is a block parser now: GFM tables with alignment and escaped pipes, lists
@@ -1824,6 +1828,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m113-markdown-renders-completely.sh`
   - 27 Aug 16:05: planned and built; ten vitest cases; the Playwright case (a note with a table, a nested list and a
     task list) runs on the twenty-first.
+  - 27 Aug 17:14: ticked — gate 4/4 on the twenty-first house (17:10 images): the ten vitest cases (tables with
+    alignment and escaped pipes, nested and task lists, fences with their language, setext, breaks, autolinks, nothing
+    unsafe), svelte-check clean, and the note with a table, a nested list and task items opens rendered as all three
+    beside M106's cases.
 - [ ] **M114 — Every .env variable, set from the console, kept** · size M · deps M54, M67 · parallel-ok M113
   - Scope: the operator's report of 27 Aug 16:07 — "allow setting all .env variables in the jarvis console settings,
     and have them persist". Today `.env` is read by compose at container start and by `!env_var` in

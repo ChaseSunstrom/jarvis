@@ -124,6 +124,11 @@ class HarnessGround(Ground):
             ],
             cwd=target, check=True, capture_output=True,
         )
+        # A named branch to come back to: every coding scenario starts from
+        # "the fixture, as it fails" (see Runner._reset_coding_fixture). The
+        # second variant on the twentieth house (27 Aug 2026) found the copy
+        # dirty from the first and was refused for it.
+        subprocess.run(["git", "branch", "-M", "fixture"], cwd=target, check=True, capture_output=True)
         return {
             "repositories": [
                 {
