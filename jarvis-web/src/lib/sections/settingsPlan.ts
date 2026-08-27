@@ -91,7 +91,7 @@ export const FEATURED: Readonly<Record<SettingsSectionId, readonly FeaturedSetti
 		{
 			key: 'voice.speaker.mode',
 			label: 'Who may speak',
-			why: 'off: anyone. observe: Jarvis says who spoke and answers everyone. enforce: a voice that is not enrolled is refused. Choose it any time; it takes effect once a voice is enrolled.'
+			why: 'off: anyone. observe: Jarvis says who spoke, refuses nobody. enforce: a voice not enrolled is refused. Live once a voice is enrolled.'
 		},
 		{
 			key: 'voice.tts.length_scale',

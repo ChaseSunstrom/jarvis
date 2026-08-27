@@ -142,6 +142,8 @@ class ArchivedTurn:
     #: Only ever on an assistant turn.
     thinking: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    #: Only ever on a user turn: who the voice gate recognised (M100), or "".
+    speaker: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -149,6 +151,8 @@ class ArchivedTurn:
             "content": self.content,
             "timestamp": self.timestamp,
         }
+        if self.speaker:
+            out["speaker"] = self.speaker
         if self.thinking:
             out["thinking"] = self.thinking
         if self.tool_calls:
@@ -169,6 +173,7 @@ class ArchivedTurn:
             timestamp=float(raw.get("timestamp") or time.time()),
             thinking=_clip(raw.get("thinking")),
             tool_calls=[c for c in (calls or []) if isinstance(c, dict)][:MAX_TOOL_CALLS],
+            speaker=str(raw.get("speaker") or "")[:64] if role == "user" else "",
         )
 
     def as_message(self) -> dict[str, str]:
@@ -319,6 +324,7 @@ class ConversationArchive:
         tool_calls: Any = None,
         thinking: str = "",
         title: str = "",
+        speaker: str = "",
     ) -> ArchivedConversation | None:
         """Append one finished exchange. Never raises.
 
@@ -342,7 +348,7 @@ class ConversationArchive:
             conversation.title = _title_from(title)
 
         if user_text:
-            conversation.add(ArchivedTurn("user", user_text), self.max_turns)
+            conversation.add(ArchivedTurn("user", user_text, speaker=str(speaker or "")[:64]), self.max_turns)
         if assistant_text or tool_calls:
             conversation.add(
                 ArchivedTurn(

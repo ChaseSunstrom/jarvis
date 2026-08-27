@@ -45,29 +45,15 @@ check_sh "one request, two backends, one lead" \
 # two-job request goes through delegate_to_agents, the model makes ONE call and
 # the lead task fans out — the research engine and the specialists are its
 # children (`parent_id`), which is where "more than one backend" is visible.
-check "and the run really did reach more than one backend: the lead task has children of two kinds" python3 -c '
-import asyncio, json, os
-import websockets
-def token():
-    for line in open("jarvis-core/.env"):
-        if line.startswith("JARVIS_TOKEN="):
-            return line.split("=", 1)[1].strip().strip(chr(34))
-    return ""
-url = os.environ.get("JARVIS_URL", "http://127.0.0.1:8080").replace("http", "ws", 1) + "/api/websocket"
-async def main():
-    async with websockets.connect(url, max_size=None) as ws:
-        await ws.recv(); await ws.send(json.dumps({"type": "auth", "access_token": token()}))
-        assert json.loads(await ws.recv())["type"] == "auth_ok"
-        await ws.send(json.dumps({"id": 1, "type": "jarvis/tasks/list"}))
-        answer = json.loads(await ws.recv())["result"]
-        rows = answer.get("tasks") if isinstance(answer, dict) else answer
-        leads = sorted([t for t in rows if t.get("kind") == "delegation"], key=lambda t: t.get("created") or 0)
-        assert leads, "no delegation task on the house"
-        lead = leads[-1]
-        kids = [t for t in rows if t.get("parent_id") == lead["id"]]
-        kinds = sorted({str(t.get("kind")) for t in kids})
-        assert len(kinds) >= 2, "the lead fanned out to one kind of worker: %s (%d children)" % (kinds, len(kids))
-        print("lead %r: %d children of kinds %s" % (lead.get("title"), len(kids), kinds))
-asyncio.run(main())
+check "and the run really did reach more than one backend: the lead task fanned out to children of two kinds" python3 -c '
+import json
+from pathlib import Path
+data = json.loads(Path(".verify/live/results-m42.json").read_text())
+matched = [turn.get("task") for s in data["scenarios"] for turn in s["turns"] if turn.get("task")]
+assert matched, "no turn matched a task expectation"
+lead = matched[0]
+kinds = sorted({str(c.get("kind")) for c in lead.get("children") or []})
+assert len(kinds) >= 2, "the lead fanned out to one kind of worker: %s (%d children)" % (kinds, len(lead.get("children") or []))
+print("lead %r: %d children of kinds %s" % (lead.get("title"), len(lead.get("children") or []), kinds))
 '
 verify_end

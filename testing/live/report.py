@@ -115,6 +115,10 @@ class TurnResult:
     #: it actually do" is the first question about any failure, and because
     #: routing accuracy is derived from exactly this.
     tools: list[str] = field(default_factory=list)
+    #: The task a `task:` expectation matched, with its children — kind, status,
+    #: title — so a gate can read what a fan-out reached AFTER the harness house
+    #: that ran it is gone (m42 asked the live house and found nothing, 27 Aug).
+    task: dict[str, Any] | None = None
     #: What the server said went wrong, when something did. Recorded even for
     #: a turn that PASSED, because a scenario can require a failure — killing
     #: the STT container is a promise about the error message, and a report
@@ -139,6 +143,7 @@ class TurnResult:
             "routed": self.routed,
             "routed_expected": self.routed_expected,
             "tools": list(self.tools),
+            "task": self.task,
             "error": self.error,
         }
 

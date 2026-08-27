@@ -139,10 +139,16 @@ class Reflection:
                 _LOGGER.exception("memory: the overnight reflection failed")
 
     # --- the reflection ------------------------------------------------------
-    def _turns(self, since: float) -> list[str]:
+    def _turns(self, since: float) -> list[tuple[str, str]]:
+        """`(speaker, text)` for every user turn of the day worth reading.
+
+        The speaker is who the voice gate recognised (M100), "" for a typed or
+        unverified turn — the reflection asks about each person separately, so
+        Ted's tea is filed under Ted and never under Chase.
+        """
         agent = self.jarvis.data.get("llm")
         archive = getattr(agent, "archive", None)
-        out: list[str] = []
+        out: list[tuple[str, str]] = []
         for summary in (archive.listing() if archive is not None else []):
             cid = str(summary.get("id") or "")
             if _skip(cid) or float(summary.get("last_active") or 0.0) < since:
@@ -153,7 +159,7 @@ class Reflection:
                     continue
                 text = " ".join(str(turn.content or "").split())
                 if len(text) >= MIN_TURN_CHARS and "<untrusted" not in text:
-                    out.append(text)
+                    out.append((str(getattr(turn, "speaker", "") or ""), text))
         return out
 
     def _known(self) -> list[str]:
@@ -179,48 +185,97 @@ class Reflection:
                 self.last = result
                 return result
             known = self._known()
-            body = "\n".join(f"- {t}" for t in turns)[-MAX_PROMPT_CHARS:]
-            prompt = REFLECT_PROMPT.format(
-                turns=body,
-                known="\n".join(f"- {k}" for k in known[-40:]) or "- (nothing yet)",
-                limit=MAX_LEARNED,
-            )
-            from . import _parse_facts
+            from . import MemoryEntry, _parse_facts, one_line
 
-            try:
-                raw = await ask(prompt)
-            except Exception as err:  # noqa: BLE001 - reported, never raised out of the night
-                result.update(status="error", reason=f"the model did not answer: {err}")
-                self.last = result
-                return result
-            facts = _parse_facts(raw)[:MAX_LEARNED]
             day = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
-            from . import MemoryEntry, one_line
-
-            for fact in facts:
-                if self.memory.was_forgotten(fact):
-                    result["skipped"].append({"fact": fact, "reason": "the user asked to forget this"})
-                    continue
-                # Known already, in these words or near enough: the store's own
-                # duplicate test, which `async_add` would use to REPLACE the
-                # older entry — a reflection must not rewrite what the user said
-                # in its own wording.
-                twin = self.memory._duplicate_of(MemoryEntry(id="reflection", text=fact, source=SOURCE))
-                if twin is not None or one_line(fact).lower() in {one_line(e.text).lower() for e in self.memory.entries}:
-                    result["skipped"].append({"fact": fact, "reason": f"already remembered as {twin.text!r}" if twin else "already remembered"})
-                    continue
-                stored = await self.memory.async_add(
-                    fact, tags=["learned", day], source=SOURCE, conversation_id="reflection"
+            # One ask per person who spoke (and one for the turns nobody was
+            # recognised on): a single prompt over everybody's day filed Ted's
+            # tea under "the user", which is to say under Chase.
+            by_person: dict[str, list[str]] = {}
+            for who, text in turns:
+                by_person.setdefault(who, []).append(text)
+            for who, said in by_person.items():
+                body = "\n".join(f"- {t}" for t in said)[-MAX_PROMPT_CHARS:]
+                if who:
+                    body = f"(These were all said by {who}.)\n" + body
+                prompt = REFLECT_PROMPT.format(
+                    turns=body,
+                    known="\n".join(f"- {k}" for k in known[-40:]) or "- (nothing yet)",
+                    limit=MAX_LEARNED,
                 )
-                if stored.get("stored"):
-                    result["learned"].append(fact)
-                else:
-                    result["skipped"].append({"fact": fact, "reason": str(stored.get("reason") or "not stored")})
+                try:
+                    raw = await ask(prompt)
+                except Exception as err:  # noqa: BLE001 - reported, never raised out of the night
+                    result.update(status="error", reason=f"the model did not answer: {err}")
+                    self.last = result
+                    return result
+                facts = _parse_facts(raw)[:MAX_LEARNED]
+                for fact in facts:
+                    if self.memory.was_forgotten(fact):
+                        result["skipped"].append({"fact": fact, "reason": "the user asked to forget this"})
+                        continue
+                    # Known already, in these words or near enough: the store's own
+                    # duplicate test, which `async_add` would use to REPLACE the
+                    # older entry — a reflection must not rewrite what the user said
+                    # in its own wording.
+                    twin = self.memory._duplicate_of(MemoryEntry(id="reflection", text=fact, source=SOURCE, person=who))
+                    if twin is not None or one_line(fact).lower() in {one_line(e.text).lower() for e in self.memory.entries}:
+                        result["skipped"].append({"fact": fact, "reason": f"already remembered as {twin.text!r}" if twin else "already remembered"})
+                        continue
+                    stored = await self.memory.async_add(
+                        fact, tags=["learned", day], source=SOURCE, conversation_id="reflection", person=who
+                    )
+                    if stored.get("stored"):
+                        result["learned"].append(f"{who}: {fact}" if who else fact)
+                    else:
+                        result["skipped"].append({"fact": fact, "reason": str(stored.get("reason") or "not stored")})
+            merged = await self.consolidate()
+            if merged:
+                result["merged"] = merged
             if result["learned"]:
                 await self._tell(day, result["learned"])
             self.jarvis.bus.fire(EVENT_REFLECTED, {k: v for k, v in result.items() if k != "at"})
             self.last = result
             return result
+
+    async def consolidate(self, threshold: float = 0.92) -> list[dict[str, Any]]:
+        """Fold near-duplicates of one person's facts into one entry.
+
+        The store's own duplicate test is words — "The speaker's name is
+        Chase" and "The user's name is Chase" passed it as two facts. With the
+        embedding index up, two entries of the same person whose vectors sit
+        above `threshold` are one fact: the newer (a pinned one wins) is kept,
+        the other forgotten, and the card says so. Without an index nothing is
+        merged and nothing is claimed.
+        """
+        memory = self.memory
+        if getattr(memory, "vectors", None) is None:
+            return []
+        merged: list[dict[str, Any]] = []
+        gone: set[str] = set()
+        entries = sorted(memory.entries, key=lambda e: (not e.pinned, -e.created))
+        for entry in entries:
+            if entry.id in gone:
+                continue
+            try:
+                scores = await memory.async_semantic_ids(entry.text)
+            except Exception:  # noqa: BLE001 - a broken index merges nothing
+                return merged
+            for other_id, score in scores.items():
+                if other_id == entry.id or other_id in gone or score < threshold:
+                    continue
+                other = memory.get(other_id)
+                if other is None or other.person != entry.person or other.pinned:
+                    continue
+                gone.add(other_id)
+                merged.append({"kept": entry.text, "dropped": other.text, "person": entry.person, "score": round(score, 3)})
+        if gone:
+            memory.entries = [e for e in memory.entries if e.id not in gone]
+            await memory.async_save()
+            await memory._async_reindex()
+            for row in merged:
+                memory._fire("consolidated", memory.get(next(e.id for e in memory.entries if e.text == row["kept"])) if any(e.text == row["kept"] for e in memory.entries) else None)
+        return merged
 
     async def _tell(self, day: str, learned: Iterable[str]) -> None:
         lines = list(learned)

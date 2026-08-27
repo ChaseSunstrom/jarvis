@@ -893,6 +893,8 @@ class TurnFacts:
     def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
         self.ttl = ttl
         self._turns: dict[str, tuple[float, str | None, bool]] = {}
+        #: Who the voice gate recognised for the turn (M100), by the same key.
+        self._speakers: dict[str, tuple[float, str]] = {}
 
     def remember(self, context: Any, conversation_id: str | None, spoken: bool) -> None:
         key = UntrustedTurns.key(context)
@@ -905,6 +907,28 @@ class TurnFacts:
             str(conversation_id) if conversation_id else None,
             bool(spoken),
         )
+
+    def remember_speaker(self, context: Any, speaker: str | None) -> None:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return
+        now = time.time()
+        self._speakers = {k: v for k, v in self._speakers.items() if v[0] > now}
+        name = " ".join(str(speaker or "").split())[:64]
+        if name:
+            self._speakers[key] = (now + self.ttl, name)
+        else:
+            self._speakers.pop(key, None)
+
+    def speaker(self, context: Any) -> str:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return ""
+        entry = self._speakers.get(key)
+        if entry is None or entry[0] <= time.time():
+            self._speakers.pop(key, None)
+            return ""
+        return entry[1]
 
     def get(self, context: Any) -> tuple[str | None, bool]:
         key = UntrustedTurns.key(context)
@@ -982,6 +1006,18 @@ def remember_turn(
     """Record the turn's conversation and whether its reply is spoken. Called
     once, by the agent, next to `remember_utterance`."""
     get_turn_facts(jarvis).remember(context, conversation_id, spoken)
+
+
+def remember_speaker(jarvis: "Jarvis", context: Any, speaker: str | None) -> None:
+    """Record who the voice gate recognised for this turn (M100). "" or None
+    for a typed or unverified turn — which then files nothing under a name."""
+    get_turn_facts(jarvis).remember_speaker(context, speaker)
+
+
+def speaker_of(jarvis: "Jarvis", context: Any) -> str:
+    """The person the voice gate recognised for this turn, or "". Read by the
+    memory tools and extraction, as `device_of` is read by `tell_user`."""
+    return get_turn_facts(jarvis).speaker(context)
 
 
 def turn_facts_of(jarvis: "Jarvis", context: Any) -> tuple[str | None, bool]:

@@ -41,12 +41,18 @@
 		conversation_id?: string;
 		/** Epoch seconds after which jarvis-core forgets it; null or absent for "kept". */
 		expires?: number | null;
+		/** Whose fact it is (M100): the person the voice gate recognised, or "" for the house's. */
+		person?: string;
 	}
 
 	let conn = $state<Connection | null>(null);
 	let entries = $state<Entry[]>([]);
 	let total = $state(0);
 	let query = $state('');
+	/** Whose facts to list: '*' for everyone, '' for the house's own, or a name (M100). */
+	let person = $state('*');
+	/** Every person the list has named, kept across filters so the picker does not empty itself. */
+	let people = $state<string[]>([]);
 	let loading = $state(true);
 	let err = $state('');
 	let supported = $state(true);
@@ -83,10 +89,12 @@
 		try {
 			const answer = await conn.client.command<{ entries: Entry[]; total: number }>({
 				type: 'jarvis/memory/list',
+				...(person === '*' ? {} : { person }),
 				query
 			});
 			entries = answer.entries ?? [];
 			total = answer.total ?? entries.length;
+			people = [...new Set([...people, ...entries.map((e) => e.person ?? '').filter(Boolean)])].sort();
 			supported = true;
 		} catch (e) {
 			if (isUnsupported(e)) supported = false;
@@ -238,6 +246,21 @@
 			data-jv-filter
 			bind:value={query}
 		/>
+		<!-- Whose facts (M100): every name the list has shown, and the house's own. -->
+		<label class="sr" for="memory-person">Whose facts</label>
+		<select
+			id="memory-person"
+			class="search who"
+			data-testid="memory-person-filter"
+			bind:value={person}
+			onchange={() => void load()}
+		>
+			<option value="*">everyone</option>
+			<option value="">the house</option>
+			{#each people as name (name)}
+				<option value={name}>{name}</option>
+			{/each}
+		</select>
 		<span class="quiet">
 			<Button testid="memory-export-json" onclick={() => exportAll('json')}>Export JSON</Button>
 			<Button testid="memory-export-md" onclick={() => exportAll('markdown')}>Export markdown</Button>
@@ -283,6 +306,10 @@
 						<p class="text">{entry.text}</p>
 						<div class="meta">
 							<span class="source" data-testid="memory-source-{entry.id}">{entry.source}</span>
+							{#if entry.person}
+								<!-- Whose fact (M100): what keeps Ted's tea from being served to Chase. -->
+								<Pill tone="live" testid="memory-person-{entry.id}">{entry.person}</Pill>
+							{/if}
 							<span class="dot" aria-hidden="true">·</span>
 							<span>{when(entry.created)}</span>
 							{#each entry.tags as tag (tag)}<Pill>{tag}</Pill>{/each}

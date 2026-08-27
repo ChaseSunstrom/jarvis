@@ -2415,3 +2415,34 @@ async def test_the_agent_is_told_which_device_asked_after_the_speaker(tmp_path):
     await agent.converse("hello again").__anext__()
     assert "The request came from" not in fake.last_messages[0]["content"]
     await shutdown(jarvis)
+
+
+async def test_the_agent_records_who_spoke_on_the_turn_and_in_the_archive(tmp_path):
+    """M100: the speaker the voice gate recognised outlives the prompt line.
+
+    It reaches the live conversation's turn, the archive's turn (what the
+    nightly reflection reads) and the turn facts the memory tools read — so
+    "remember that I take my tea with honey" is filed under Ted, not under
+    "the user". A turn with no speaker files nothing under a name.
+    """
+    from jarvis.api.devices import get_turn_facts
+
+    jarvis, _ = await build_house(tmp_path)
+    fake = FakeOllama(say("Noted, Sir."), say("Noted, Sir."))
+    agent = make_agent(jarvis, fake)
+    async for _ in agent.converse("I take my tea with honey", speaker="Ted"):
+        pass
+    cid = agent.last_conversation_id
+    live = agent.memory.get_or_create(cid)
+    assert [t.speaker for t in live.turns if t.role == "user"] == ["Ted"]
+    archived = agent.archive.get(cid)
+    assert [t.speaker for t in archived.turns if t.role == "user"] == ["Ted"]
+    assert archived.turns[0].as_dict()["speaker"] == "Ted"
+    # The turn facts carried it for the tools that ran inside the turn.
+    facts = get_turn_facts(jarvis)
+    assert any(name == "Ted" for _expiry, name in facts._speakers.values())
+
+    async for _ in agent.converse("and the bins go out on Tuesday", conversation_id=cid):
+        pass
+    assert [t.speaker for t in agent.archive.get(cid).turns if t.role == "user"] == ["Ted", ""]
+    await shutdown(jarvis)

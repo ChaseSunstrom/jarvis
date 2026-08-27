@@ -1703,7 +1703,8 @@ index 1234567..89abcde 100644
 			created: Date.now() / 1000 - 86_400,
 			source: "user",
 			pinned: true,
-			expires: null
+			expires: null,
+			person: ""
 		},
 		{
 			id: "mem2",
@@ -1711,6 +1712,8 @@ index 1234567..89abcde 100644
 			tags: ["extracted"],
 			created: Date.now() / 1000 - 3600,
 			source: "extracted",
+			// Whose fact (M100): what the voice gate recognised when it was said.
+			person: "Chase",
 			conversation_id: "conv-7"
 		}
 	];
@@ -2817,6 +2820,26 @@ index 1234567..89abcde 100644
 					broadcast('memory_changed', { action, entry, count: memoryEntries.length });
 					break;
 				}
+				/** Put one entry in the store, whose it is included (M100): a spec
+				 *  that needs a person's fact must not depend on the fixture rows
+				 *  another spec may have forgotten. */
+				case 'jarvis/test/memory_seed': {
+					const entry = {
+						id: String(msg.entry_id || `mem-${memoryEntries.length + 1}`),
+						text: String(msg.text || 'Ted takes his tea with honey.'),
+						tags: Array.isArray(msg.tags) ? msg.tags : ['extracted'],
+						created: Date.now() / 1000,
+						source: String(msg.source || 'extracted'),
+						pinned: false,
+						expires: null,
+						person: String(msg.person ?? '')
+					};
+					memoryEntries = memoryEntries.filter((e) => e.id !== entry.id);
+					memoryEntries.push(entry);
+					ok(msg.id, { entry });
+					broadcast('memory_changed', { action: 'remembered', entry, count: memoryEntries.length });
+					break;
+				}
 				case 'jarvis/test/memory_used': {
 					const ids = Array.isArray(msg.entries) && msg.entries.length ? msg.entries : ['mem1'];
 					const used = ids.map((id) => ({
@@ -3127,8 +3150,11 @@ index 1234567..89abcde 100644
 					break;
 				case 'jarvis/memory/list': {
 					const q = String(msg.query || '').toLowerCase();
+					const who = msg.person === undefined || msg.person === null ? null : String(msg.person);
 					const rows = memoryEntries.filter(
-						(e) => !q || e.text.toLowerCase().includes(q) || e.tags.some((t) => t.includes(q))
+						(e) =>
+							(!q || e.text.toLowerCase().includes(q) || e.tags.some((t) => t.includes(q))) &&
+							(who === null || (e.person ?? '') === who)
 					);
 					ok(msg.id, { entries: rows, total: memoryEntries.length, query: msg.query || '', tag: '' });
 					break;

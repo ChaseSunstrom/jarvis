@@ -1487,6 +1487,38 @@ web and of Tasker. Local only. Each row here is planned in that document.
     websocket was listed with `registry_id`/`area_id`/`area` and had its `companion:<id>` registry entry.
     Found and fixed on the way: `check_pytest` under `set -e` ended a gate at a failing suite with no FAIL
     line (`out=$(…)` is fatal under errexit) — `|| status=$?` now, atomically replaced.
+- [ ] **M100 — Jarvis knows who it is talking to** · size L · deps M71, M87, M94 · parallel-ok M97
+  - Scope: from the agentic audit's seam 7 — memory is not per-person and does not consolidate. The
+    speaker the voice gate recognised (M71) is dropped after the prompt's speaker line: the archive's
+    turns carry no speaker, a memory entry carries no person, so "remember that I take my tea with
+    honey" is filed as the house's fact about "the user", and two people's preferences become one
+    muddle; extraction and reflection wrote "The speaker's name is Chase" beside "The user's name is
+    Chase" because the duplicate test is words, not meaning. Built: the archive's `Turn` gains a
+    `speaker`, recorded at converse; `MemoryEntry` gains `person`; `remember`, extraction and the
+    nightly reflection attribute a fact to the person who said it (the turn's speaker, read through
+    the turn facts as `device_of` is) and leave it "" for a typed or unverified turn; recall prefers
+    the speaker's own entries and labels another person's ("Chase: …") so the model never answers
+    one person with another's preference; the reflection consolidates near-duplicates (same person,
+    the embedding index's similarity over a threshold) into one entry and says so on its card;
+    `jarvis/memory/list` rows carry `person`, the Memory page shows it and filters by it, the mock
+    too. Live: the rig enrols its own Piper voice as a person ("Rig", the enrolment REST route with the
+    rig's clips) in observe mode, says "remember that I take my tea with honey" by voice, and the entry
+    on the house carries `person: Rig`; "what do you know about me?" answers with the honey and with
+    nothing filed under another name. Suites memory, reflection, speaker gate, llm; scenario
+    `memory-per-person`.
+  - Verify: `bash scripts/verify/m100-knows-who.sh`
+  - 27 Aug 09:06: planned.
+  - 27 Aug 09:19: built, not ticked — `Turn.speaker` on the live conversation and the archive, recorded
+    at converse with the device; `MemoryEntry.person` on the entry, in `async_add`, extraction and the
+    `remember` tool (through `speaker_of`, the turn facts); recall puts the speaker's facts first and
+    labels another person's ("Ted: …"); the reflection asks once per person and files under them, then
+    `consolidate()` folds one person's near-duplicates (the embedding index's similarity ≥ 0.92) into
+    one entry and never across people; `jarvis/memory/list` takes `person`, the Memory page shows the
+    pill and filters by it, the mock carries it. Suites memory 23 (+3), reflection 10 (+2), llm (+1),
+    the rig's own 49; `memory.spec.ts` 5/5. The rig gained `setup: settings:` and `setup: enrol:`
+    (Piper's voice enrolled as a person through the REST route) and a `person` on the `memory`
+    expectation; scenario `memory-per-person`. Gate 10/11 — the live half needs the house rebuilt
+    with this tree (the quiet pass's 08:38 rebuild predates it).
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
     tools, five websocket commands, the console's panels over the page around the instrument —

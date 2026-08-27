@@ -925,6 +925,8 @@ class WebSocketHandler:
             tag=str(msg.get("tag") or ""),
             query=str(msg.get("query") or ""),
             limit=int(msg.get("limit") or 200),
+            # None means everybody's; "" means the house's own (M100).
+            person=None if msg.get("person") is None else str(msg.get("person")),
         )
 
     async def _cmd_memory_reflect(self, msg: dict[str, Any]) -> Any:

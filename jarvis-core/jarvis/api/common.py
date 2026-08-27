@@ -1868,7 +1868,7 @@ def _memory(jarvis: "Jarvis") -> Any:
 
 
 def memory_list_payload(jarvis: "Jarvis", tag: str = "", query: str = "",
-                        limit: int = 200) -> dict[str, Any]:
+                        limit: int = 200, person: str | None = None) -> dict[str, Any]:
     """Everything Jarvis remembers, newest first — or the matches for a query.
 
     The whole store, not a page of it: the point of this route is that a person
@@ -1881,6 +1881,10 @@ def memory_list_payload(jarvis: "Jarvis", tag: str = "", query: str = "",
         if query
         else store.all(tag=tag or None, limit=limit)
     )
+    if person is not None:
+        # Whose facts (M100): a name, or "" for the house's own. None is everybody's.
+        who = " ".join(str(person).split())
+        entries = [entry for entry in entries if str(getattr(entry, "person", "") or "") == who]
     return {
         "entries": [entry.as_dict() for entry in entries],
         "total": len(store.entries),
@@ -1890,7 +1894,7 @@ def memory_list_payload(jarvis: "Jarvis", tag: str = "", query: str = "",
 
 
 async def async_memory_list_payload(
-    jarvis: "Jarvis", tag: str = "", query: str = "", limit: int = 200
+    jarvis: "Jarvis", tag: str = "", query: str = "", limit: int = 200, person: str | None = None
 ) -> dict[str, Any]:
     """The same listing, with semantic recall and the reranker in front of it.
 
@@ -1901,8 +1905,11 @@ async def async_memory_list_payload(
     """
     store = _memory(jarvis)
     if not query:
-        return memory_list_payload(jarvis, tag=tag, query=query, limit=limit)
+        return memory_list_payload(jarvis, tag=tag, query=query, limit=limit, person=person)
     entries = await store.async_search(query=query, tags=tag or None, limit=limit)
+    if person is not None:
+        who = " ".join(str(person).split())
+        entries = [entry for entry in entries if str(getattr(entry, "person", "") or "") == who]
     return {
         "entries": [entry.as_dict() for entry in entries],
         "total": len(store.entries),

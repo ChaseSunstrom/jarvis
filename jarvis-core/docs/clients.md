@@ -128,7 +128,7 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/notes/append` | `note_id`, `text`; adds to the end, which is what "add to my list" means |
 | `jarvis/notes/delete` | `note_id`; removes the file |
 | `jarvis/notes/search` | `query` and/or `tag`; full text through SQLite FTS5, with a word-by-word fallback so a query containing punctuation returns notes rather than a syntax error |
-| `jarvis/memory/list` | optional `query`, `tag`, `limit`; every durable note, newest first, or the matches for a query — `{entries: [...], total, query, tag}`. The whole store rather than a page of it: the point of the route is that a person can read what is held about them |
+| `jarvis/memory/list` | optional `query`, `tag`, `limit`, `person` (M100: only that person's facts; `""` for the house's); every durable note, newest first, or the matches for a query — `{entries: [...], total, query, tag}`, each entry carrying `person`. The whole store rather than a page of it: the point of the route is that a person can read what is held about them |
 | `jarvis/memory/reflect` | M87: read the day's conversations once and keep the new durable facts as `learned` — `{status, turns, learned: [...], skipped: [{fact, reason}]}`; a note and a `reflection` card say what was learned; scheduled nightly by `memory: reflect_at`. |
 **Held requests, on the bus.** `jarvis_approval_required` carries the request:
 `request_id`, `tool`, `arguments` (pinned to concrete ids when raised), `tier`,

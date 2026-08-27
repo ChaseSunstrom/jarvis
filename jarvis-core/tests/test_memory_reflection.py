@@ -30,6 +30,7 @@ class Turn:
     role: str
     content: str
     timestamp: float = field(default_factory=time.time)
+    speaker: str = ""
 
 
 @dataclass
@@ -225,3 +226,77 @@ async def test_an_unreadable_reflect_at_schedules_nothing_and_says_so(tmp_path, 
     assert reflection._task is None
     assert "not a time of day" in caplog.text
     await jarvis.async_stop()
+
+
+# --- M100: whose day it was ---------------------------------------------------
+
+
+async def test_the_reflection_asks_about_each_person_and_files_under_them(tmp_path):
+    """Ted's tea is Ted's: one ask per recognised speaker, the facts filed under
+    that name; the turns nobody was recognised on are asked about on their own
+    and filed under nobody."""
+    jarvis = Jarvis(tmp_path)
+    memory = MemoryStore(jarvis)
+    await memory.async_load()
+    jarvis.data["memory"] = memory
+    now = time.time()
+    archive = FakeArchive(
+        Conversation("kitchen-1", [Turn("user", "I take my tea with honey, always", now - 600, speaker="Ted"),
+                                   Turn("assistant", "Noted, Sir.", now - 590)]),
+        Conversation("console-1", [Turn("user", "the bins go out on Tuesday mornings", now - 300)]),
+    )
+    agent = FakeAgent(
+        '{"facts": ["Ted takes his tea with honey"]}',
+        '{"facts": ["The bins go out on Tuesday mornings"]}',
+        archive=archive,
+    )
+    jarvis.data["llm"] = agent
+    result = await Reflection(jarvis, memory, at=None).reflect()
+    assert result["status"] == "ok" and len(agent.prompts) == 2
+    assert "(These were all said by Ted.)" in agent.prompts[0]
+    assert "(These were all said by" not in agent.prompts[1]
+    by_person = {e.person: e.text for e in memory.entries}
+    assert by_person == {"Ted": "Ted takes his tea with honey", "": "The bins go out on Tuesday mornings"}
+    assert result["learned"] == ["Ted: Ted takes his tea with honey", "The bins go out on Tuesday mornings"]
+    await jarvis.async_stop()
+
+
+async def test_consolidation_folds_one_persons_near_duplicates_and_leaves_another_alone(tmp_path):
+    """"The speaker's name is Chase" beside "The user's name is Chase" was the
+    audit's finding: words apart, meaning the same. With an index that says so,
+    the reflection keeps one and drops the other — of the SAME person only."""
+    jarvis = Jarvis(tmp_path)
+    memory = MemoryStore(jarvis)
+    await memory.async_load()
+    jarvis.data["memory"] = memory
+    jarvis.data["llm"] = FakeAgent(archive=FakeArchive())
+    a = (await memory.async_add("The speaker's name is Chase", person="Chase"))["entry"]["id"]
+    b = (await memory.async_add("The user's name is Chase", person="Chase"))["entry"]["id"]
+    c = (await memory.async_add("The user's name is Chase", person="Ted"))["entry"]["id"]
+
+    class SameMeaning:
+        """An index that calls a and b one fact and everything else strangers."""
+
+        enabled = True
+
+        def prune(self, live_ids):
+            return 0
+
+        async def async_index(self, items):
+            return 0
+
+        async def async_search(self, text):
+            if "name is Chase" in text:
+                return {a: 1.0, b: 0.97, c: 0.97}
+            return {}
+
+    memory.vectors = SameMeaning()
+    merged = await Reflection(jarvis, memory, at=None).consolidate()
+    assert len(merged) == 1 and merged[0]["person"] == "Chase"
+    assert {e.id for e in memory.entries} == {b, c} or {e.id for e in memory.entries} == {a, c}
+    # Ted's identical words are Ted's fact, untouched.
+    assert any(e.id == c for e in memory.entries)
+    memory.vectors = None
+    assert await Reflection(jarvis, memory, at=None).consolidate() == []
+    await jarvis.async_stop()
+

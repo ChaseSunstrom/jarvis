@@ -393,6 +393,10 @@ class MemoryEntry:
     #: The turn this came from, when Jarvis worked it out rather than being
     #: told. What makes "why do you think that?" answerable.
     conversation_id: str = ""
+    #: Whose fact this is (M100): the person the voice gate recognised when it
+    #: was said, "" when it was typed, unverified, or about the house. What
+    #: keeps one person's tea from being served to another.
+    person: str = ""
 
     def expired(self, now: float | None = None) -> bool:
         if self.expires is None:
@@ -414,6 +418,7 @@ class MemoryEntry:
             payload["pinned"] = True
         if self.conversation_id:
             payload["conversation_id"] = self.conversation_id
+        payload["person"] = self.person
         return payload
 
     @classmethod
@@ -444,6 +449,8 @@ class MemoryEntry:
             expires=expires,
             redacted=[str(r) for r in (data.get("redacted") or [])],
             pinned=bool(data.get("pinned")),
+            conversation_id=str(data.get("conversation_id") or "")[:64],
+            person=" ".join(str(data.get("person") or "").split())[:64],
         )
 
 
@@ -548,6 +555,7 @@ class MemoryStore:
         allow_untrusted: bool = False,
         pinned: bool = False,
         conversation_id: str = "",
+        person: str = "",
     ) -> dict[str, Any]:
         """Remember something. Returns ``{"stored": bool, ...}``.
 
@@ -598,6 +606,7 @@ class MemoryStore:
             redacted=removed,
             pinned=bool(pinned),
             conversation_id=str(conversation_id or "")[:64],
+            person=" ".join(str(person or "").split())[:64],
         )
 
         # A near-identical note replaces the old one rather than piling up —
@@ -643,6 +652,9 @@ class MemoryStore:
         normalized = " ".join(entry.text.lower().split())
         mine = _words(entry.text)
         for existing in self.entries:
+            if existing.person != entry.person and existing.person and entry.person:
+                # Two people saying the same words are two facts (M100).
+                continue
             if " ".join(existing.text.lower().split()) == normalized:
                 return existing
             theirs = _words(existing.text)
@@ -826,10 +838,13 @@ class MemoryStore:
             return []
         return await self.reranker.order(query, texts)
 
-    def all(self, tag: Any = None, limit: int | None = None) -> list[MemoryEntry]:
+    def all(self, tag: Any = None, limit: int | None = None, person: str | None = None) -> list[MemoryEntry]:
         self.purge_expired()
         wanted = set(_clean_tags(tag))
         entries = [e for e in self.entries if not wanted or wanted & set(e.tags)]
+        if person is not None:
+            who = " ".join(str(person or "").split())
+            entries = [e for e in entries if e.person == who]
         entries.sort(key=lambda e: -e.created)
         if limit:
             entries = entries[: int(limit)]
@@ -842,6 +857,7 @@ class MemoryStore:
         query: str | None = None,
         max_entries: int | None = None,
         semantic: dict[str, float] | None = None,
+        person: str | None = None,
     ) -> str:
         """A compact, length-capped block for the agent's system prompt.
 
@@ -875,6 +891,12 @@ class MemoryStore:
             candidates = sorted(
                 self.entries, key=lambda e: (not e.pinned, -e.created)
             )[:count]
+        # The speaker's own facts first (M100): what Ted said about his tea
+        # outranks what Chase said about his, whatever the query matched, and
+        # a fact of nobody's (the house's) keeps its place among them.
+        who = " ".join(str(person or "").split())
+        if who:
+            candidates.sort(key=lambda e: 0 if e.person == who else (1 if not e.person else 2))
         if not candidates:
             # Cleared, not left alone: a stale list would attribute the
             # PREVIOUS turn's notes to this one, which is worse than saying
@@ -890,8 +912,11 @@ class MemoryStore:
             suffix = f"  [{', '.join(entry.tags)}]" if entry.tags else ""
             # Flattened again at render time. This is the line that actually
             # matters: everything above can be bypassed by editing the JSON,
-            # and this block goes into the system prompt.
-            line = f"- {one_line(entry.text)}{suffix}"
+            # and this block goes into the system prompt. Another person's fact
+            # is labelled, so the model never answers Ted with Chase's
+            # preference as if it were his.
+            owner = f"{entry.person}: " if entry.person and entry.person != who else ""
+            line = f"- {owner}{one_line(entry.text)}{suffix}"
             if used + len(line) + 1 > budget:
                 break
             lines.append(line)
@@ -951,6 +976,7 @@ class MemoryStore:
         agent: Any = None,
         conversation_id: str = "",
         limit: int = MAX_EXTRACTED_PER_TURN,
+        person: str = "",
     ) -> list[dict[str, Any]]:
         """One bounded call: what, if anything, is worth keeping from this turn?
 
@@ -983,6 +1009,7 @@ class MemoryStore:
                 # me yourself" is a filter on this field.
                 source="extracted",
                 conversation_id=conversation_id,
+                person=person,
             )
             if outcome.get("stored"):
                 stored.append(outcome)
@@ -1307,7 +1334,7 @@ def _register_services(jarvis: "Jarvis", memory: MemoryStore) -> None:
         )
 
     async def handle_list(call: ServiceCall) -> dict[str, Any]:
-        entries = memory.all(tag=call.get("tag"), limit=call.get("limit"))
+        entries = memory.all(tag=call.get("tag"), limit=call.get("limit"), person=call.get("person"))
         return {
             "entries": [e.as_dict() for e in entries],
             "count": len(entries),
@@ -1389,7 +1416,7 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
         _LOGGER.debug("memory: no LLM tool registry; services registered without tools")
         return
 
-    from ...api.devices import turn_is_untrusted, utterance_of
+    from ...api.devices import speaker_of, turn_is_untrusted, utterance_of
     from ...llm.tools import schema_object
 
     async def tool_remember(args: dict[str, Any], context: Any = None) -> Any:
@@ -1455,6 +1482,9 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
             tags=args.get("tags"),
             source=str(args.get("source") or "conversation"),
             ttl=args.get("ttl"),
+            # Filed under whoever the voice gate recognised this turn (M100);
+            # "" for a typed or unverified turn. Never the model's to name.
+            person=speaker_of(jarvis, context),
         )
 
     async def tool_recall(args: dict[str, Any], context: Any = None) -> Any:

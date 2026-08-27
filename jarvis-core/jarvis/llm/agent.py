@@ -893,7 +893,7 @@ class ConversationAgent:
         )
 
     def system_prompt(
-        self, query: str = "", semantic: dict[str, float] | None = None
+        self, query: str = "", semantic: dict[str, float] | None = None, speaker: str | None = None
     ) -> str:
         """The system message for one turn.
 
@@ -904,7 +904,7 @@ class ConversationAgent:
         retrieval they were not asking for.
         """
         return "\n\n".join(
-            part for part in self.prompt_prefix() + self.prompt_suffix(query, semantic) if part
+            part for part in self.prompt_prefix() + self.prompt_suffix(query, semantic, speaker) if part
         )
 
     def prompt_prefix(self) -> list[str]:
@@ -928,9 +928,11 @@ class ConversationAgent:
         parts.append(self.skill_index())
         return parts
 
-    def prompt_suffix(self, query: str = "", semantic: dict[str, float] | None = None) -> list[str]:
+    def prompt_suffix(
+        self, query: str = "", semantic: dict[str, float] | None = None, speaker: str | None = None
+    ) -> list[str]:
         """The parts that vary with the turn: the house now, the notes for it, the clock."""
-        return [self.house_summary(), self.remembered_notes(query, semantic), self.clock_line()]
+        return [self.house_summary(), self.remembered_notes(query, semantic, speaker), self.clock_line()]
 
     def device_line(self, device: dict[str, Any] | None) -> str:
         """One line naming the device the request came from, and its room when
@@ -1029,7 +1031,7 @@ class ConversationAgent:
             return ""
 
     def remembered_notes(
-        self, query: str = "", semantic: dict[str, float] | None = None
+        self, query: str = "", semantic: dict[str, float] | None = None, speaker: str | None = None
     ) -> str:
         """Durable notes from the `memory` integration, if it is set up.
 
@@ -1052,7 +1054,8 @@ class ConversationAgent:
         if not callable(block):
             return ""
         try:
-            text = str(block(query=query, semantic=semantic) or "")
+            # The speaker's own notes first, another person's labelled (M100).
+            text = str(block(query=query, semantic=semantic, person=speaker or "") or "")
             # Read straight after the call that set it: the store overwrites
             # `last_used` per block, and one turn builds exactly one.
             self.last_result.memory_used = list(getattr(store, "last_used", []) or [])
@@ -1314,7 +1317,7 @@ class ConversationAgent:
         # rewrite to gain nothing.
         semantic = await self._semantic_hits(message)
 
-        system = self.system_prompt(message, semantic)
+        system = self.system_prompt(message, semantic, speaker)
         who = self.speaker_line(speaker)
         if who:
             # Last, after every cached part: a name changes from turn to turn
@@ -1354,9 +1357,12 @@ class ConversationAgent:
             remember_turn(self.jarvis, context, conversation.id, spoken)
             # And which device asked (M94), so `tell_user` and its like can
             # prefer the room the request came from without being told.
-            from ..api.devices import remember_device
+            from ..api.devices import remember_device, remember_speaker
 
             remember_device(self.jarvis, context, device)
+            # And who spoke (M100), so `remember` and extraction file a fact
+            # under the person the voice gate recognised, not under "the user".
+            remember_speaker(self.jarvis, context, speaker)
         except Exception:  # pragma: no cover - a policy aid, never a blocker
             _LOGGER.debug("Could not record the turn's utterance", exc_info=True)
         pieces: list[str] = []
@@ -1374,7 +1380,7 @@ class ConversationAgent:
             pieces.append(settled)
             yield settled
             result.text = settled
-            self._finish(conversation.id, result, user_text=message)
+            self._finish(conversation.id, result, user_text=message, speaker=speaker)
             return
         if note:
             # After the history and before the user's words, so the last
@@ -1481,7 +1487,7 @@ class ConversationAgent:
             # preamble is what the user has and the alternative is silence.
             said = "".join(pieces)
             result.text = _without_preamble(said, result.preamble) or said.strip()
-            self._finish(conversation.id, result, user_text=message)
+            self._finish(conversation.id, result, user_text=message, speaker=speaker)
 
     async def _answer_pending(
         self,
@@ -2062,10 +2068,11 @@ class ConversationAgent:
         result: ConversationResult,
         user_text: str = "",
         record: bool = True,
+        speaker: str | None = None,
     ) -> None:
         if record and user_text:
             conversation = self.memory.get_or_create(conversation_id)
-            conversation.add("user", user_text)
+            conversation.add("user", user_text, speaker=speaker or "")
             if result.text:
                 conversation.add("assistant", result.text)
             # The durable copy, which outlives both the TTL and the process.
@@ -2079,6 +2086,7 @@ class ConversationAgent:
                     assistant_text=result.text,
                     tool_calls=result.tool_calls,
                     thinking=result.thinking,
+                    speaker=speaker or "",
                 )
             except Exception:  # pragma: no cover - history is never load-bearing
                 _LOGGER.exception("Could not archive conversation %s", conversation_id)
@@ -2086,9 +2094,9 @@ class ConversationAgent:
         self.last_response = result.text
         self.last_conversation_id = conversation_id
         if record and user_text:
-            self._learn_from(conversation_id, user_text)
+            self._learn_from(conversation_id, user_text, speaker or "")
 
-    def _learn_from(self, conversation_id: str, user_text: str) -> None:
+    def _learn_from(self, conversation_id: str, user_text: str, speaker: str = "") -> None:
         """Let memory decide whether this turn said anything worth keeping.
 
         Fire and forget, after the answer has already gone out: extraction
@@ -2106,7 +2114,7 @@ class ConversationAgent:
         if not callable(create):
             return
         try:
-            create(extract(user_text, agent=self, conversation_id=conversation_id))
+            create(extract(user_text, agent=self, conversation_id=conversation_id, person=speaker))
         except Exception:  # pragma: no cover - never load-bearing
             _LOGGER.debug("Could not start memory extraction", exc_info=True)
 

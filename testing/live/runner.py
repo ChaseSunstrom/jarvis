@@ -339,6 +339,21 @@ class Runner:
         if transport is None:
             result.ok = False
             result.error = f"no transport for variant {variant!r}"
+            # The children a fan-out reached, read once the scenario is over (M42's
+            # gate): a `task:` expectation matches the lead the moment it appears,
+            # before its research and specialist children exist.
+            if any(t.task for t in result.turns):
+                try:
+                    rows = await observer.tasks()
+                except Exception:  # noqa: BLE001 - the record keeps what it had
+                    rows = []
+                for t in result.turns:
+                    if t.task and rows:
+                        kids = [r for r in rows if str(r.get('parent_id') or '') == str(t.task.get('id'))]
+                        if kids:
+                            t.task['children'] = [
+                                {'kind': c.get('kind'), 'status': c.get('status'), 'title': c.get('title')} for c in kids
+                            ]
             result.seconds = time.monotonic() - started
             return result
 
@@ -615,6 +630,20 @@ class Runner:
             except Exception as err:  # noqa: BLE001 - a missing capability is a failure
                 raise LiveError(f"setup could not clear {what}: {err}") from err
 
+        # Settings the scenario needs (M100): written through the same command
+        # the console uses, and restored with the rest of the config dir.
+        for key, value in (scenario.setup.get("settings") or {}).items():
+            try:
+                await client.command("config/settings/set", key=str(key), value=value)
+            except Exception as err:  # noqa: BLE001 - a setting that cannot be set fails the premise
+                raise LiveError(f"setup could not set {key} to {value!r}: {err}") from err
+        # The rig's own voice as a person (M100): the enrolment phrases the
+        # house asks for, said by Piper, posted one sample per request as the
+        # phone does. `observe` mode then names the speaker on every turn
+        # without refusing anyone.
+        enrol = scenario.setup.get("enrol")
+        if enrol:
+            await self._enrol_own_voice(str(enrol.get("label") or "Rig"))
         for entity_id, state in (scenario.setup.get("states") or {}).items():
             domain = str(entity_id).split(".", 1)[0]
             wanted = str(state).lower()
@@ -632,6 +661,40 @@ class Runner:
                 await client.call_service(domain, service, target={"entity_id": entity_id})
             except Exception as err:  # noqa: BLE001 - a bad fixture must say so
                 raise LiveError(f"setup could not put {entity_id} to {state}: {err}") from err
+
+    async def _enrol_own_voice(self, label: str) -> None:
+        import httpx
+
+        base = self.link.base_url
+        headers = {"Authorization": f"Bearer {self.link.token}"}
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            status = await http.get(f"{base}/api/voice/speaker", headers=headers, params={"label": label})
+            if status.status_code != 200:
+                raise LiveError(f"setup: /api/voice/speaker answered {status.status_code}")
+            body = status.json()
+            phrases = [str(p) for p in (body.get("phrases") or [])] or [
+                "My voice is my passport, verify me.",
+                "The quick brown fox jumps over the lazy dog.",
+                "Jarvis, remember who is speaking.",
+            ]
+            needed = max(int(body.get("min_samples") or 3), 3)
+            samples = 0
+            for phrase in (phrases * 3)[: max(needed, len(phrases))]:
+                said = self.mouth.say(phrase)
+                answer = await http.post(
+                    f"{base}/api/voice/speaker/enrol",
+                    headers={**headers, "Content-Type": "application/octet-stream"},
+                    params={"label": label, "rate": said.rate, "width": said.width},
+                    content=said.pcm,
+                )
+                if answer.status_code >= 300:
+                    raise LiveError(f"setup: enrolling {label!r} failed: {answer.status_code} {answer.text[:200]}")
+                samples += 1
+                if samples >= needed and (answer.json() or {}).get("enrolled"):
+                    break
+            after = await http.get(f"{base}/api/voice/speaker", headers=headers, params={"label": label})
+            if not (after.json() or {}).get("enrolled"):
+                raise LiveError(f"setup: {label!r} is not enrolled after {samples} sample(s): {after.text[:200]}")
 
     async def _speak(self, transport, turn, variant: str, conversation_id: str | None,
                      timeout: float = 0.0):
@@ -972,6 +1035,23 @@ class Runner:
                     f"task has {len(task.get('steps') or [])} step(s), "
                     f"expected at least {want_task['steps_at_least']}"
                 )
+            if task is not None:
+                # Recorded with its children, for the gates: the house that ran
+                # this may be the rig's own harness, gone by the time a gate
+                # asks what the fan-out reached.
+                children = [
+                    t for t in await observer.tasks() if str(t.get("parent_id") or "") == str(task.get("id"))
+                ]
+                out.task = {
+                    "id": task.get("id"),
+                    "kind": task.get("kind"),
+                    "status": task.get("status"),
+                    "title": task.get("title"),
+                    "children": [
+                        {"kind": c.get("kind"), "status": c.get("status"), "title": c.get("title")}
+                        for c in children
+                    ],
+                }
         # A reminder is a schedule entry until it fires; only then is it a task.
         # "Remind me in a minute" is proved by the entry appearing now, and by
         # the reminder being heard a minute later — not by a task within 30 s.
@@ -1074,6 +1154,14 @@ class Runner:
             texts = " | ".join(str(entry.get("text") or "") for entry in entries)
             if recalls and recalls.lower() not in texts.lower():
                 fail(f"memory does not hold {recalls!r}; it holds {texts[:200]!r}")
+            # Whose fact it is (M100): the entry that holds the words must be
+            # filed under the person the voice gate recognised.
+            want_person = want_memory.get("person")
+            if recalls and want_person is not None:
+                holders = [entry for entry in entries if recalls.lower() in str(entry.get("text") or "").lower()]
+                persons = sorted({str(entry.get("person") or "") for entry in holders})
+                if str(want_person) not in persons:
+                    fail(f"{recalls!r} is filed under {persons!r}, expected {str(want_person)!r}")
             if forgotten and forgotten.lower() in texts.lower():
                 fail(f"memory still holds {forgotten!r} after it was forgotten")
 

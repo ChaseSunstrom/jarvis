@@ -319,6 +319,14 @@ memory:
   context_entries: 8    # at most this many notes in the prompt
 ```
 
+Every entry carries `person` — who the voice gate recognised when it was said
+(M100), or `""` for a typed or unverified turn and for facts about the house.
+`remember`, extraction and the nightly reflection file under that name; recall
+puts the speaker's own facts first and labels another person's ("Chase: …") so
+Ted is never answered with Chase's tea; the reflection folds one person's
+near-duplicates into one entry when the embedding index says they are one
+fact, and never merges across people. `jarvis/memory/list` filters by `person`.
+
 Entries are structured and dull on purpose:
 
 ```json

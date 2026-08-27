@@ -2119,6 +2119,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M97 — Timers, routines read back, what's new | **Ticked** (11/11 on the house: a timer entity counted to `finished` and left its card; routines read back and listed; what's new) | `m97-timers-routines-whats-new.sh`; `test_timer.py` 10; `test_automation_api.py` (+2), `test_create_tool_handler.py` (+1), `test_notifications.py` (+1) |
 | M98 — The phone keeps up | **Ticked** (16/16 on the house: the speaker gate on register, a held Tier-3 action on the consent screen, the typed field, the tier contract's phone variant, and PHONE TASKS' way in — a fake phone was sent a task bundle by the model for a spoken-style request) | `m98-the-phone-keeps-up.sh`; gradle assembleDebug + testDebugUnitTest; `phone_tasks_test.py` 16/16; `test_device_control.py` (+1), `test_skills.py` (+1) |
 | M99 — The console keeps up | **Ticked** (9/9 on the rebuilt house: retry, live Areas/schedule/settings, a room for a companion listed with its registry entry, the unshown fields) | `m99-the-console-keeps-up.sh`; `console-keeps-up.spec.ts` 6/6 + the touched specs 41/41; `test_api_companion.py` (+1) |
+| M100 — Jarvis knows who it is talking to | Planned | `m100-knows-who.sh` |
 
 1. **Never promote a row without a command that demonstrates it.** "Probably
    fine" is Unproven.

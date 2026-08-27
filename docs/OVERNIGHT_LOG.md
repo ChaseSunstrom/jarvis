@@ -985,3 +985,6 @@ is quiet. Done since:
   (the job's own annotations carry pytest's FAILED lines and there are none) — the log needs a token (`gh auth login` would open it);
   a Python 3.12 venv (`.venv312`, uv) now runs the suite the way CI does, to find it here. A local full run on 3.11 was stopped:
   the voice tests found the live stack's wake service on 127.0.0.1:10400 and waited on it.
+- 09:19 — M100 built (memory per person, consolidated; gate 10/11, live half after the next rebuild). The rig records a matched
+  task's children at scenario end (m42's check reads them); m54's speaker-mode why line trimmed to the one-line rule (133 chars).
+  CI on 07d9593 green — the python red on 6c816c8 did not recur (no FAILED line then either; a 3.12 local run is 65 % in with none).

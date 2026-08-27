@@ -23,12 +23,19 @@ class Turn:
     role: str
     content: str
     timestamp: float = field(default_factory=time.time)
+    #: Who the voice gate recognised saying a user turn (M100), "" for a typed
+    #: or unverified one. Never on an assistant turn. What lets memory file a
+    #: fact under the person who said it rather than under "the user".
+    speaker: str = ""
 
     def as_message(self) -> dict[str, str]:
         return {"role": self.role, "content": self.content}
 
     def as_dict(self) -> dict[str, Any]:
-        return {"role": self.role, "content": self.content, "timestamp": self.timestamp}
+        out: dict[str, Any] = {"role": self.role, "content": self.content, "timestamp": self.timestamp}
+        if self.speaker:
+            out["speaker"] = self.speaker
+        return out
 
 
 @dataclass(slots=True)
@@ -39,8 +46,8 @@ class Conversation:
     last_active: float = field(default_factory=time.time)
     max_turns: int = DEFAULT_MAX_TURNS
 
-    def add(self, role: str, content: str) -> Turn:
-        turn = Turn(role, content)
+    def add(self, role: str, content: str, speaker: str = "") -> Turn:
+        turn = Turn(role, content, speaker=str(speaker or "") if role == "user" else "")
         self.turns.append(turn)
         self.last_active = turn.timestamp
         if self.max_turns > 0 and len(self.turns) > self.max_turns:

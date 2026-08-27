@@ -66,3 +66,46 @@ test('forgetting everything asks first, and then means it', async ({ page }) => 
 	await page.getByTestId('memory-wipe-confirm').click();
 	await expect(page.getByTestId('memory-empty')).toBeVisible({ timeout: 10_000 });
 });
+
+test('a fact says whose it is, and the list can be narrowed to one person', async ({ page }) => {
+	// M100: the voice gate names the speaker and memory keeps the name. A fact
+	// of the house's own has no pill; a person's has one, and the picker shows
+	// only theirs — the server filters, the page does not pretend to. Seeded
+	// here rather than read off the fixture rows, which another test forgets.
+	await page.goto('/memory');
+	await expect(page.getByTestId('memory-lede')).toBeVisible({ timeout: 15_000 });
+	const seed = (entry_id: string, text: string, person: string) =>
+		page.evaluate(
+			(payload) =>
+				new Promise((resolve) => {
+					const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+					ws.onopen = () => ws.send(JSON.stringify({ id: 77, type: 'jarvis/test/memory_seed', ...payload }));
+					ws.onmessage = (event) => {
+						if (JSON.parse(String(event.data)).id === 77) {
+							ws.close();
+							resolve(null);
+						}
+					};
+				}),
+			{ entry_id, text, person }
+		);
+	await seed('mem-ted', 'Ted takes his tea with honey.', 'Ted');
+	await seed('mem-house', 'The bins go out on Tuesday.', '');
+	await page.reload();
+	await expect(page.getByTestId('memory-entry-mem-ted')).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('memory-person-mem-ted')).toHaveText('Ted');
+	await expect(page.getByTestId('memory-entry-mem-house')).toBeVisible();
+	await expect(page.getByTestId('memory-person-mem-house')).toHaveCount(0);
+
+	const picker = page.getByTestId('memory-person-filter');
+	await expect(picker.locator('option', { hasText: 'Ted' })).toHaveCount(1);
+	await picker.selectOption('Ted');
+	await expect(page.getByTestId('memory-entry-mem-ted')).toBeVisible();
+	await expect(page.getByTestId('memory-entry-mem-house')).toHaveCount(0, { timeout: 10_000 });
+	await picker.selectOption('');
+	await expect(page.getByTestId('memory-entry-mem-house')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('memory-entry-mem-ted')).toHaveCount(0);
+	await picker.selectOption('*');
+	await expect(page.getByTestId('memory-entry-mem-ted')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('memory-entry-mem-house')).toBeVisible();
+});

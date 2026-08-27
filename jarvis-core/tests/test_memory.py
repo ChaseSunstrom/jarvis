@@ -245,3 +245,45 @@ async def test_wipe_is_refused_without_confirmation(tmp_path):
     )
     assert done["wiped"] == 1
     assert store.entries == []
+
+
+# --- M100: whose fact it is --------------------------------------------------
+
+
+async def test_a_fact_is_filed_under_the_person_who_said_it(store):
+    """Two people saying the same words are two facts; a typed turn is nobody's."""
+    ted = await store.async_add("I take my tea with honey", person="Ted")
+    chase = await store.async_add("I take my tea with honey", person="Chase")
+    assert ted["stored"] and chase["stored"] and ted["entry"]["person"] == "Ted"
+    assert len([e for e in store.entries if "honey" in e.text]) == 2
+    house = await store.async_add("The spare key is under the mat")
+    assert house["entry"]["person"] == ""
+    assert [e.text for e in store.all(person="Ted")] == ["I take my tea with honey"]
+    assert len(store.all(person="")) == 1
+    # And it survives the file.
+    await store.async_load()
+    assert {e.person for e in store.entries} == {"Ted", "Chase", ""}
+
+
+async def test_recall_puts_the_speakers_facts_first_and_labels_another_persons(store):
+    await store.async_add("I take my tea with honey", person="Ted")
+    await store.async_add("I take my coffee black", person="Chase")
+    await store.async_add("The bins go out on Tuesday")
+    block = store.get_context_block(person="Chase")
+    lines = block.splitlines()[1:]
+    assert lines[0] == "- I take my coffee black"
+    assert "- The bins go out on Tuesday" in lines
+    assert "- Ted: I take my tea with honey" in lines
+    # Nobody recognised: nothing is anyone's, everything is labelled.
+    block = store.get_context_block()
+    assert "- Ted: I take my tea with honey" in block and "- Chase: I take my coffee black" in block
+
+
+async def test_extraction_files_what_it_learns_under_the_speaker(store):
+    stored = await store.async_extract(
+        "I always take my tea with honey, and my sister Mira is vegetarian.",
+        agent=FakeAgent('{"facts": ["The speaker\'s sister Mira is vegetarian"]}'),
+        conversation_id="kitchen-1",
+        person="Ted",
+    )
+    assert stored and stored[0]["entry"]["person"] == "Ted"
