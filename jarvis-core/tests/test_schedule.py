@@ -772,3 +772,22 @@ async def test_the_same_alarm_asked_for_twice_in_a_minute_is_one_alarm(jarvis):
         allow_service=False,
     )
     assert other["status"] == "ok" and len(manager.jobs) == 2
+
+
+async def test_in_minutes_is_the_houses_arithmetic_not_the_models(jarvis):
+    """The twenty-first house (27 Aug 2026): "remind me in one minute" came back
+    "at 13:38" against a clock of 11:38 — the model computed `at` itself. A
+    relative ask is minutes; the house turns it into `at` on its own clock
+    and says the time back."""
+    clock = FrozenClock("2026-01-01T18:59")
+    said = Recorder(jarvis)
+    manager = await manager_for(jarvis, clock)
+    result = await manager.async_add(
+        {"kind": "notify", "message": "the audit ran", "in_minutes": 1}, allow_service=False
+    )
+    assert result["status"] == "ok", result
+    assert "19:00" in result["job"]["describes"], result["job"]["describes"]
+    clock.advance(minutes=2)
+    await manager._tick()
+    await settle(jarvis)
+    assert said.notified == ["the audit ran"]

@@ -51,7 +51,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import timedelta, datetime
 from typing import TYPE_CHECKING, Any
 
 from ...automation.util import configured_clock
@@ -622,7 +622,34 @@ class ScheduleManager:
             )
         ]
 
+    def _relative_to_at(self, data: dict[str, Any]) -> dict[str, Any]:
+        """"In five minutes" as minutes, turned into `at` on the house's own clock.
+
+        The model used to compute the timestamp itself from the prompt's
+        clock: on the twenty-first house (27 Aug 2026) "remind me in one
+        minute" came back "you'll be reminded at 13:38" against a house clock
+        of 11:38 — two hours of somebody's arithmetic. A relative ask is
+        arithmetic the house does, in its own zone, and `describes` says the
+        result back.
+        """
+        if not isinstance(data, dict) or data.get("at"):
+            return data
+        minutes = data.get("in_minutes")
+        seconds = data.get("in_seconds")
+        if minutes is None and seconds is None:
+            return data
+        try:
+            delta = timedelta(minutes=float(minutes or 0), seconds=float(seconds or 0))
+        except (TypeError, ValueError):
+            return data
+        if delta.total_seconds() <= 0:
+            return data
+        out = {k: v for k, v in data.items() if k not in ("in_minutes", "in_seconds")}
+        out["at"] = (self.now() + delta).replace(microsecond=0).isoformat()
+        return out
+
     async def async_add(self, data: dict[str, Any], *, allow_service: bool) -> dict[str, Any]:
+        data = self._relative_to_at(data)
         job = job_from_dict(data, editable=True)
         if job is None:
             return {"status": "error", "error": "that is not a schedule I can read"}
@@ -800,7 +827,7 @@ def _register_tools(jarvis: "Jarvis", manager: ScheduleManager) -> None:
             "when": job["describes"],
             "message": (
                 f"Scheduled: {job['title']} — {job['describes']}. Tell the user it "
-                "is set, and when. It is on the Tasks page."
+                "is set, and when — the time as `when` gives it, in those words. It is on the Tasks page."
             ),
         }
 
@@ -825,9 +852,10 @@ def _register_tools(jarvis: "Jarvis", manager: ScheduleManager) -> None:
         name="schedule_task",
         description=(
             "Put something off until later: a reminder to say, or a research "
-            "run to start. Give `at` an ISO timestamp for a one-off ('remind me "
-            "at seven'; 'remind me in five minutes that the audit ran' is `at` "
-            "five minutes from now with the words as the message), or "
+            "run to start. Give `at` an ISO timestamp for a one-off the user NAMED "
+            "('remind me at seven'); 'remind me in five minutes that the audit ran' "
+            "is `in_minutes: 5` with the words as the message — the house does the "
+            "arithmetic; never compute `at` yourself for a relative ask — or "
             "`daily_at`/`days` for a repeat. Every firing shows "
             "up on the Tasks page. This cannot schedule actions on the house — "
             "those are set up in the console."
@@ -844,7 +872,11 @@ def _register_tools(jarvis: "Jarvis", manager: ScheduleManager) -> None:
                 "question": {"type": "string", "description": "for research: what to find out"},
                 "at": {
                     "type": "string",
-                    "description": "one-off: an ISO timestamp in the user's local time",
+                    "description": "one-off: an ISO timestamp in the user's local time — for a time the user NAMED ('at seven')",
+                },
+                "in_minutes": {
+                    "type": "number",
+                    "description": "one-off: minutes from now — for 'in five minutes', 'in an hour' (60); the house computes the time, never you",
                 },
                 "daily_at": {"type": "string", "description": "repeat: 'HH:MM'"},
                 "days": {

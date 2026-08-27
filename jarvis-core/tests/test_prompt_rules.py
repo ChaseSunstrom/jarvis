@@ -117,3 +117,9 @@ def test_one_job_is_a_background_task_alone_never_delegated_as_well():
 
     assert "is run_background_task alone" in DEFAULT_PERSONA
     assert "never both for the same request" in DEFAULT_PERSONA
+
+
+def test_a_relative_reminder_is_minutes_the_house_turns_into_a_time():
+    from jarvis.llm.agent import TOOL_RULES
+
+    assert "in_minutes: 5" in TOOL_RULES and "never compute a timestamp yourself" in TOOL_RULES
