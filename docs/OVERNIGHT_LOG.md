@@ -1035,3 +1035,13 @@ is quiet. Done since:
   watch reply left out "changed once"). CI on 313a8b8: all five workflows green — the core leg lists errored tests
   since `-rfE`. The sixteenth's report run started 11:04; the seventeenth (core rebuilt from this tree, fourteen gates,
   a report) is armed behind it.
+- 11:46 UTC — the sixteenth's report run (11:04–11:45, 99 scenarios, the 10:21 house, the rig as of 11:04): 82/99, 148/165
+  turns, intent 89.7 %, routing 94.2 % (over its floor), WER 1.8 % over 51, median 2.95 s, p95 13.41 s. The containers row is
+  clean — no socket the house closed, no boot the run did not order — so the fifteenth's 57/98 was one outside event.
+  Seventeen misses: house-cover ×2 ("close" reached the generic turn_off on a cover), house-vacuum (answered, no start),
+  in-here-by-voice (typed over REST, no device — asked which), memory-per-person (the rig's Piper voice was filed under
+  the operator's own profile, not the one it enrolled — the gate's observe mode names the nearest person), memory-reflection
+  and notice-garage-door and surface-by-voice's "clear the screen" (fixed on the tree, not on this house), self-review and
+  stop-means-stop (the rig counted its own stop's cancel), resilience-core-restart's second turn, task-survives-a-restart
+  (no "picked back up" completion in 300 s), timer-by-voice ×2 ("cancel the tea timer" left it active), what-did-you-tell-me
+  (the judge read the record's other real entries as invented), vision-look-fixture (M56). The seventeenth runs next.

@@ -764,6 +764,11 @@ class Runner:
                 service = "lock" if wanted in ("locked", "on", "true") else "unlock"
             elif domain == "cover":
                 service = "open_cover" if wanted in ("open", "on", "true") else "close_cover"
+            elif domain == "vacuum":
+                # A vacuum is docked or cleaning; "Start the vacuum." on the
+                # sixteenth house found it already cleaning from an earlier
+                # scenario and the model, rightly, did nothing.
+                service = "start" if wanted in ("cleaning", "on", "true") else "return_to_base"
             else:
                 service = "turn_on" if wanted in ("on", "true") else "turn_off"
             try:

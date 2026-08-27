@@ -3,6 +3,9 @@ capability: house
 gated-on: M92
 intent: "The robot vacuum, started by voice."
 variants: [voice, text]
+setup:
+  states:
+    vacuum.robot_vacuum: docked
 turns:
   - say: "Start the vacuum."
     expect:

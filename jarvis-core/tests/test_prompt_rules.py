@@ -36,6 +36,9 @@ def test_the_rules_say_what_it_means_in_a_follow_up():
     rule names the pronoun and the direction."""
     assert '"It", "that", "the same" and "again" in a follow-up mean the thing this' in TOOL_RULES
     assert "Do the opposite of what" in TOOL_RULES
+    # "Now do the same in the bedroom" after the ceiling lights: the bed light,
+    # not "the bedroom has no ceiling lights" (resilience-core-restart, 27 Aug).
+    assert "same in the bedroom" in TOOL_RULES and "not a\n  thing of the same name" in TOOL_RULES
 
 
 def test_an_ambiguous_request_is_a_question_that_names_the_candidates():

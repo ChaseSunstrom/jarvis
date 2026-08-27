@@ -16,6 +16,10 @@ turns:
   - say: "What have you told me in the last few minutes?"
     wait: 75
     expect:
+      # The record holds whatever earlier scenarios left on it — finished
+      # audits, timers done — and naming those is reading the record, not
+      # inventing (the sixteenth house's judge read them as invented).
       reply_means: >
-        mentions the reminder that the audit ran (from its record), and does
-        not invent other messages
+        mentions the reminder that the audit ran (from its record); it may
+        mention other things that are on the record; it must not invent
+        messages that are not

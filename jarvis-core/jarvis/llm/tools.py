@@ -1875,6 +1875,11 @@ def register_builtin_tools(
         for domain, entity_ids in _group_by_domain(resolution.entity_ids).items():
             data: dict[str, Any] = {"entity_id": entity_ids}
             service = action
+            if domain == "cover" and action in ("turn_on", "turn_off"):
+                # A cover opens and closes; "turn_off" on it reached
+                # `cover.turn_off` on the live house (27 Aug 2026) — the
+                # window closed, and the record said something no cover does.
+                service = "open_cover" if action == "turn_on" else "close_cover"
             if action == "turn_on":
                 if domain == "light":
                     if brightness is not None:

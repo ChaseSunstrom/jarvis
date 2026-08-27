@@ -28,7 +28,10 @@ turns:
     expect:
       capability: surface
       surface: {entity: sensor.garage_temperature, within: 20}
-      reply_means: "says it has put the garage temperature up on the screen"
+      # "There it is, Sir — the garage is at 12.5 °C" IS the panel going up;
+      # the surface assertion above is the proof, the sentence need not
+      # narrate the screen.
+      reply_means: "gives the garage temperature, and/or says it is on the screen ('there it is' counts)"
   - say: "Clear the screen."
     expect:
       capability: surface
