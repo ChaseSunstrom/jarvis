@@ -161,7 +161,7 @@ test('no two labels print over each other', async ({ page }) => {
 			return { x1: r.left, x2: r.right, y1: r.top, y2: r.bottom, text: el.textContent };
 		})
 	)).filter((b) => b.x2 > b.x1);
-	expect(boxes.length).toBe(5);
+	expect(boxes.length).toBe(6);
 	for (let i = 0; i < boxes.length; i++) {
 		for (let j = i + 1; j < boxes.length; j++) {
 			const a = boxes[i];

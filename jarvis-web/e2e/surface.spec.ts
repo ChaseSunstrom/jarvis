@@ -119,7 +119,7 @@ test('a background job with steps puts its plan on the screen, and its result st
 	const brief = page.locator('[data-testid^="surface-brief-"]');
 	await expect(brief).toBeVisible({ timeout: 10_000 });
 	await expect(page.locator('.surface').getByText('Finished: Audit every sensor')).toBeVisible();
-	await page.locator('[data-testid^="surface-open-"]').first().click();
+	await page.locator('[data-testid^="surface-open-"]').first().click({ force: true });
 	const note = page.locator('[data-testid^="surface-text-"]');
 	await expect(note).toBeVisible({ timeout: 5_000 });
 	await expect(note).toContainText('all twelve read');

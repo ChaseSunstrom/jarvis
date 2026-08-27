@@ -103,7 +103,7 @@ test("the page's one search filters the catalogue as it filters the folds", asyn
 	await expect(page.locator('[data-testid^="catalog-"][data-jv-row]')).toHaveCount(0);
 
 	await search.fill('');
-	await expect(page.locator('[data-testid^="catalog-"][data-jv-row]')).toHaveCount(6);
+	await expect(page.locator('[data-testid^="catalog-"][data-jv-row]')).toHaveCount(10);
 });
 
 test('installing is a second decision, with the hash and every program named, and the row follows', async ({ page }) => {

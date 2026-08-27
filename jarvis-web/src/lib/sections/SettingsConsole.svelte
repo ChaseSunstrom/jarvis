@@ -186,7 +186,7 @@
 	     read while you read it. -->
 	<Panel title="Text size" meta="this browser only" testid="text-size">
 		{#snippet children()}
-			<SettingRow label="Scale" why="multiplies every size in the interface">
+			<SettingRow label="Scale" why="multiplies every size in the interface" testid="console-scale">
 				<!-- A segmented choice: the current size is raised, not lit. The accent
 				     is for what is about to happen, and a preference already in effect
 				     is not that. -->
@@ -222,25 +222,25 @@
 	-->
 	<Panel title="This console" meta={config.backend ?? '…'} live={link.status === 'open'} testid="console-env">
 		{#snippet children()}
-			<SettingRow label="Backend" why="how this console reaches Jarvis">
+			<SettingRow label="Backend" why="how this console reaches Jarvis" testid="console-backend">
 				<span class="value">
 					<Pill tone={link.status === 'open' ? 'live' : 'neutral'} testid="backend-kind">{config.backend ?? '…'}</Pill>
 				</span>
 			</SettingRow>
-			<SettingRow>
+			<SettingRow testid="console-url">
 				{#snippet what()}<b>URL</b><code>{config.backendUrlVar ?? 'JARVIS_URL'}</code>{/snippet}
 				<span class="value mono" data-testid="backend-url">{config.backendUrl || 'not configured'}</span>
 			</SettingRow>
-			<SettingRow>
+			<SettingRow testid="console-token">
 				{#snippet what()}<b>Token</b><code>{config.backendTokenVar ?? 'JARVIS_TOKEN'}</code>{/snippet}
 				<span class="value" data-testid="backend-token">
 					{config.tokenConfigured ? '•••••••• held server-side' : 'not configured'}
 				</span>
 			</SettingRow>
-			<SettingRow label="Version" why="reported by the backend">
+			<SettingRow label="Version" why="reported by the backend" testid="console-version">
 				<span class="value mono">{backendConfig?.version ?? backendConfig?.ha_version ?? 'unknown'}</span>
 			</SettingRow>
-			<SettingRow>
+			<SettingRow testid="console-voice-pipeline">
 				{#snippet what()}<b>Voice pipeline</b><code>JARVIS_PIPELINE</code>{/snippet}
 				<span class="value" data-testid="pipeline-name">
 					{config.pipeline || 'not set'}{#if pipelineNames.length}

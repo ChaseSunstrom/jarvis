@@ -128,8 +128,14 @@ point is that nothing has to be opened to see it.
 			}>({ type: 'jarvis/extensions/browse', query: query.trim() });
 			entries = answer.entries ?? [];
 			// The server filters by the query (the registries search on their
-			// side), so "N of M match" needs the whole from an unfiltered read.
+			// side), so "N of M match" needs the whole from an unfiltered read —
+			// made here when a query got in before one (CI typed before the
+			// first browse had answered: "1 of 1 match").
 			if (!query.trim()) total = entries.length;
+			else if (total === 0) {
+				const whole = await conn.client.command<{ entries?: CatalogEntry[] }>({ type: 'jarvis/extensions/browse' });
+				total = whole.entries?.length ?? entries.length;
+			}
 			sources = answer.sources ?? [];
 			sourceErrors = answer.errors ?? [];
 			skipped = answer.skipped ?? 0;

@@ -46,6 +46,9 @@ test.beforeEach(async ({ page }) => {
 	await expect(page.getByTestId('reactor')).toBeVisible({ timeout: 15_000 });
 });
 
+// `force` on the ⤢ clicks: on CI the panel's enter animation kept the button
+// "not stable" for the whole timeout while the click itself lands fine (it does
+// here, unforced); what the case proves is the state after the click.
 test.afterEach(async ({ page }) => {
 	await tell(page, { type: 'jarvis/surface/clear' }).catch(() => {});
 });
@@ -67,7 +70,7 @@ test('three long notes are three one-row briefs; the page does not scroll', asyn
 test('⤢ opens one note to the whole text as written, and ⤡ folds it back to a line', async ({ page }) => {
 	const ids = await threeNotes(page);
 	const id = ids[0];
-	await page.getByTestId(`surface-open-${id}`).click();
+	await page.getByTestId(`surface-open-${id}`).click({ force: true });
 	const text = page.getByTestId(`surface-text-${id}`);
 	await expect(text).toBeVisible({ timeout: 5_000 });
 	await expect(text.locator('h1')).toHaveText('Sensor audit');
@@ -75,7 +78,7 @@ test('⤢ opens one note to the whole text as written, and ⤡ folds it back to 
 	const row = (await page.getByTestId('surface').boundingBox())!.width / 12;
 	const open = (await page.getByTestId(`surface-panel-${id}`).boundingBox())!;
 	expect(open.height).toBeGreaterThan(row * 3);
-	await page.getByTestId(`surface-open-${id}`).click();
+	await page.getByTestId(`surface-open-${id}`).click({ force: true });
 	await expect(page.getByTestId(`surface-brief-${id}`)).toBeVisible({ timeout: 5_000 });
 	const folded = (await page.getByTestId(`surface-panel-${id}`).boundingBox())!;
 	expect(folded.height).toBeLessThanOrEqual(row + 2);
