@@ -2396,3 +2396,11 @@ def test_every_watch_rule_watches_a_path_that_exists() -> None:
         # compose file's are relative to the repository root.
         candidates = [ROOT / host, ROOT.parent / host, base / host]
         assert any(candidate.exists() for candidate in candidates), (service, host)
+
+
+def test_the_image_ships_the_environment_catalogue():
+    """M114: the console lists every variable `.env.example` names, read from
+    beside the package — so the image must carry the file, or a container
+    lists nothing while a bare host lists everything."""
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY .env.example ./.env.example" in dockerfile

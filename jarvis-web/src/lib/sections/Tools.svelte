@@ -625,7 +625,7 @@
 {/snippet}
 
 {#snippet mcpBody()}
-	<McpServers {conn} {query} bind:count={mcpCount} bind:matches={mcpMatches} bind:adding={mcpAdding} />
+	<McpServers {conn} {query} epoch={installEpoch} bind:count={mcpCount} bind:matches={mcpMatches} bind:adding={mcpAdding} />
 {/snippet}
 
 {#snippet skillsBody()}

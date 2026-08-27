@@ -1824,6 +1824,18 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m113-markdown-renders-completely.sh`
   - 27 Aug 16:05: planned and built; ten vitest cases; the Playwright case (a note with a table, a nested list and a
     task list) runs on the twenty-first.
+- [ ] **M114 — Every .env variable, set from the console, kept** · size M · deps M54, M67 · parallel-ok M113
+  - Scope: the operator's report of 27 Aug 16:07 — "allow setting all .env variables in the jarvis console settings,
+    and have them persist". Today `.env` is read by compose at container start and by `!env_var` in
+    configuration.yaml; the console cannot see or change any of it. A SYSTEM section in Settings lists every
+    variable `.env.example` names — its comment as the why, its value (secrets masked, revealed on request), SET and
+    CLEAR per row — and what is set there is kept in `<config>/.storage/environment.json`, applied over the
+    container's environment at the next boot before configuration is read, so `!env_var` and every integration see
+    it. The row says which value is live (the file's, the override's) and that a change applies on restart, with a
+    RESTART control beside it. The precious `.env` on the host is never written. The catalogue ships with the core
+    (`.env.example` copied into the image), and `test_packaging` pins that every `NAME=` line there is in it.
+  - Verify: `bash scripts/verify/m114-env-from-the-console.sh`
+  - 27 Aug 16:12: planned, from the report.
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,

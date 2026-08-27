@@ -45,7 +45,21 @@
 	// `adding` is bindable so the catalogue above the folds (M65) can open
 	// this form from its "add by URL" line: the fold is closed at rest, and a
 	// pointer to a form nobody can see is not a way in.
-	let { conn, count = $bindable(0), query = '', matches = $bindable(0), adding = $bindable(false) }: { conn: Connection | null; count?: number; query?: string; matches?: number; adding?: boolean } = $props();
+	let {
+		conn,
+		count = $bindable(0),
+		query = '',
+		matches = $bindable(0),
+		adding = $bindable(false),
+		epoch = 0
+	}: { conn: Connection | null; count?: number; query?: string; matches?: number; adding?: boolean; epoch?: number } = $props();
+
+	// A server installed from the catalogue (M108) lands in this list: the
+	// Tools page bumps `epoch` after an install, and the fold re-reads.
+	$effect(() => {
+		void epoch;
+		if (conn && epoch > 0) void refresh(conn);
+	});
 	/** The tools page's one search (M55): a row matches when any of its words do. */
 	function matchesQuery(row: object, q: string): boolean {
 		const needle = q.trim().toLowerCase();

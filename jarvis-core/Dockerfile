@@ -46,6 +46,8 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY jarvis ./jarvis
+# The environment catalogue the console lists (M114): every variable .env.example names.
+COPY .env.example ./.env.example
 # Host build caches (3.11 .pyc in a 3.12 image) are dead weight; drop them.
 RUN find /srv/jarvis -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 

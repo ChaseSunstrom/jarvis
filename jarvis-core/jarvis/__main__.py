@@ -164,6 +164,12 @@ def _reapply_early_consumers(jarvis: Jarvis, args: argparse.Namespace) -> None:
 
 async def async_run(args: argparse.Namespace) -> int:
     config_dir = Path(args.config).expanduser().resolve()
+    # Before anything reads configuration.yaml: what the console set (M114)
+    # goes over the container's environment, so `!env_var` and every
+    # integration see it. Plain files, no loop — the house does not exist yet.
+    from .environment import apply_overrides
+
+    apply_overrides(config_dir)
     try:
         config, package_provenance = load_config_with_provenance(config_dir)
     except ConfigError as err:
