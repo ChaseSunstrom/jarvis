@@ -224,3 +224,14 @@ test('the voice pace is on Settings › Voice, as a number, saying where the kno
 	await expect(row).toContainText(/pace/i);
 	await expect(row).toContainText(/PIPER_LENGTH_SCALE/);
 });
+
+// Who may speak (M71's follow-up): the gate's mode is a setting on Settings ›
+// Voice, choosable before anyone is enrolled — the operator "couldn't set the
+// enrol mode when enrolling" because the screen only showed it.
+test('the voice gate\'s mode is a choice on Settings › Voice, with the three modes', async ({ page }) => {
+	await page.goto('/settings/voice');
+	const mode = page.getByTestId('plain-input-voice.speaker.mode');
+	await expect(mode).toBeVisible({ timeout: 10_000 });
+	await expect(mode.locator('option')).toHaveCount(3);
+	await expect(page.getByTestId('plain-voice.speaker.mode')).toContainText(/once a voice is enrolled/i);
+});

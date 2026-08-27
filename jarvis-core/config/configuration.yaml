@@ -160,6 +160,13 @@ voice:
     # variable set. With `engine: openai` (Kokoro) it is `speed:` here instead,
     # per request, 1.0 being the voice's own pace.
     length_scale: !env_var PIPER_LENGTH_SCALE 0.9
+  # Who may speak to Jarvis (M71). `mode` is also on Settings › Voice, where it
+  # can be chosen before anyone is enrolled — it takes effect once a voice is:
+  # off = anyone; observe = say who spoke, allow everyone; enforce = refuse a
+  # voice that is not enrolled. The threshold comes from enrolment's own
+  # suggestion; see docs/voice-identity.md for the rest of the block.
+  speaker:
+    mode: off
   wake:
     host: 127.0.0.1
     port: 10400

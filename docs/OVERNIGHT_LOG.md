@@ -762,3 +762,11 @@ is quiet. Done since:
   built against a fake n8n; the key and the assistant's shape are the operator's (BLOCKERS.md).
   The phone's heartbeat needed `client?.` — the Kotlin compiles and its 227 unit tests pass here
   now, which CI had caught first.
+- 00:06 — "I can't set the enrol mode when enrolling": the gate's mode was a read-only pill.
+  `voice.speaker.mode` is a choice on Settings › Voice now, choosable before anyone is enrolled
+  and inert until someone is (M71 follow-up; settings suites 52). Settings › Tools got the n8n
+  line beside the catalogue (M77). The orchestrator image still cannot reach the Debian mirror
+  from a container — a fresh `python:3.12-slim` timed out on `apt-get update` at five minutes —
+  so OpenCode is not in it and M82's last checks stay red; recorded in BLOCKERS.md, with the
+  watcher's fix meaning the card says so within a poll. The tenth rebuild's chain is on the
+  core suite (one failure seen so far, named when the run ends).

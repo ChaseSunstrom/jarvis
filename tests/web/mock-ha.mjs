@@ -429,6 +429,22 @@ export function makeWorld() {
 			package: 'demo-house'
 		},
 		{
+			// Who may speak (M71's follow-up): the gate's mode as a setting, so it
+			// can be chosen before anyone is enrolled.
+			key: 'voice.speaker.mode',
+			label: 'Who may speak',
+			group: 'Voice',
+			type: 'choice',
+			apply: 'live',
+			note: 'Takes effect once a voice is enrolled.',
+			value: 'off',
+			yaml_value: 'off',
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null,
+			choices: ['off', 'observe', 'enforce']
+		},
+		{
 			// The voice's pace (M70): a number Piper takes at START, so the
 			// registry marks it `restart` and the row must say where the real
 			// knob is rather than promise a live change.
@@ -754,6 +770,8 @@ export function makeWorld() {
 		// The voice screen's surface (M83) and the drags it received.
 		surface: [],
 		surfaceMoves: [],
+		// n8n (M77): not configured at rest, so the Tools screen's line says so.
+		n8n: { status: 'not_configured', url: '', assistant_url: '' },
 		// One connected and one not: "connected now" is the fact the panel
 		// exists to show before somebody revokes the wrong row.
 		tokens: [
@@ -2385,6 +2403,10 @@ index 1234567..89abcde 100644
 					const service = msg.service;
 					// The approvals banner asks for what is already waiting when it
 					// mounts, so a reload does not lose a held action.
+					if (domain === 'n8n' && service === 'status') {
+						ok(msg.id, { changed_states: [], service_response: world.n8n });
+						break;
+					}
 					if (domain === 'llm' && service === 'pending_requests') {
 						// Purged before listing, as jarvis-core purges (M66): a
 						// request that lapsed is announced as such, once, and never

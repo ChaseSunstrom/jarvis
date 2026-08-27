@@ -186,3 +186,20 @@ and say what `/assistant` is: a Chat Trigger's webhook (Jarvis posts
 `{chatInput, sessionId, action: "sendMessage"}` and reads `output`), or
 something else — its URL, auth and reply field decide `ask_n8n_assistant`.
 `bash scripts/verify/m77-n8n.sh` then proves the connection.
+
+## The orchestrator image cannot reach the Debian mirror (M82)
+
+`jarvis-orchestrator`'s image needs `git`, `curl` and `unzip` from Debian and
+OpenCode from GitHub. On the night of 26 Aug 2026 `apt-get update` against
+`https://deb.debian.org` did not finish in fifteen minutes from inside a
+container (a fresh `python:3.12-slim` timed out at five), while the same
+mirror served the core image at 21:05. Until a container can reach the
+mirror, the image builds without the tools and every remote coding job fails
+at once with "opencode binary not installed" — which the card now says within
+a poll (M82) instead of sitting at "queued". Check from the host:
+
+    docker run --rm python:3.12-slim sh -c 'apt-get -o Acquire::ForceIPv4=true update'
+    docker compose -f docker-compose.yml --profile agents build --no-cache jarvis-orchestrator
+
+The local coding job (`start_coding_job`, the sandbox) does not need the
+orchestrator and is unaffected.

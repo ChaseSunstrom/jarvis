@@ -745,6 +745,8 @@ jarvis-core; console: `e2e/approvals.spec.ts`, 3, and `src/lib/tierContract.test
 | The card reads "Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu" — the server's sentence as the headline, the tool's name under it, no raw `key: value` line — and approving it changes the setting the Settings page shows; a request with no sentence still draws name-and-arguments; the Tools page test-run of `change_setting` is held with the same sentence and an unknown key is refused there too | Automated | `e2e/approvals.spec.ts` (3); the field's name is bound to `tests/contracts/tool_tiers.json` `held_summary` by `tierContract.test.ts` and `test_tool_tiers_contract.py`; the sentence is on the wire in `test_the_summary_travels_on_the_wire_and_is_empty_for_a_tool_without_one` |
 | The phone shows the sentence | **Not done** | the phone renders a held request as name-and-arguments; `summary` is on the wire and ignored there, as the contract notes |
 | A real model, asked to "enable demo mode", says there is no such setting and names the nearest | Manual | the live rig refuses worktrees; run `bash scripts/verify/live_interaction.sh` from `/opt/jarvis` and ask |
+| The gate's mode is a setting on Settings › Voice (`voice.speaker.mode`: off / observe / enforce), choosable before anyone is enrolled and inert until someone is — the operator "couldn't set the enrol mode when enrolling" because the screen only showed it | Automated | `test_settings.py` (the spec and its validator); `e2e/settings.spec.ts` "the voice gate's mode is a choice…" |
+
 
 ### Something to browse (M65)
 
@@ -799,6 +801,7 @@ transport), `test_gated_services.py`, `test_tool_tiers_contract.py`.
 | Activate, create and update are Tier 3 with a sentence for the card; a definition without nodes is not one | Automated | `test_activate_create_and_update_carry_a_sentence_for_the_card`; the Tier-3 table rows |
 | The assistant's reply comes back fenced and untrusted, and nothing it proposes runs except through the held tools | Automated | `test_the_assistant_answers_fenced_and_nothing_it_says_runs` |
 | Unconfigured, the tools say so and call nothing; a refused key is named | Automated | `test_unconfigured_says_so_and_calls_nothing`, `test_a_refused_key_is_named` |
+| Settings › Tools carries an n8n line beside the catalogue: not configured (and what to set), unreachable (and why), or connected with the workflow count | Automated | `e2e/n8n.spec.ts`; the gate greps the mount |
 | Against the operator's n8n | **Unproven** | needs `N8N_URL` and `N8N_API_KEY` in `jarvis-core/.env` (the gate's last check says so), and what `/assistant` answers there — `BLOCKERS.md` |
 
 ### Pull things up (M83)

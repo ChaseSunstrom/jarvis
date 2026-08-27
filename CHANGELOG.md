@@ -25,6 +25,9 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   `move_panel` (all Tier 1). One surface per house.
 
 ### Changed
+- **M71 follow-up — who may speak is a setting.** The voice gate's mode (off / observe / enforce) is
+  on Settings › Voice as a choice, choosable before anyone is enrolled and taking effect once a
+  voice is; the screen used to only show it.
 - **M79 — not listening while you enrol.** The phrases read aloud for a voiceprint no longer
   reach the house as commands: a sample, a test, or the console's and the phone's "recording
   now" heartbeat marks an enrolment in progress for twenty seconds, and any turn that starts

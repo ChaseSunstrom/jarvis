@@ -281,6 +281,20 @@ def _apply_demo_enabled(jarvis: "Jarvis", value: Any) -> bool:
     return True
 
 
+def _apply_speaker_mode(jarvis: "Jarvis", value: Any) -> bool:
+    """The voice gate's mode, live. Inert until somebody is enrolled — the
+    gate's own rule — which is why it may be chosen before enrolment: the
+    operator could not set it while enrolling on 26 Aug 2026 because the
+    screen only showed it."""
+    from .integrations.voice import get_voice_data
+
+    data = get_voice_data(jarvis)
+    if data is None or getattr(data, "speaker", None) is None:
+        return False
+    data.speaker.mode = str(value)
+    return True
+
+
 def _apply_question_ttl(jarvis: "Jarvis", value: Any) -> bool:
     registry = jarvis.data.get("llm_tools")
     if registry is None:
@@ -634,6 +648,19 @@ SETTINGS: tuple[SettingSpec, ...] = (
         "the same number and restart wyoming-piper; with a Kokoro engine use "
         "`speed:` instead.",
         validate=_number(0.5, 1.5),
+    ),
+    SettingSpec(
+        key="voice.speaker.mode",
+        path=("voice", "speaker", "mode"),
+        label="Who may speak",
+        group="Voice",
+        type="choice",
+        note="off: anyone. observe: Jarvis says who spoke and answers everyone. enforce: a "
+        "voice that is not enrolled is refused. Choose it any time; it takes effect once a "
+        "voice is enrolled.",
+        validate=_one_of("off", "observe", "enforce"),
+        apply_hook=_apply_speaker_mode,
+        choices_hook=lambda jarvis: ["off", "observe", "enforce"],
     ),
     SettingSpec(
         key="voice.wake_word",

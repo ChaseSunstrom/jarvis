@@ -7,6 +7,7 @@
 	import Extensions from '$lib/components/Extensions.svelte';
 	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
 	import McpServers from '$lib/components/McpServers.svelte';
+	import N8nConnection from '$lib/components/N8nConnection.svelte';
 	import SkillsPanel from '$lib/components/SkillsPanel.svelte';
 	import {
 		Button,
@@ -708,6 +709,10 @@
 		onaddmcp={addMcp}
 		oninstalled={() => (installEpoch += 1)}
 	/>
+	<!-- The house's n8n (M77): one line beside the catalogue, always in view,
+	     saying whether it answers — a connection that lives only in .env is
+	     invisible to the operator, who judges capability from this screen. -->
+	<N8nConnection {conn} />
 
 	<!-- Above the toolbox, because it is the thing that DECIDES the toolbox: what
 	     is installed and what it holds is the cause, and the tool list below is
