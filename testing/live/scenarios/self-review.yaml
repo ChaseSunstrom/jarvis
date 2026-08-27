@@ -20,6 +20,12 @@ turns:
     review: true
     expect:
       notification: {kind: review, title_contains: "went wrong", within: 30}
+      # The record holds what the day held — other scenarios' stops, a tool
+      # call cut off — and naming those is reading it, not padding: the
+      # seventeenth house's judge read a real second stop as "an additional
+      # failure not required" (27 Aug 2026).
       reply_means: >
-        says that a run (an answer) was stopped or cut off by the user, from
-        its record — it may add a lesson — and does not invent other failures
+        names, from its record, that a run was stopped before it finished (the
+        one the user cut off); it may name other things the record holds — more
+        stops, a tool call cut off — and must not invent a failure the record
+        does not hold, nor apologise for a mistake it did not make
