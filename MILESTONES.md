@@ -1307,7 +1307,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     ("clear the screen", "put the camera on the left") — and remembers where you left them.
   - Verify: `bash scripts/verify/m83-pull-things-up.sh`
 
-- [ ] **M84 — Jarvis volunteers a briefing** · size S · deps M17, M60 · parallel-ok M85–M93
+- [x] **M84 — Jarvis volunteers a briefing** · size S · deps M17, M60 · parallel-ok M85–M93
   - Scope: the audit of 27 Aug found `integrations/briefing` built, tested (20) and NOT on the
     house — no `briefing:` block, so no 07:00/22:00 digest and no `get_briefing` tool. Enable it
     with the documented defaults; "What's my briefing?" is one `get_briefing` call and one short
@@ -1315,6 +1315,8 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the operator through `companion.notify` (spoken when present, a notification when not). The
     rig routes `get_briefing` to its own capability.
   - Verify: `bash scripts/verify/m84-briefing.sh`
+  - 27 Aug 11:01: ticked — gate 8/8 on the sixteenth's house (the 10:21 image); the plan pass's miss was the gate's
+    (a two-digit milestone regex in the rig's own check), not the briefing's.
 - [ ] **M85 — Work survives a restart** · size M · deps M10, M25 · parallel-ok M84, M86
   - Scope: four background tasks on the house tonight ended "interrupted when Jarvis restarted".
     A task with a plan (steps recorded) is resumed from its last completed step after a restart

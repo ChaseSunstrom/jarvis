@@ -68,18 +68,27 @@ def token():
             return line.split("=", 1)[1].strip().strip(chr(34))
     return ""
 url = os.environ.get("JARVIS_URL", "http://127.0.0.1:8080").replace("http", "ws", 1) + "/api/websocket"
+async def result(ws, n):
+    # By id, not by position: a registered socket is also pushed events, and
+    # the frame after a request is not always its reply — this probe read a
+    # KeyError off one on the sixteenth house (27 Aug 2026), as M103 had.
+    while True:
+        frame = json.loads(await ws.recv())
+        if frame.get("id") == n and frame.get("type") == "result":
+            assert frame.get("success"), frame
+            return frame.get("result")
 async def main():
     async with websockets.connect(url, max_size=None) as ws:
         await ws.recv(); await ws.send(json.dumps({"type": "auth", "access_token": token()}))
         assert json.loads(await ws.recv())["type"] == "auth_ok"
         await ws.send(json.dumps({"id": 1, "type": "jarvis/device/register", "device": {"id": "m99-probe", "name": "M99 probe", "platform": "android", "capabilities": ["device"], "app_version": "1.0.0", "actions": []}}))
-        assert json.loads(await ws.recv()).get("success")
+        await result(ws, 1)
         await ws.send(json.dumps({"id": 2, "type": "config/companion/list"}))
-        rows = json.loads(await ws.recv())["result"]
+        rows = await result(ws, 2)
         mine = [r for r in rows if r["device_id"] == "m99-probe"]
         assert mine and "area_id" in mine[0] and "area" in mine[0], mine
         await ws.send(json.dumps({"id": 3, "type": "config/device_registry/list"}))
-        entries = json.loads(await ws.recv())["result"]
+        entries = await result(ws, 3)
         assert any("companion:m99-probe" in (e.get("identifiers") or []) for e in entries), "no registry entry for the companion"
         print("companion on the list with area fields; registry entry present")
 asyncio.run(main())
