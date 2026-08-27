@@ -212,7 +212,7 @@ def expected_onscreen_literals() -> dict[str, tuple[set[str], set[str]]]:
 # "it failed, and said no more than that") a person reads and an
 # instrumented test can wait for — TaskOverlay exposes `rootForTest` for
 # exactly that, the same seam AssistOverlay has.
-UI_SUBPACKAGES = {"ui", "companion", "tasks"}
+UI_SUBPACKAGES = {"ui", "companion", "tasks", "surface"}  # surface: the house's panels and the dock on the voice screen (M103)
 
 # Sub-packages whose strings a person DOES read, on a surface no instrumented
 # test can reach.

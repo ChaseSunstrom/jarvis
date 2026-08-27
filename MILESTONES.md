@@ -1588,6 +1588,27 @@ web and of Tasker. Local only. Each row here is planned in that document.
     guard catches a claim and the pipeline `jarvis_run_stopped` when a run is stopped — both spans in the
     trace. Suite `test_review.py` 6; the rig's `review: true` turn; scenario `self-review` (a stop the rig
     sends, then "what did you get wrong today?"). The live half waits for a house built from this tree.
+- [ ] **M103 — The phone shows what the house puts up** · size L · deps M83, M88, M98 · parallel-ok M102
+  - Scope: the Android audit's last parity rows — the surface panels Jarvis puts up (`jarvis_surface_changed`)
+    reach no phone, and the task dock under the instrument (M76) is a chip on the phone, not the voice
+    screen. On the voice screen, under the activity strip: the panels the house has up, each one line in
+    the phone's own vocabulary (an entity and its state, a camera's name, a room's readings, a note's first
+    line, a page's title, the sky's next pass, a task's step and bar) — listed at connect from
+    `jarvis/surface/list`, kept live by the event, dismissable with the same `jarvis/surface/remove` the
+    console uses; and the task dock as a row of the board's visible tasks with their bars. A Python mirror
+    pins the kinds to the server's KINDS and the frames to the server's names; Roborazzi goldens for the
+    screen with panels; the M71 gate's gradle rows. Live: the rig puts an entity panel up over the websocket
+    and a phone-shaped socket (registered as a device) receives the event the screen draws from.
+  - Verify: `bash scripts/verify/m103-the-phone-shows-it.sh`
+  - 27 Aug 09:59: planned.
+  - 27 Aug 10:05: built, not ticked — `SurfaceWatch` on the device channel (subscribe first, list second, as
+    the task and moment watches do; an unknown kind is still listed by its title), `SurfaceView` (one line
+    per panel in the phone's words, a × that sends `jarvis/surface/remove` through the channel) and
+    `TaskDockView` (the board's visible rows with their bars) under the activity strip, listened to while
+    the screen is started. Mirror `surface_on_the_phone_test.py` 12/12 pins the kinds to the server's
+    KINDS, the frames to the server's names, the subscribe-before-list order and the two views; two new
+    goldens (`voice-surface`, `voice-task-dock`); gradle assembleDebug + testDebugUnitTest green. The gate's
+    live half (a phone-shaped socket sees the panel go up) runs on the house.
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
     tools, five websocket commands, the console's panels over the page around the instrument —

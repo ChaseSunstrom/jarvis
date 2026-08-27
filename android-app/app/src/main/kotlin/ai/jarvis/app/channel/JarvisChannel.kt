@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.util.Log
 import ai.jarvis.app.automation.AutomationBridge
 import ai.jarvis.app.companion.CompanionMessageHandler
+import ai.jarvis.app.surface.SurfaceWatch
 import ai.jarvis.app.tasks.MomentWatch
 import ai.jarvis.app.tasks.TaskBoard
 import ai.jarvis.app.tasks.TaskFrames
@@ -644,6 +645,23 @@ class JarvisChannel(
                 MomentWatch.onListing(result.optJSONObject("result"))
             }
         }
+        watchSurface(current)
+    }
+
+    /**
+     * And what the house has put up (M103): the surface's panels, subscribe
+     * first and list second for the reason [watchTasks] gives. An older
+     * jarvis-core answers `unknown_command` and the voice screen shows no
+     * panels — the behaviour before this existed.
+     */
+    private fun watchSurface(current: Session) {
+        current.send(TaskFrames.subscribe(nextRequestId.getAndIncrement(), SurfaceWatch.EVENT))
+        scope.launch {
+            val result = request(SurfaceWatch.TYPE_LIST, SurfaceWatch.listArgs())
+            if (result != null && ChannelFrames.isSuccess(result)) {
+                SurfaceWatch.onListing(result.optJSONObject("result"))
+            }
+        }
     }
 
     // --- outbound requests --------------------------------------------------
@@ -838,7 +856,7 @@ class JarvisChannel(
                     // Two boards, one event branch: a task is work in
                     // progress and a moment is a thing that already happened,
                     // and neither should have to know about the other.
-                    if (!TaskWatch.onEvent(msg)) MomentWatch.onEvent(msg)
+                    if (!TaskWatch.onEvent(msg) && !MomentWatch.onEvent(msg)) SurfaceWatch.onEvent(msg)
                 }
             }
 

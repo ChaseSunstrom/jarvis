@@ -92,7 +92,7 @@ def main() -> int:
         "the timestamp is read with a default (optDouble(key) answers NaN)",
     )
     check(
-        "if (!TaskWatch.onEvent(msg)) MomentWatch.onEvent(msg)" in channel,
+        "if (!TaskWatch.onEvent(msg) && !MomentWatch.onEvent(msg)) SurfaceWatch.onEvent(msg)" in channel,
         "a task event does not fall through to the moment board",
     )
     check("MAX_KEPT" in kotlin, "the phone keeps a bounded number of them")

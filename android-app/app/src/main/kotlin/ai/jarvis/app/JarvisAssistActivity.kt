@@ -13,6 +13,14 @@ import ai.jarvis.app.ui.ApprovalBridge
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.ActivityStrip
 import ai.jarvis.app.ui.KnowledgeGraphView
+import ai.jarvis.app.surface.SurfaceView
+import ai.jarvis.app.surface.SurfaceWatch
+import ai.jarvis.app.surface.TaskDockView
+import ai.jarvis.app.tasks.TaskWatch
+import ai.jarvis.app.channel.DeviceChannelHost
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import ai.jarvis.app.ui.JarvisUi
 import ai.jarvis.app.ui.PermissionBridge
 import ai.jarvis.app.ui.ReadabilityScrim
@@ -57,6 +65,12 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
     private lateinit var typedView: EditText
+    // What the house has put up, and what it is working on (M103): the
+    // console's surface and task dock, said in lines under the strip.
+    private lateinit var surfaceView: SurfaceView
+    private lateinit var taskDockView: TaskDockView
+    private var unlistenSurface: (() -> Unit)? = null
+    private var unlistenDock: (() -> Unit)? = null
     private lateinit var toolActivityView: ToolActivityView
     private lateinit var activityStrip: ActivityStrip
     private lateinit var knowledgeGraphView: KnowledgeGraphView
@@ -234,6 +248,18 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         // And what the HOUSE did around the turn (M61): the same rows the console draws.
         activityStrip = ActivityStrip(this)
         root.addView(activityStrip, fullWidth())
+        // And what the house has PUT UP and is WORKING ON (M103): the surface's
+        // panels one line each, the task dock with its bars — hidden until
+        // there is something, like the tool activity above.
+        surfaceView = SurfaceView(this).apply {
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.ROW), 0, 0)
+            onDismiss = { panelId -> dismissPanel(panelId) }
+        }
+        root.addView(surfaceView, fullWidth())
+        taskDockView = TaskDockView(this).apply {
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.ROW), 0, 0)
+        }
+        root.addView(taskDockView, fullWidth())
         // Sized by the graph itself (the console's 2:1 box), not a number
         // typed here.
         knowledgeGraphView = KnowledgeGraphView(this)
@@ -421,6 +447,9 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     }
 
     override fun onStart() {
+        // The surface and the dock follow the house while the screen is up (M103).
+        unlistenSurface = SurfaceWatch.listen { panels -> runOnUiThread { if (::surfaceView.isInitialized) surfaceView.render(panels) } }
+        unlistenDock = TaskWatch.listen { rows -> runOnUiThread { if (::taskDockView.isInitialized) taskDockView.render(rows) } }
         super.onStart()
         // Back on screen — either from the very first frame, or because a
         // prompt of ours has just been answered and handed the foreground back.
@@ -451,6 +480,8 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
      * app itself raised.
      */
     override fun onStop() {
+        unlistenSurface?.invoke(); unlistenSurface = null
+        unlistenDock?.invoke(); unlistenDock = null
         super.onStop()
         if (isFinishing) return
         if (!ourOwnPromptIsUp()) {
@@ -501,6 +532,22 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         if (!isFinishing) {
             Log.i(TAG, "nothing came back from the prompt; closing the conversation")
             finish()
+        }
+    }
+
+    /**
+     * Take a panel down, through the same `jarvis/surface/remove` the console
+     * sends, on the device channel. The event that follows redraws the list;
+     * nothing is removed locally on faith.
+     */
+    private fun dismissPanel(panelId: String) {
+        val channel = DeviceChannelHost.channel() ?: return
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                channel.request(SurfaceWatch.TYPE_REMOVE, SurfaceWatch.removeArgs(panelId))
+            } catch (t: Throwable) {
+                android.util.Log.w("JarvisAssist", "could not take panel $panelId down", t)
+            }
         }
     }
 

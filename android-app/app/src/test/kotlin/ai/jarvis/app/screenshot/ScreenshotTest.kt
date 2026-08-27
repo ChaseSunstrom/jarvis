@@ -433,6 +433,39 @@ class ScreenshotTest {
     }
 
     @Test
+    fun `the surface's panels, one line each`() {
+        // M103: what the console draws as instruments the phone says in lines
+        // — an entity with its state, a room's readings, a note, a page, a job.
+        val view = ai.jarvis.app.surface.SurfaceView(context)
+        view.stateOf = { entity -> if (entity == "light.bed_light") "on" else null }
+        view.render(
+            listOf(
+                ai.jarvis.app.surface.SurfaceWatch.Panel(id = "p1", kind = "entity", title = "Bed light", entity = "light.bed_light"),
+                ai.jarvis.app.surface.SurfaceWatch.Panel(id = "p2", kind = "readings", title = "", area = "Garage"),
+                ai.jarvis.app.surface.SurfaceWatch.Panel(id = "p3", kind = "note", title = "Boiler serviced", note = "boiler-serviced"),
+                ai.jarvis.app.surface.SurfaceWatch.Panel(id = "p4", kind = "page", title = "", url = "https://example.test/handbook"),
+                ai.jarvis.app.surface.SurfaceWatch.Panel(id = "p5", kind = "task", title = "Audit every sensor", task = "t1"),
+            ),
+        )
+        bitmapOf(view).captureRoboImage(golden("voice-surface"))
+    }
+
+    @Test
+    fun `the task dock under the instrument`() {
+        // M103: the board's visible rows with their bars — a job that knows how
+        // far it is, one that cannot know, and one that failed.
+        val view = ai.jarvis.app.surface.TaskDockView(context)
+        view.render(
+            listOf(
+                ai.jarvis.app.tasks.TaskBoard.Row(id = "t1", title = "Audit every sensor in the house", status = ai.jarvis.app.tasks.TaskBoard.Status.RUNNING, fraction = 0.4),
+                ai.jarvis.app.tasks.TaskBoard.Row(id = "t2", title = "Read the handbook", kind = "research", status = ai.jarvis.app.tasks.TaskBoard.Status.RUNNING),
+                ai.jarvis.app.tasks.TaskBoard.Row(id = "t3", title = "Fetch the index", status = ai.jarvis.app.tasks.TaskBoard.Status.ERROR, error = "the model server refused"),
+            ),
+        )
+        bitmapOf(view).captureRoboImage(golden("voice-task-dock"))
+    }
+
+    @Test
     fun `the knowledge graph for a small house`() {
         val notes = listOf(
             ai.jarvis.app.assist.KnowledgeGraph.NoteLike("n1", "Boiler service", tags = listOf("house"), links = listOf("Meter readings")),
