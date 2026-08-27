@@ -71,11 +71,48 @@ def build_command(model: str, instruction: str) -> list[str]:
     not there, and opencode fails to resolve a model that exists. The provider
     belongs in opencode's own config, next to the base URL.
     """
+    # OpenCode 1.x names a model `provider/model`; a bare name is the house's
+    # own provider, written by `write_opencode_config` at startup.
+    named = model if "/" in model else f"{HOUSE_PROVIDER}/{model}"
     return [
         "opencode", "run",
-        "--model", model,
+        "--model", named,
         instruction,
     ]
+
+
+#: The provider id OpenCode is given for the house's own model server.
+HOUSE_PROVIDER = "house"
+
+
+def write_opencode_config(path: Path, base_url: str, api_key: str, models: list[str]) -> Path:
+    """OpenCode's config for the house's OpenAI-compatible server (1.x shape).
+
+    OpenCode knows nothing of LLM_URL: without this it has no provider, and a
+    bare model name resolves to nothing. `@ai-sdk/openai-compatible` is what
+    it uses for llama-swap, LiteLLM, vLLM and LM Studio alike; the models are
+    listed so `--model house/<name>` is a name it has, not a guess. Written
+    to a tmpfs path at startup and pointed at by OPENCODE_CONFIG, because the
+    image's root is read-only.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    options: dict = {"baseURL": base_url.rstrip("/")}
+    if api_key:
+        options["apiKey"] = api_key
+    config = {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            HOUSE_PROVIDER: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "House",
+                "options": options,
+                "models": {name: {"name": name} for name in dict.fromkeys(m for m in models if m)},
+            }
+        },
+    }
+    path.write_text(json.dumps(config, indent=2) + "\n")
+    return path
 
 
 async def _run(cmd: list[str], cwd: Path, timeout: float) -> tuple[int, str, str]:

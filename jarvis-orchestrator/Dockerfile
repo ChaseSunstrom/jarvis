@@ -33,7 +33,10 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' \
 
 # OpenCode (agentic coding CLI, runs against local Ollama). Pin the version;
 # update deliberately (docs/security.md §updates).
-ARG OPENCODE_VERSION=0.6.4
+# 1.18.23 (27 Aug 2026): the project moved to github.com/anomalyco/opencode and
+# the installer's asset for the old 0.6.4 tag no longer unpacks — the build's
+# `|| echo WARNING` had been hiding that since the mirror came back.
+ARG OPENCODE_VERSION=1.18.23
 RUN curl -fsSL https://opencode.ai/install | VERSION=${OPENCODE_VERSION} bash \
  && install -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode \
  && /usr/local/bin/opencode --version \

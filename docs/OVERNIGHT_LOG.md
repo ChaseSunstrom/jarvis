@@ -954,3 +954,11 @@ is quiet. Done since:
   reactor-motion mirror reads the first breath of the phone's onBusEvent and the M98 hook had pushed the
   iris out (moved below the rows); the register said the prompt mirror had 19 checks, M98's made it 20.
   The dashboards kind-picker spec passes alone 15 times running; its gate reds are load.
+- 07:44 — verify-all finished at 07:38 after 15,418 s: 50 green, 34 red, the live suite timed out at 2400 s;
+  the fifteenth rebuilt the core, the orchestrator, SearXNG and the console and started the quiet pass
+  (a second launcher instance, left from the first mis-launch, ran beside it from the wrong directory and
+  was killed). The orchestrator's OpenCode: the pinned 0.6.4 asset no longer unpacks (the project moved to
+  anomalyco/opencode; the build's `|| echo WARNING` hid it) — pinned to 1.18.23, given the house's provider
+  config written at startup (`OPENCODE_CONFIG`, a writable HOME on the tmpfs) and `house/<model>` names, and
+  it answered "ready" through the gateway from inside the container. BLOCKERS' mirror entry resolved.
+  CI on 0e38c70: one Playwright flake on the runner (enrol's four-states `release` before the route was hit).

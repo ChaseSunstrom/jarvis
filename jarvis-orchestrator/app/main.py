@@ -14,6 +14,7 @@ import asyncio
 import hmac
 import logging
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -21,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from .exec_gate import ExecGate, GateError
 from .fanout import fan_out
-from .opencode import CodeJobRunner
+from .opencode import CodeJobRunner, write_opencode_config
 from .sandbox_queue import SandboxQueue
 
 # The OpenAI-compatible model endpoint — llama-swap, llama.cpp's server, vLLM,
@@ -54,6 +55,20 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(
             "ORCHESTRATOR_TOKEN and APPROVAL_SECRET must be set (see .env.example)"
         )
+    # OpenCode (M82): a writable home on the tmpfs (the image's root is
+    # read-only), and its config for the house's model server, before any
+    # coding job asks it to run.
+    home = Path(os.environ.get("OPENCODE_HOME", "/tmp/home"))
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("HOME", str(home))
+        config_path = write_opencode_config(
+            home / ".config" / "opencode" / "opencode.json", LLM_URL, LLM_API_KEY,
+            [CODER_MODEL, PLANNER_MODEL],
+        )
+        os.environ["OPENCODE_CONFIG"] = str(config_path)
+    except OSError as err:  # a full tmpfs must not stop the broker
+        logging.getLogger(__name__).warning("could not write OpenCode's config: %s", err)
     app.state.gate = ExecGate(APPROVAL_SECRET)
     app.state.queue = SandboxQueue(WORKSPACE)
     app.state.coder = CodeJobRunner(

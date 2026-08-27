@@ -191,7 +191,13 @@ and say what `/assistant` is: a Chat Trigger's webhook (Jarvis posts
 something else — its URL, auth and reply field decide `ask_n8n_assistant`.
 `bash scripts/verify/m77-n8n.sh` then proves the connection.
 
-## The orchestrator image cannot reach the Debian mirror (M82)
+## ~~The orchestrator image cannot reach the Debian mirror (M82)~~ — **resolved 2026-08-27**
+
+The build reaches Debian and GitHub on the host's network now (`build: network: host`), git and
+curl are in the image, and OpenCode 1.18.23 — the project moved to anomalyco/opencode and the old
+0.6.4 asset no longer unpacked, which the build's `|| echo WARNING` had hidden — answers a prompt
+through the house's own gateway from inside the container, with the provider config the broker
+writes at startup. Kept for the record; the entry below is as it was.
 
 **Needed by:** M82's coding worker — a route from BuildKit to `deb.debian.org` and GitHub
 (the running orchestrator, on the host network, reaches both; the image build does not).
