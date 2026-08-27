@@ -1884,7 +1884,8 @@ class ConversationAgent:
                     # apology to it — "You are right, and I apologise, Sir" —
                     # became the spoken reply (M51's smoke slice, 26 Aug). The
                     # note says what to do and that the user never sees it.
-                    if not narrated and claimed_action(request_text, "".join(said)):
+                    offered = not narrated and offered_instead(request_text, "".join(said))
+                    if not narrated and (claimed_action(request_text, "".join(said)) or offered):
                         nudged = True
                         _LOGGER.warning(
                             "The model said it had done %r without calling any tool; asking it to call or say so",
@@ -1906,12 +1907,24 @@ class ConversationAgent:
                             {
                                 "role": "user",
                                 "content": (
-                                    "You said that was done, but you called no tool, so "
-                                    "nothing changed. Call the tool now. Then answer the "
-                                    "request itself in one sentence, as you would have "
-                                    "if it had run — no apology, and no mention of this "
-                                    "note, which the user never sees. If you cannot do "
-                                    "it, say plainly that you did not, and why."
+                                    (
+                                        "You were asked to DO that, and you offered to instead — "
+                                        "with no tool called, nothing changed. Do it now: call "
+                                        "the tool on the thing the request meant (the room's own "
+                                        "light, the last thing acted on). Then say it is done in "
+                                        "one sentence — no question, no apology, and no mention "
+                                        "of this note, which the user never sees. If it cannot be "
+                                        "done, say plainly why."
+                                    )
+                                    if offered
+                                    else (
+                                        "You said that was done, but you called no tool, so "
+                                        "nothing changed. Call the tool now. Then answer the "
+                                        "request itself in one sentence, as you would have "
+                                        "if it had run — no apology, and no mention of this "
+                                        "note, which the user never sees. If you cannot do "
+                                        "it, say plainly that you did not, and why."
+                                    )
                                 ),
                             }
                         )
@@ -2599,6 +2612,39 @@ def claim_request(messages: list[dict[str, Any]]) -> str:
     if between and _WHICH_QUESTION.search(between[-1].strip()):
         return f"{messages[users[-2]].get('content') or ''} {last}".strip()
     return last
+
+
+#: "Now do the same in the bedroom" — an action by reference to the last one.
+#: Not in _ACTION_REQUEST (its verbs name the deed); this names the pattern.
+_REFERENCE_REQUEST = re.compile(r"\b(?:do|now do) (?:the same|that|it|likewise)\b|\bthe same (?:in|for|with)\b", re.IGNORECASE)
+#: A reply that OFFERS the deed it was asked to do, as a question.
+_ACTION_OFFERED = re.compile(
+    r"\b(?:shall I|would you like me to|do you want me to|want me to|should I|"
+    r"I can (?:turn|switch|set|lock|unlock|open|close|start|stop|do) [^.?!]{0,60}\bif you(?:'d| would)? like)\b[^.?!]*\?",
+    re.IGNORECASE | re.S,
+)
+
+
+def offered_instead(request: str, reply: str) -> bool:
+    """Did the reply offer to do what it was asked to do, instead of doing it?
+
+    "Now do the same in the bedroom, please" → "The bedroom has no ceiling
+    lights, Sir — only the bed light. Shall I turn that on?" with no tool
+    called, twice over on the twenty-first house (27 Aug 2026). An
+    imperative, or a deed by reference, answered with a question offering
+    the deed is the deed not done. A question from the user, or a refusal
+    that says why, is not this.
+    """
+    request, reply = str(request or ""), str(reply or "")
+    if not request.strip() or not reply.strip():
+        return False
+    if _QUESTION_OPENER.match(request):
+        return False
+    if not (_ACTION_REQUEST.search(request) or _REFERENCE_REQUEST.search(request)):
+        return False
+    if _ACTION_DECLINED.search(reply):
+        return False
+    return bool(_ACTION_OFFERED.search(reply))
 
 
 def claimed_action(request: str, reply: str) -> bool:

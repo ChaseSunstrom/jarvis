@@ -2551,3 +2551,21 @@ async def test_the_agent_records_who_spoke_on_the_turn_and_in_the_archive(tmp_pa
         pass
     assert [t.speaker for t in agent.archive.get(cid).turns if t.role == "user"] == ["Ted", ""]
     await shutdown(jarvis)
+
+
+
+def test_an_offer_to_do_the_deed_is_the_deed_not_done():
+    """The twenty-first house (27 Aug 2026), resilience-core-restart, both
+    variants: "Now do the same in the bedroom, please" → "The bedroom has no
+    ceiling lights, Sir — only the bed light. Shall I turn that on?" with no
+    tool called. An imperative, or a deed by reference, answered with an
+    offer is caught like a claim; a user's question, or a refusal, is not."""
+    from jarvis.llm.agent import offered_instead
+
+    assert offered_instead("Now do the same in the bedroom, please", "The bedroom has no ceiling lights, Sir — only the bed light. Shall I turn that on?")
+    assert offered_instead("Turn on the lamp.", "Would you like me to turn on the lamp, Sir?")
+    assert offered_instead("Do the same in the kitchen.", "The kitchen has only the ceiling lights, which I can turn on if you'd like?")
+    assert not offered_instead("Turn on the lamp.", "The lamp is on, Sir.")
+    assert not offered_instead("Is the lamp on?", "It is off, Sir — shall I turn it on?")
+    assert not offered_instead("Turn on the lamp.", "I can't, Sir — there is no lamp in the house.")
+    assert not offered_instead("Now do the same in the bedroom.", "The bed light is on, Sir.")
