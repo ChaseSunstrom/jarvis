@@ -1798,6 +1798,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     read held when composed, followed when shown / inside read runs / tier 3 / escalates), the security suite, the
     doc's four mechanisms, and the four red-team scenarios on the house — the page's instruction, the message's, the
     exfiltration and the cross-conversation leak.
+  - 27 Aug 18:25: refined twice since, both from the live runs — an outbound read on a tainted turn is held only when
+    its target is the model's own composition (a URL or a query the turn was never shown; 3182c4c), and a page's own
+    link, relative and resolved, counts as shown by its path (fff1a00) — the research briefing's warranty PDF was held
+    as composed on the twenty-first. The twenty-fourth's verify-all measures the red-team scenarios again.
 - [x] **M110 — The desktop app starts from a downloaded folder** · size S · deps M50 · parallel-ok M108
   - Scope: the operator's report of 27 Aug 14:48 — `./jarvis-desktop-app` from `~/Downloads/jarvis-desktop-app-linux`
     aborts: "The SUID sandbox helper binary was found, but is not configured correctly … chrome-sandbox is owned by
