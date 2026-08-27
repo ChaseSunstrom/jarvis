@@ -430,3 +430,58 @@ async def test_status_says_what_is_waiting(registry, engine):
     assert status["max_concurrent"] == 2
     assert task.id in status["waiting"]
     assert registry.get(task.id).status == STATUS_QUEUED
+
+
+async def test_the_house_starts_the_pump_so_a_restored_job_runs_without_a_new_submission(tmp_path):
+    """M85, through the house's own path. The nineteenth house (27 Aug 2026)
+    restored a job as "queued — picked back up after a restart" and left it
+    there: `taskengine.load` re-queued it at setup, and the pump only ever
+    started from `submit`. Here a house dies with an idempotent job running,
+    a second house sets up, registers the kind and STARTS — and the job runs
+    with nobody submitting anything."""
+    import asyncio
+
+    from jarvis.core import Jarvis
+    from jarvis.tasks import RESTART_ERROR
+
+    first = Jarvis(tmp_path)
+    await first.async_setup({})
+    task = await first.tasks.async_add("read every light", kind="background")
+
+    async def never_finishes(task_id: str) -> None:
+        await first.tasks.async_update(task_id, status="running")
+        await asyncio.sleep(3600)
+
+    first.taskengine.submit(task.id, never_finishes, kind="background", idempotent=True)
+    first.taskengine.start()
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if first.tasks.get(task.id).status == "running":
+            break
+    assert first.tasks.get(task.id).status == "running"
+    await first.tasks.async_save()
+    await first.taskengine.async_stop()
+
+    ran: list[str] = []
+    second = Jarvis(tmp_path)
+    await second.async_setup({})
+    picked = second.tasks.get(task.id)
+    assert picked is not None and picked.error == RESTART_ERROR or picked.status == "queued", picked
+
+    def factory(item):
+        async def worker(task_id: str) -> None:
+            ran.append(task_id)
+            await second.tasks.async_update(task_id, status="done", result="listed")
+        return worker
+
+    second.taskengine.register_kind("background", factory)
+    # load already ran inside async_setup; the kind is registered now, as an
+    # integration's setup would have. Nothing is submitted.
+    await second.async_start()
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if ran:
+            break
+    assert ran == [task.id], "the restored job must run because the house started, not because something new was submitted"
+    assert second.tasks.get(task.id).status == "done"
+    await second.async_stop()

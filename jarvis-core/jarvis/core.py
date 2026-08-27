@@ -237,6 +237,12 @@ class Jarvis:
     async def async_start(self) -> None:
         self.is_running = True
         await self.bus.async_fire(EVENT_JARVIS_START)
+        # The pump starts with the house, not with the first submission: a
+        # queue restored by `taskengine.load` at setup sat "queued — picked
+        # back up after a restart" on the nineteenth house (27 Aug 2026) for
+        # eight minutes, because only `submit` ever started it. By now every
+        # integration has registered its kinds, so what was restored can run.
+        self.taskengine.start()
         _LOGGER.info("Jarvis started with %d entities", len(self.states.all()))
 
     async def async_stop(self) -> None:
