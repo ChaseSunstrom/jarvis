@@ -137,6 +137,29 @@ trigger:
 
 For an offset, use a template condition on `next_setting`.
 
+## `routines:`
+
+```yaml
+routines:
+  at: "07:05"                   # once a morning, in the house's zone; leave out for on demand only
+  days: 14                      # how far back the miner reads the recorder
+  min_days: 3                   # on how many distinct days the same thing must have happened
+  slot_minutes: 15              # how close in time "the same time" is
+  max_proposals: 3              # how many are put to the person in one go
+```
+
+Jarvis proposes a routine. The miner reads the recorder's states: an entity
+put in the same state in the same quarter-hour on `min_days` distinct days —
+with at most one day that contradicts it, and not an entity an automation of
+the house already acts on — is a candidate. Each is put to the person once: a
+`proposal` card and a question ("You turn off the kitchen lights at about
+22:30 most days — shall I make that a routine?"); a yes creates the automation
+through the same door `create_automation` uses, a no is remembered for thirty
+days. Services `routines.propose` (`ask: false` lists and cards only),
+`routines.accept` (a key, or a draft `{entity_id, state, at}`), `routines.decline`;
+the `proposed_routines` tool for "is there a routine you'd suggest?" — which
+never creates one. An unlock is never proposed.
+
 ## `review:`
 
 ```yaml

@@ -1604,6 +1604,15 @@ timer: {}
 review:
   at: "03:45"
 
+# Jarvis proposes a routine (M104): the same thing at the same time on enough
+# days of the recorder's history — and not by an automation the house already
+# has — becomes a `proposal` card and a question; a yes makes the automation,
+# a no is remembered for thirty days. Never an unlock. `at` in the house's zone.
+routines:
+  at: "07:05"
+  days: 14
+  min_days: 3
+
 # n8n (M77): the house's workflows through n8n's own API. Empty url means
 # off — the tools then say so. Make the key under Settings → n8n API on the
 # n8n server; the assistant endpoint is the operator's (a Chat Trigger's

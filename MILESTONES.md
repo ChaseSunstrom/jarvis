@@ -1628,6 +1628,14 @@ web and of Tasker. Local only. Each row here is planned in that document.
     a seeded draft accepted over the websocket becomes an automation the house lists.
   - Verify: `bash scripts/verify/m104-proposes-a-routine.sh`
   - 27 Aug 10:07: planned.
+  - 27 Aug 10:12: built, not ticked — `integrations/routines`: the miner (`mine`, pure: the same entity in
+    the same state in the same quarter-hour on `min_days` distinct days, at most one contradicting day,
+    never an unlock, never an entity an authored automation already acts on), the `proposal` card and the
+    `companion.ask` question, a yes through `async_create_automation` (the alias reads back), a no kept
+    thirty days, nobody-home neither; services `routines.propose/accept/decline`, the `proposed_routines`
+    tool that never makes one, the morning schedule. Suite `test_routines.py` 9 on a real authored store with
+    a fake recorder and a fake person answering. The gate's live half (the miner on the house's own history,
+    a draft accepted over the websocket listed and removed) waits for a house built from this tree.
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
     tools, five websocket commands, the console's panels over the page around the instrument —

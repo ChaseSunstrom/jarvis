@@ -11,6 +11,7 @@ action back, it can explain itself, and it remembers what you told it.
 | [`undo`](#undo) | "Undo that" — and a clear refusal when that is not safe |
 | [`timer`](#timer) | A kitchen timer as an entity: counts down, answers "how long is left?", chimes where it was asked for |
 | [`review`](#review) | What went wrong today, read once a night, with the lessons — and "what did you get wrong?" answered from the record |
+| [`routines`](#routines) | The same thing at the same time on enough days becomes a proposed routine; a yes makes it |
 | [`trace`](#trace) | Why an automation did what it did, or did nothing |
 | [`memory`](#memory) | Durable notes, on disk, that you can read and delete |
 
@@ -113,6 +114,24 @@ plus the sections keyed by name, or `{"empty": true}` with an instruction to
 say so in one sentence rather than padding.
 
 ---
+
+## routines
+
+The house does the same things at the same times and nobody writes the
+routine. Once a morning (and on `routines.propose`) Jarvis reads the
+recorder's history for an entity put in the same state at the same time of day
+on enough distinct days — not by an automation it already has — and proposes
+it: a card and a question, "you turn off the kitchen lights at about 22:30
+most days — shall I make that a routine?". A yes creates the automation the
+same way `create_automation` does, so it reads back like any routine; a no is
+remembered for thirty days. Never an unlock.
+
+```yaml
+routines:
+  at: "07:05"
+  days: 14
+  min_days: 3
+```
 
 ## review
 
