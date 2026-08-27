@@ -951,7 +951,19 @@ skills:
 # anything lands. See `docs/THREAT_MODEL.md`.
 extensions:
   catalog:
-    sources: []
+    sources:
+      # The two public registries (M108), named here — the operator's choice,
+      # not a default in code: `DEFAULT_SOURCES` stays empty. Anthropic's
+      # published skills (a GitHub folder, read through api.github.com and
+      # fetched from raw.githubusercontent.com, pinned to the branch's commit
+      # at browse time) and the MCP registry (http servers only; anything
+      # that would start a program on this machine is skipped and counted).
+      - name: anthropic-skills
+        url: https://api.github.com/repos/anthropics/skills/contents/skills
+        kind: skill
+      - name: mcp-registry
+        url: https://registry.modelcontextprotocol.io/v0/servers
+        kind: mcp
       # - name: bundled                    # the shipped skills; this line
       #   url: file:///srv/jarvis/integrations/skills/bundled
       #   kind: skill                      # only to turn them off:
