@@ -1008,6 +1008,15 @@ def _register_companion_tools(jarvis: "Jarvis", manager: DeviceControl, registry
         link = manager.resolve_device(value)
         return link.device_id if link is not None else str(value)
 
+    def _asking_device(context: Any) -> str | None:
+        try:
+            from ...api.devices import device_of
+
+            device = device_of(jarvis, context)
+        except Exception:  # noqa: BLE001 - never a reason to lose the message
+            return None
+        return str(device.get("id")) if device and device.get("id") else None
+
     async def _call(service: str, data: dict[str, Any], context: Any) -> Any:
         ctx = context if isinstance(context, Context) else Context(origin="llm")
         return await jarvis.services.async_call(
@@ -1024,7 +1033,9 @@ def _register_companion_tools(jarvis: "Jarvis", manager: DeviceControl, registry
                 "message": message,
                 "kind": "say" if args.get("aloud") else "notify",
                 "importance": str(args.get("importance") or "normal"),
-                "device_id": _device_id(args.get("device")),
+                # No device named: the one the request came from (M94), when
+                # the turn came from one — presence routing otherwise.
+                "device_id": _device_id(args.get("device")) or _asking_device(context),
             },
             context,
         )

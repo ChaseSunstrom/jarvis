@@ -569,6 +569,36 @@ async def test_tell_user_goes_through_the_companion(jarvis):
     assert sent[0][1]["kind"] == "say"
 
 
+async def test_tell_user_prefers_the_device_the_request_came_from(jarvis):
+    """M94. Two phones, presence pointing at the first; the turn came from the
+    second. With no device named, the message goes where the person asked
+    from — the room they are in — rather than where presence last saw them."""
+    from jarvis.api.devices import remember_device
+    from jarvis.bus import Context
+
+    presence = jarvis.data["presence"]
+    presence.register(PHONE, "Pixel 8", "android", ["ask"])
+    presence.register("tablet-1", "Kitchen tablet", "android", ["ask"])
+    presence.touch_interaction(PHONE)
+    sent = []
+
+    async def transport(device_id, payload):
+        sent.append((device_id, payload))
+        return True
+
+    jarvis.data["companion"].set_transport(transport)
+    ctx = Context(origin="llm")
+    remember_device(jarvis, ctx, {"id": "tablet-1", "name": "Kitchen tablet", "platform": "android", "area": "kitchen"})
+
+    result = await jarvis.data["llm_tools"].call("tell_user", {"message": "Done, Sir."}, ctx)
+    assert result["status"] == "delivered"
+    assert sent[0][0] == "tablet-1", sent
+    # A device named wins over the asking one.
+    sent.clear()
+    await jarvis.data["llm_tools"].call("tell_user", {"message": "Done.", "device": PHONE}, ctx)
+    assert sent[0][0] == PHONE
+
+
 async def test_a_question_reaches_the_phone_through_the_gate_not_around_it(jarvis):
     """The composed `ask_user` is the Tier-3 one, and it still reaches the phone.
 

@@ -922,6 +922,22 @@ class ConversationAgent:
         """The parts that vary with the turn: the house now, the notes for it, the clock."""
         return [self.house_summary(), self.remembered_notes(query, semantic), self.clock_line()]
 
+    def device_line(self, device: dict[str, Any] | None) -> str:
+        """One line naming the device the request came from, and its room when
+        the house knows it (M94). Nothing for a turn that came from no device
+        — a script, a REST call, a test — rather than "an unknown device".
+
+        "Turn off the lights in here" and "show it on this screen" resolve
+        against this line; without it the room a person is standing in was
+        dropped at the converse boundary and "in here" meant nothing.
+        """
+        if not device or not str(device.get("id") or ""):
+            return ""
+        name = str(device.get("name") or "").strip() or str(device.get("id"))
+        area = str(device.get("area") or "").strip()
+        where = f" in the {area}" if area else ""
+        return f"The request came from the device '{name}'{where}: 'here' and 'this screen' mean that device."
+
     def speaker_line(self, speaker: str | None) -> str:
         """One line naming who the voice gate recognised, or nothing (M71).
 
@@ -1238,6 +1254,7 @@ class ConversationAgent:
         think: bool | None = None,
         speaker: str | None = None,
         spoken: bool = False,
+        device: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
         """Run one turn, yielding text deltas as the model produces them.
 
@@ -1294,6 +1311,11 @@ class ConversationAgent:
             # in a house with two people, and putting it before the clock
             # would throw the prefix cache away on every change of speaker.
             system = f"{system}\n\n{who}"
+        where = self.device_line(device)
+        if where:
+            # After the speaker for the same reason: the device changes with
+            # the room, and the room is the last thing the prompt learns.
+            system = f"{system}\n{where}" if who else f"{system}\n\n{where}"
         messages: list[dict[str, Any]] = [
             # The turn is handed to the prompt builder, not just appended after
             # it: the memory block is chosen by relevance to what was just
@@ -1320,6 +1342,11 @@ class ConversationAgent:
 
             remember_utterance(self.jarvis, context, message)
             remember_turn(self.jarvis, context, conversation.id, spoken)
+            # And which device asked (M94), so `tell_user` and its like can
+            # prefer the room the request came from without being told.
+            from ..api.devices import remember_device
+
+            remember_device(self.jarvis, context, device)
         except Exception:  # pragma: no cover - a policy aid, never a blocker
             _LOGGER.debug("Could not record the turn's utterance", exc_info=True)
         pieces: list[str] = []

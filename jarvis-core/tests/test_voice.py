@@ -1837,3 +1837,26 @@ async def test_a_turn_that_starts_during_an_enrolment_yields(tmp_path):
     jarvis.data[DATA_ENROLLING_UNTIL] = 0.0
     run, _events, tts = await turn("The dishwasher finished its cycle an hour ago.")
     assert asked == ["The dishwasher finished its cycle an hour ago."] and tts.calls
+
+
+async def test_the_pipeline_hands_the_asking_device_to_a_converse_that_takes_it(tmp_path):
+    """M94: the run's device (the socket's) reaches the agent as `device`
+    — id, name and room — and a converse that cannot take it is left alone."""
+    seen: dict = {}
+
+    async def taking(text, conversation_id=None, *, device=None, **kwargs):
+        seen["device"] = device
+        yield "Very good, Sir."
+
+    async def plain(text, conversation_id=None):
+        yield "Very good, Sir."
+
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hello"), tts=FakeTts(), converse=taking,
+                      start_stage="intent", end_stage="intent", device_id="phone-1")
+    await run.execute(None, None, text="hello")
+    assert seen["device"] == {"id": "phone-1", "name": "", "platform": "", "area": ""}
+
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hello"), tts=FakeTts(), converse=plain,
+                      start_stage="intent", end_stage="intent", device_id="phone-1")
+    await run.execute(None, None, text="hello")
+    assert run.response_text == "Very good, Sir."

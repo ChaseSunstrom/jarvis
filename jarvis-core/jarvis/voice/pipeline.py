@@ -1251,6 +1251,23 @@ class PipelineRun:
             out.append({"id": entry_id, "text": getattr(entry, "text", "") or ""})
         return out
 
+    def device_facts(self) -> dict[str, Any] | None:
+        """`{id, name, platform, area}` for the device this run came from, or None."""
+        if not self.device_id:
+            return None
+        facts: dict[str, Any] = {"id": self.device_id, "name": "", "platform": "", "area": ""}
+        try:
+            from ..api.devices import get_devices
+
+            link = get_devices(self.jarvis).get(self.device_id)
+        except Exception:  # noqa: BLE001 - a house without the hub still names the id
+            link = None
+        if link is not None:
+            facts["name"] = str(getattr(link, "name", "") or "")
+            facts["platform"] = str(getattr(link, "platform", "") or "")
+            facts["area"] = str(getattr(link, "area", "") or "")
+        return facts
+
     def _call_converse(self, text: str) -> Any:
         assert self.converse is not None
         try:
@@ -1281,6 +1298,10 @@ class PipelineRun:
         wants_spoken = "spoken" in params or takes_var_kw
         if wants_spoken:
             extra["spoken"] = self.runs_stage("tts")
+        # Which device asked (M94), for an agent that can take it: the socket's
+        # device, named as the house knows it. Nothing for a run with no device.
+        if self.device_id and ("device" in params or takes_var_kw):
+            extra["device"] = self.device_facts()
         positional = [
             p
             for p in params.values()

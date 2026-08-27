@@ -2389,3 +2389,29 @@ def test_the_form_of_address_is_one_line_the_persona_cannot_override():
     assert agent.address_rule().startswith("Do not use a title")
     persona = (Path(__file__).resolve().parents[1] / "config" / "prompts" / "jarvis.txt").read_text()
     assert "Sir or ma'am" not in persona and "or ma'am" not in persona
+
+
+# --- M94: in here — the device a request came from -----------------------------
+async def test_the_agent_is_told_which_device_asked_after_the_speaker(tmp_path):
+    """The room a person is standing in was dropped at the converse boundary:
+    the pipeline knew its socket's device, the model never did (27 Aug 2026).
+    One line, last — after the speaker for the same cache reason — and none at
+    all for a turn that came from no device."""
+    jarvis, _ = await build_house(tmp_path)
+    fake = FakeOllama(say("Yes, Sir."), say("Yes, Sir."), say("Yes, Sir."))
+    agent = make_agent(jarvis, fake)
+
+    assert agent.device_line({"id": "phone-1", "name": "Chase's phone", "area": "kitchen"}) == (
+        "The request came from the device 'Chase's phone' in the kitchen: 'here' and 'this screen' mean that device."
+    )
+    assert agent.device_line({"id": "d2", "name": "", "area": ""}).startswith("The request came from the device 'd2'")
+    assert agent.device_line(None) == "" and agent.device_line({"id": ""}) == ""
+
+    await agent.converse("hello", speaker="Ted", device={"id": "phone-1", "name": "Chase's phone", "area": "kitchen"}).__anext__()
+    system = fake.last_messages[0]["content"]
+    assert system.endswith("The request came from the device 'Chase's phone' in the kitchen: 'here' and 'this screen' mean that device.")
+    assert system.index("recognised by voice as Ted") < system.index("The request came from")
+
+    await agent.converse("hello again").__anext__()
+    assert "The request came from" not in fake.last_messages[0]["content"]
+    await shutdown(jarvis)

@@ -917,3 +917,7 @@ is quiet. Done since:
 - 05:16 — M96 built: `assist_pipeline/stop` cancels a run at the server; the run ends `run-end
   {interrupted: true}`; the console's barge-in sends it; the mock answers it; test_api +1 (a run stopped
   mid-answer, a run not in progress is not_found). Gate 2/3, the live check waits.
+- 05:20 — M94 built: the device a request came from rides from the pipeline through converse to one line
+  after the speaker ("the request came from the device 'X' in the kitchen: 'here' and 'this screen' mean that
+  device"), is remembered per turn, and tell_user goes there unless a device is named; agent +1, voice +1,
+  device-control +1. The live check registers a throwaway device and asks which device it is on.

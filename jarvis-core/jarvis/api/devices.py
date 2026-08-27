@@ -879,6 +879,58 @@ class TurnFacts:
         return entry[1], entry[2]
 
 
+class RequestDevices:
+    """Which connected device each turn came from (M94), keyed like `TurnFacts`.
+
+    The pipeline knows its socket's device; until now that knowledge stopped
+    at the run — the agent, and every tool that picks a device (`tell_user`,
+    `show`, a reminder's chime), could not prefer the room that asked.
+    """
+
+    def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
+        self.ttl = ttl
+        self._devices: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    def remember(self, context: Any, device: dict[str, Any] | None) -> None:
+        key = UntrustedTurns.key(context)
+        if key is None or not device or not str(device.get("id") or ""):
+            return
+        now = time.time()
+        self._devices = {k: v for k, v in self._devices.items() if v[0] > now}
+        self._devices[key] = (now + self.ttl, dict(device))
+
+    def get(self, context: Any) -> dict[str, Any] | None:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return None
+        entry = self._devices.get(key)
+        if entry is None or entry[0] <= time.time():
+            self._devices.pop(key, None)
+            return None
+        return dict(entry[1])
+
+
+DATA_REQUEST_DEVICES = "request_devices"
+
+
+def get_request_devices(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> RequestDevices:
+    store = jarvis.data.get(DATA_REQUEST_DEVICES)
+    if not isinstance(store, RequestDevices):
+        store = jarvis.data.setdefault(DATA_REQUEST_DEVICES, RequestDevices(ttl))
+    return store
+
+
+def remember_device(jarvis: "Jarvis", context: Any, device: dict[str, Any] | None) -> None:
+    """Record the device this turn came from (M94). Called by the agent beside
+    `remember_turn`; None when the turn came from no device (a script, REST)."""
+    get_request_devices(jarvis).remember(context, device)
+
+
+def device_of(jarvis: "Jarvis", context: Any) -> dict[str, Any] | None:
+    """The device this turn came from — `{id, name, platform, area}` — or None."""
+    return get_request_devices(jarvis).get(context)
+
+
 def get_turn_facts(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> TurnFacts:
     store = jarvis.data.get(DATA_TURN_FACTS)
     if not isinstance(store, TurnFacts):
