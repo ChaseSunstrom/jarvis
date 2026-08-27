@@ -229,7 +229,8 @@ not logged in. The same tree passes here in full under Python 3.12 (3563
 tests at 10:21; the changed files, 472, at 12:10), so whatever it is, it is
 CI's environment and only the log says what.
 
-What it needs: `gh auth login` on this host (or a token with `actions:read`
-in `GH_TOKEN`); then `gh run view <run id> --log-failed` reads the step. Until
-then a red core leg cannot be diagnosed from here, only reproduced by
-guesswork.
+**Needed by:** every red `python · jarvis-core` leg since 79bb9b4 — M23's
+claim that CI is green, and any tick that leans on it. What it needs: `gh
+auth login` on this host (or a token with `actions:read` in `GH_TOKEN`); then
+`gh run view <run id> --log-failed` reads the step. Until then a red core leg
+cannot be diagnosed from here, only reproduced by guesswork.

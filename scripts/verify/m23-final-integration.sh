@@ -12,7 +12,7 @@ check "every other milestone in MILESTONES.md is ticked" python3 -c '
 import re
 from pathlib import Path
 text = Path("MILESTONES.md").read_text(encoding="utf-8")
-open_ = [m for m in re.findall(r"^- \[ \] \*\*(M\d{2})", text, re.M) if m != "M23"]
+open_ = [m for m in re.findall(r"^- \[ \] \*\*(M\d{2,3})\b", text, re.M) if m != "M23"]
 assert not open_, f"unticked: {open_}"
 done = re.findall(r"^- \[x\] \*\*(M\d{2})", text, re.M)
 print(f"{len(done)} ticked, none open but M23")
