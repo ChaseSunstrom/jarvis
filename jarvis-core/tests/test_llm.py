@@ -2278,6 +2278,48 @@ async def test_a_reply_that_claims_an_action_it_never_called_is_sent_back_to_cal
     await shutdown(jarvis)
 
 
+# --- M95: explain_last_turn reads the record, never reconstructs ----------------
+async def test_explain_last_turn_names_the_tools_of_the_previous_turn_from_the_archive(tmp_path):
+    """"Why did you say that?" was answered by reconstruction — live, with an
+    apology for a mistake that had not been made (27 Aug 2026). The tool reads
+    the previous turn from the archive: what was asked, what was said, which
+    tools ran and what they were given. The model is told to answer from that."""
+    jarvis, house = await build_house(tmp_path)
+    entity_id = next(iter(house))
+    fake = FakeOllama(
+        call_tool("turn_on", {"entity_id": entity_id}),
+        say(f"{entity_id} is on, Sir."),
+        call_tool("explain_last_turn", {}),
+        say("I switched it on with the turn_on tool, Sir."),
+    )
+    agent = make_agent(jarvis, fake)
+    jarvis.data["llm"] = agent  # as the llm integration registers it; the tool reads the archive through it
+    await collect(agent, f"turn on {entity_id}", conversation_id="c-explain")
+    await collect(agent, "Why did you say that? What did you do?", conversation_id="c-explain")
+
+    tool_messages = [m for m in fake.requests[-1]["messages"] if m.get("role") == "tool"]
+    assert tool_messages, "explain_last_turn was not called"
+    record = json.loads(tool_messages[-1]["content"])
+    assert record["explained"] is True
+    assert record["asked"].startswith("turn on ")
+    assert [c["tool"] for c in record["tools_called"]] == ["turn_on"]
+    assert record["tools_called"][0]["arguments"]["entity_id"] == entity_id
+    assert "Do not apologise" in record["note"]
+    await shutdown(jarvis)
+
+
+async def test_explain_last_turn_with_nothing_before_it_says_so(tmp_path):
+    jarvis, _house = await build_house(tmp_path)
+    fake = FakeOllama(call_tool("explain_last_turn", {}), say("There is nothing yet, Sir."))
+    agent = make_agent(jarvis, fake)
+    jarvis.data["llm"] = agent
+    await collect(agent, "why did you say that?", conversation_id="c-empty")
+    tool_messages = [m for m in fake.requests[-1]["messages"] if m.get("role") == "tool"]
+    record = json.loads(tool_messages[-1]["content"])
+    assert record["explained"] is False and "no earlier turn" in record["note"]
+    await shutdown(jarvis)
+
+
 # --- M71: the agent is told who is speaking --------------------------------------
 async def test_the_agent_is_told_who_is_speaking_and_only_then(tmp_path):
     """The voice gate's name for the speaker reaches the model as one line at

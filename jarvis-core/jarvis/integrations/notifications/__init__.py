@@ -66,6 +66,9 @@ DEPENDENCIES: list[str] = []
 STORAGE_KEY = "notifications"
 STORAGE_VERSION = 1
 DATA_STORE = "notifications"
+#: Kinds of finished work worth a spoken word (M95); a reminder IS its own
+#: announcement, and a `notify` task finishing is that reminder.
+SPOKEN_KINDS = frozenset({"background", "research", "code"})
 
 #: The bus event every surface listens to. One per record, as it is created.
 EVENT_NOTIFICATION = "jarvis_notification"
@@ -284,6 +287,26 @@ def _listen(jarvis: "Jarvis", store: NotificationStore) -> None:
             link=f"/tasks#{task.get('id') or ''}",
             task_id=str(task.get("id") or ""),
         )
+        # Finished work SPEAKS (M95). "Look into every sensor and tell me when
+        # it is done" ended as an inbox card and nothing else — the tier
+        # contract calls Tier-2 work "announced", and nothing announced it (the
+        # agentic audit, 27 Aug 2026). companion.notify routes it: spoken if
+        # the person is up and at a device, a quiet notification if not, queued
+        # if unreachable. `notifications: speak_completions: false` turns it off.
+        if store.speak_completions and str(task.get("kind") or "") in SPOKEN_KINDS:
+            if jarvis.services.has_service("companion", "notify"):
+                result = " ".join(str(task.get("result") or "").split())[:240]
+                message = f"{finished}: {task.get('title') or 'the job you gave me'}."
+                if result:
+                    message += f" {result}"
+                try:
+                    await jarvis.services.async_call(
+                        "companion", "notify",
+                        {"message": message, "importance": "normal", "kind": "notify"},
+                        blocking=True, return_response=True,
+                    )
+                except Exception:  # noqa: BLE001 - the card is already there
+                    _LOGGER.exception("notifications: could not announce %s", task.get("id"))
 
     async def on_failed(event: Any) -> None:
         task = (event.data or {}).get("task") or {}
@@ -363,9 +386,69 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         max_entries=int(cfg.get("max_entries") or DEFAULT_MAX_ENTRIES),
         kinds=cfg.get("kinds") if isinstance(cfg.get("kinds"), dict) else None,
     )
+    store.speak_completions = bool(cfg.get("speak_completions", True))
     await store.async_load()
     jarvis.data[DATA_STORE] = store
     _register_services(jarvis, store)
+    _register_tools(jarvis, store)
     _listen(jarvis, store)
     _LOGGER.info("notifications ready: %d kept, %d unread", len(store.entries), store.unread)
     return True
+
+
+def _register_tools(jarvis: "Jarvis", store: NotificationStore) -> None:
+    """`recent_moments` (M95): Jarvis reads its own inbox.
+
+    "What did you tell me while I was out?" was answered by reconstruction —
+    the model guessing at what it might have said — because nothing let it
+    read the record (the agentic audit, 27 Aug 2026). This is the record,
+    server-authored: what was recorded, when, and where it came from.
+    """
+    registry = jarvis.data.get("llm_tools")
+    if registry is None or not hasattr(registry, "register"):
+        return
+
+    from ...llm.tools import schema_object
+
+    async def tool_recent_moments(args: dict[str, Any], context: Any = None) -> Any:
+        minutes = max(1.0, min(float(args.get("minutes") or 60), 7 * 24 * 60))
+        limit = max(1, min(int(args.get("limit") or 10), 30))
+        since = time.time() - minutes * 60
+        rows = [r for r in store.listing(limit=200) if float(r.get("at") or 0.0) >= since][:limit]
+        now = time.time()
+        return {
+            "status": "ok",
+            "minutes": minutes,
+            "count": len(rows),
+            "moments": [
+                {
+                    "kind": r.get("kind"),
+                    "title": r.get("title"),
+                    "body": str(r.get("body") or "")[:300],
+                    "minutes_ago": round(max(0.0, now - float(r.get("at") or now)) / 60.0, 1),
+                    "source": r.get("source"),
+                    "read": bool(r.get("read")),
+                }
+                for r in rows
+            ],
+            "note": "These are the messages Jarvis recorded for the user — say them back as such, briefly; do not invent others.",
+        }
+
+    registry.register(
+        name="recent_moments",
+        description=(
+            "What Jarvis has told the user lately — finished jobs, reminders, notices, "
+            "briefings — from its own record. Use it for \"what did you tell me while I was "
+            "out?\", \"did that finish?\", \"anything I missed?\". Never invent a message "
+            "this does not list."
+        ),
+        parameters=schema_object(
+            {
+                "minutes": {"type": "number", "description": "How far back to look (default 60, at most a week)."},
+                "limit": {"type": "integer", "description": "At most this many (default 10)."},
+            }
+        ),
+        handler=tool_recent_moments,
+        domain=DOMAIN,
+        read_only=True,
+    )

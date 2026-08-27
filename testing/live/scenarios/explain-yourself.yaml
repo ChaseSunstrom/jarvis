@@ -1,0 +1,21 @@
+name: explain-yourself
+capability: answer
+gated-on: M95
+intent: >
+  "Why did you say that? What did you look at?" was answered by reconstruction
+  — live, an apology for a mistake that had not been made (the agentic audit,
+  27 Aug 2026). explain_last_turn reads the previous turn from the archive:
+  the tools it called and the memory it used, server-authored, never guessed.
+variants: [text]
+turns:
+  - say: "What's the temperature in the garage?"
+    expect:
+      capability: sensors
+      reply_means: "gives the garage temperature as a number"
+  - say: "Why did you say that? What did you look at to answer?"
+    expect:
+      reply_means: >
+        names the sensor reading it looked up last turn (the garage temperature
+        sensor, or a sensor tool) — it does not apologise, does not guess, and
+        does not read the sensor again as its whole answer
+      no_service: {domain: light}

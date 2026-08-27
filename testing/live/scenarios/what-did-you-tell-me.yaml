@@ -1,0 +1,19 @@
+name: what-did-you-tell-me
+capability: answer
+gated-on: M95
+intent: >
+  "What did you tell me while I was out?" reads Jarvis's own record (the
+  inbox) rather than the model's guess at what it might have said. A reminder
+  fires first so there is something on the record.
+variants: [text]
+turns:
+  - say: "Remind me in one minute that the audit ran."
+    expect:
+      task: {kind: notify, within: 30}
+      reply_means: "confirms a reminder in about a minute"
+  - say: "What have you told me in the last few minutes?"
+    wait: 75
+    expect:
+      reply_means: >
+        mentions the reminder that the audit ran (from its record), and does
+        not invent other messages

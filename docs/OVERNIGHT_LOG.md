@@ -910,3 +910,7 @@ is quiet. Done since:
   browser transport names the thread it holds and the one-turn rule on `-ui` variants is lifted —
   thread-continuity runs through the real console now. Spec 2/2, rig tests 49; the live half waits. m37's
   gate names M77's tests (10/10).
+- 05:12 — M95 built: finished background, research and coding work is announced through companion.notify
+  (spoken when present, a card when not; `notifications: speak_completions: false` turns it off); two
+  read-only tools from the record — `recent_moments` (the inbox) and `explain_last_turn` (the previous
+  turn's tools and memory from the archive, never reconstructed); two scenarios; notifications 18, agent +2.

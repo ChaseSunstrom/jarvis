@@ -241,3 +241,66 @@ async def test_a_briefing_can_be_switched_off_from_the_console(tmp_path):
 
     assert manager.configure({"morning": "off"})["morning"] == ""
     assert "morning" not in manager.schedule
+
+
+# ---------------------------------------------------------------------------
+# M95: finished work speaks, and the inbox is a tool
+# ---------------------------------------------------------------------------
+class Companion:
+    def __init__(self, jarvis) -> None:
+        self.messages = []
+        jarvis.services.register("companion", "notify", self, supports_response=True)
+
+    async def __call__(self, call):
+        self.messages.append(dict(call.data))
+        return {"status": "delivered", "device_id": "phone"}
+
+
+async def test_a_finished_background_job_is_announced_through_companion(tmp_path):
+    jarvis = Jarvis(tmp_path)
+    companion = Companion(jarvis)
+    await notifications_integration.async_setup(jarvis, {})
+    jarvis.bus.fire(EVENT_TASK_COMPLETED, {"task": {"id": "t1", "kind": "background", "title": "Audit every sensor",
+                                                   "result": "Two look wrong: the garage humidity and the hall CO2."}})
+    await jarvis.async_block_till_done()
+    assert len(companion.messages) == 1
+    said = companion.messages[0]["message"]
+    assert said.startswith("Finished: Audit every sensor.") and "garage humidity" in said
+    # A reminder finishing IS the reminder: it is not announced twice.
+    jarvis.bus.fire(EVENT_TASK_COMPLETED, {"task": {"id": "t2", "kind": "notify", "title": "Wake up", "result": ""}})
+    await jarvis.async_block_till_done()
+    assert len(companion.messages) == 1
+    await jarvis.async_stop()
+
+
+async def test_speak_completions_false_keeps_the_card_and_says_nothing(tmp_path):
+    jarvis = Jarvis(tmp_path)
+    companion = Companion(jarvis)
+    await notifications_integration.async_setup(jarvis, {"speak_completions": False})
+    jarvis.bus.fire(EVENT_TASK_COMPLETED, {"task": {"id": "t1", "kind": "research", "title": "Bitcoin", "result": "up"}})
+    await jarvis.async_block_till_done()
+    assert companion.messages == []
+    assert jarvis.data["notifications"].listing()[0]["title"].startswith("Finished: Bitcoin")
+    await jarvis.async_stop()
+
+
+async def test_recent_moments_reads_the_inbox_within_a_window(tmp_path):
+    from jarvis.llm.tools import Exposure, ToolRegistry
+
+    jarvis = Jarvis(tmp_path)
+    registry = ToolRegistry(jarvis, exposure=Exposure.from_config(None))
+    jarvis.data["llm_tools"] = registry
+    await notifications_integration.async_setup(jarvis, {})
+    store = jarvis.data["notifications"]
+    await store.async_add(kind="reminder", title="The audit ran", body="", source="jarvis_schedule_fired")
+    await store.async_add(kind="task", title="Finished: Bitcoin", body="up", source="jarvis_task_completed")
+    # Push one back two hours, past the default window.
+    for entry in store.entries:
+        if entry.title == "Finished: Bitcoin":
+            entry.at -= 2 * 3600
+    listed = await registry.call("recent_moments", {"minutes": 60}, None)
+    assert listed["status"] == "ok" and [m["title"] for m in listed["moments"]] == ["The audit ran"]
+    everything = await registry.call("recent_moments", {"minutes": 240}, None)
+    assert [m["title"] for m in everything["moments"]] == ["Finished: Bitcoin", "The audit ran"] or len(everything["moments"]) == 2
+    assert "recent_moments" in registry.names()
+    await jarvis.async_stop()

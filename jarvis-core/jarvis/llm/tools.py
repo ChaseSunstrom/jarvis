@@ -743,6 +743,7 @@ ToolHandler = Callable[[dict[str, Any], Any], Awaitable[Any] | Any]
 #: in — but reading is not an ACTION, and this list only decides whether the
 #: turn may proceed without a human once something hostile has been read.
 READ_ONLY_TOOLS = frozenset({
+    "explain_last_turn", "recent_moments",
     # the house, observed
     "get_state", "list_entities", "list_devices", "get_user_context", "recent_events",
     "list_my_devices", "list_cameras", "look_at_camera", "describe_camera_change",
@@ -2898,6 +2899,77 @@ def register_builtin_tools(
                 for task in rows[-5:]
             ],
         }
+
+    # --- explain_last_turn (M95) -------------------------------------------
+    async def _explain_last_turn(args: dict[str, Any], context: Any) -> Any:
+        """The previous turn in this conversation, from the record: the tools
+        it called (name, the arguments in brief, whether they succeeded) and
+        the remembered notes it was given. Server-authored — "why did you say
+        that?" was being answered by reconstruction, once with an apology for
+        a mistake that had not been made (the agentic audit, 27 Aug 2026)."""
+        agent = jarvis.data.get("llm")
+        conversation_id, _spoken = registry._turn_facts(context)
+        if not conversation_id:
+            # The turn's own facts when they were recorded for this context;
+            # otherwise the conversation the agent last finished, which is
+            # the previous turn by definition unless a new thread began this
+            # instant — a rarer wrong answer than "no earlier turn" for every
+            # caller that hands the registry a context of its own.
+            conversation_id = getattr(agent, "last_conversation_id", None)
+        archive = getattr(agent, "archive", None)
+        conversation = archive.get(conversation_id) if archive is not None and conversation_id else None
+        turns = list(getattr(conversation, "turns", []) or [])
+        # The turn being explained is the last assistant turn BEFORE the one
+        # now in progress; the current user turn is not archived until it ends.
+        assistant_turns = [t for t in turns if getattr(t, "role", "") == "assistant"]
+        if not assistant_turns:
+            return {"status": "ok", "explained": False,
+                    "note": "There is no earlier turn in this conversation to explain; say so plainly."}
+        last = assistant_turns[-1]
+        user_before = ""
+        for t in reversed(turns[: turns.index(last)]):
+            if getattr(t, "role", "") == "user":
+                user_before = str(getattr(t, "content", "") or "")
+                break
+        calls = []
+        for call in list(getattr(last, "tool_calls", []) or [])[:12]:
+            if not isinstance(call, dict):
+                continue
+            result = call.get("result")
+            status = result.get("status") if isinstance(result, dict) else None
+            arguments = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+            brief = {k: (str(v)[:80]) for k, v in list(arguments.items())[:4]}
+            calls.append({"tool": call.get("name"), "arguments": brief, "status": status or ("ok" if result is not None else "unknown")})
+        memory_used: list[str] = []
+        last_result = getattr(agent, "last_result", None)
+        if last_result is not None and getattr(agent, "last_conversation_id", None) == conversation_id:
+            memory_used = [str(m)[:160] for m in list(getattr(last_result, "memory_used", []) or [])[:6]]
+        return {
+            "status": "ok",
+            "explained": True,
+            "asked": user_before[:200],
+            "said": str(getattr(last, "content", "") or "")[:300],
+            "tools_called": calls,
+            "memory_used": memory_used,
+            "note": (
+                "Answer from THIS record: name the tools and what they looked at, or say that "
+                "no tool was called and the answer came from the house summary or the model itself. "
+                "Do not apologise for what the record does not show, and do not call the tools again "
+                "to explain them."
+            ),
+        }
+
+    registry.register(
+        name="explain_last_turn",
+        description=(
+            "Why Jarvis said what it said last turn: the tools it actually called, what they "
+            "looked at, and the remembered notes it was given — from the record, never a guess. "
+            "Use it for \"why did you say that?\", \"what did you look at?\", \"how do you know?\"."
+        ),
+        parameters=schema_object({}),
+        handler=_explain_last_turn,
+        read_only=True,
+    )
 
     registry.register(
         name="task_status",
