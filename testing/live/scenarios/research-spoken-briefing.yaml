@@ -1,0 +1,27 @@
+name: research-spoken-briefing
+capability: research
+ground: fixture
+gated-on: M74
+intent: >
+  The operator's own case, spoken: a question whose answer needs tools and
+  comes back as several sentences. "It took forever after it spit out text
+  for piper to do the TTS" — before M74, early speech switched off once a
+  tool had run, so the whole briefing was synthesised after its last word.
+  Now each finished sentence after the tools is a `tts-chunk` while the model
+  writes the next, the tail is the last chunk, and the rig records
+  `first_audio` for the turn: the M74 gate reads it and requires it to come
+  before the whole clip. The three facts are checked against the fixture
+  handbook, as research-reads-a-document checks its one.
+variants: [voice]
+turns:
+  - say: >
+      Look up what the fixture handbook says about the boiler — the maximum
+      pressure, the flow temperature it recommends, and how long the warranty
+      lasts — and tell me all three.
+    expect:
+      capability: research
+      reply_contains: "2.5"
+      reply_means: >
+        gives all three from the handbook — a maximum pressure of 2.5 bar, a
+        recommended flow temperature (55 degrees), and a seven-year warranty —
+        in more than one sentence
