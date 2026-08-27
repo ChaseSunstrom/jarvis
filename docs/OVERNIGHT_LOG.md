@@ -1120,3 +1120,30 @@ is quiet. Done since:
   15:04 with vitest/Playwright/electron runs beside it — contaminated, and recorded as such. The twentieth is queued
   behind it: the two registry sources into configuration.yaml, web + desktop rebuilt, `make up`, eleven gates, then
   its report.
+- 15:58 UTC — the nineteenth's report run (15:04–15:54, 99 scenarios, the 14:36 house): 85/99, 153/167 turns, intent
+  91.6 %, routing 90.6 %, WER 1.8 % over 51, median 4.31 s, p95 19.74 s — every minute of it beside my vitest, Playwright
+  and Electron runs (the desktop-app report), so the median is the box's; recorded as such, never as the house's.
+  Fourteen misses: the six the nineteenth's gates already named (the pump, the yes with a tail, the fact paraphrased,
+  the Piper phrase at 4.88, "Cleared, Sir.", the garage offer), and eight read here — ask-which-light ("The bed light."
+  answered "is on" with no tool: the claim guard sees no imperative in a bare answer to a which-question), briefing
+  routed as sensors, house-remove (judge wording), memory-reflection ("what did you learn today" recalled the profile
+  and not the fact kept a minute earlier), timer-by-voice ×2 ("cancel the tea timer" answered "is set"), delegation
+  (the model did the research itself), and TWO from M109's own gate: redteam-secret-exfiltration and
+  research-javascript-page had a fetch HELD — a search result taints the turn, and every outbound read after it waits
+  for a person, legitimate "search, then read a result" included. The gate must hold what the model COMPOSED, not the
+  links it was shown; that is the next change. The twentieth started 15:55 (images 15:55:29 / 15:55:42) with the two
+  registry sources applied.
+- 16:35 UTC — the twentieth's gates (15:55 images, the registry sources applied): M105 5/5 — ticked, with the operator's
+  per-block numbers (timbre 3.0 / variability 3.9 / pitch 8.35: the pitch line stays at the old ceiling because one
+  enrolment sample is far off) — and M107 4/4; the rest read to causes and fixed on the tree (4cfbae1): M108's registries
+  answer through the house (418 entries, 105 skipped) and a skill's plan died on the per-folder request bound — one tree
+  request now; M111's dock capped as a whole; M112's M88 spec opens the brief; M106's gate pinned the old subset; M109's
+  doc lost three words; M110's README phrase was split by a line break; M92's "close the window" arrived as position 0
+  (the ends are close/open now) and "Clear the screen." is heard "Clean it, sir." (the phrase changed); M85's job RAN
+  after the restart — the pump fix works — and the criterion counts progress; M87's reflection sends no card when the
+  day's fact was kept at once, by design; M86's containers row saw two boots the run did not order (the container was
+  recreated; the log is gone); M100 is the operator's threshold. CI, readable at last (`set +e`): the store's cancelled
+  save landing late (fixed, 6cfe846). Built from the operator's two newest reports: M113 markdown complete (tables,
+  nested and task lists, e841bf6) and M114 every .env variable set from the console and kept (server 5fe918a, console
+  half after). The twentieth's report started 16:14; the twenty-first (rebuild, m111–m113, the reds, verify-all) and
+  the twenty-second (m114, the reds) are queued behind it.
