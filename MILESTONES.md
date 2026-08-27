@@ -1351,7 +1351,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     ("half way, Sir") only when the job asks. Verified by the rig's task scenarios and the
     surface's list.
   - Verify: `bash scripts/verify/m88-a-plan-on-the-screen.sh`
-- [ ] **M89 — Stack hygiene** · size S · deps M28 · parallel-ok M84–M88
+- [x] **M89 — Stack hygiene** · size S · deps M28 · parallel-ok M84–M88
   - Scope: from the services audit — SearXNG bound to loopback under the 2026.8 granian image;
     `jarvis-web` runs as `node`; the live `jarvis-sandbox` definition (root compose) pinned by
     `test_packaging` for `network_mode`, user, `read_only`, `cap_drop`, `pids_limit`, its one
@@ -1359,6 +1359,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     §7 and the browser README's test table corrected; the orchestrator's `/healthz` shown on
     Settings › Tools ("delegation: model unreachable" / "coding worker: OpenCode missing").
   - Verify: `bash scripts/verify/m89-stack-hygiene.sh`
+  - 27 Aug 09:39: ticked — the plan pass's gate 6/6 on the rebuilt stack: the packaging pins (+3), three
+    documents agree with the tree, SearXNG on `GRANIAN_HOST=127.0.0.1`, the console as `node`, and the
+    smoke slice 9/9 live. The orchestrator's `/healthz` is read on Settings › Tools and, since M101, on
+    the Code screen's worker line.
+
 - [x] **M90 — The claims register, re-measured** · size S · deps M23 · parallel-ok M89, M91
   - Scope: `docs/verification.md`'s suite-size tables regenerated from the commands printed
     beside them and dated; one number per suite everywhere it is quoted; the four pessimistic

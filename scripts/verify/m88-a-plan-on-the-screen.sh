@@ -54,7 +54,9 @@ async def main():
         started = await cmd(ws, 1, type="jarvis/tools/call", name="run_background_task", arguments={
             "description": "Go through every sensor in the house one at a time, work out which ones look wrong, and write it up.",
         })
-        task_id = (started.get("result") or {}).get("task_id")
+        # jarvis/tools/call answers {tool, result}; the task id is on the inner result.
+        answer = started.get("result") or {}
+        task_id = ((answer.get("result") or {}) if isinstance(answer.get("result"), dict) else answer).get("task_id")
         assert task_id, started
         deadline = time.time() + 45
         seen = False

@@ -2108,7 +2108,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M86 — Jarvis notices | **Ticked** (6/6 on the house: rules ship and parse, the lock flipped and `recent_events` named it) | `m86-jarvis-notices.sh`; `test_sensors.py -k "narrat or offer"` (15) |
 | M87 — Overnight reflection | **Built** (4/6) | `m87-overnight-reflection.sh`; `test_memory_reflection.py` (6); scenario `memory-reflection` with `reflect: true` |
 | M88 — A plan on the screen | **Built** (6/7) | `m88-a-plan-on-the-screen.sh`; `test_surface.py` (7); `surface.spec.ts` 4/4 |
-| M89 — Stack hygiene | **Built** (3/5) | `m89-stack-hygiene.sh`; `test_packaging.py` (+3); the two stack checks wait for the recreate |
+| M89 — Stack hygiene | **Ticked** (6/6 on the rebuilt stack: SearXNG on loopback, the console as node, the pins, the isolation matrix, the smoke slice 9/9) | `m89-stack-hygiene.sh`; `test_packaging.py` (+3) |
 | M90 — The claims register, re-measured | **Automated** (6/6, ticked) | `m90-claims-register.sh` reruns every count and fails on drift |
 | M91 — A gate cannot pass on a skip | **Ticked** (3/3; 76 gates read the pytest summary, a skip fails unless allowed by count, `results-<gate>.json` per gate) | `m91-no-pass-on-a-skip.sh` |
 | M92 — The house by voice, beyond lights | **Built** (3/4) | `m92-the-house-by-voice.sh`; ten scenarios; rig tests 49 |

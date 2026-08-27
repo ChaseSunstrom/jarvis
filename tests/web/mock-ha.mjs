@@ -1738,7 +1738,8 @@ index 1234567..89abcde 100644
 			source: "user",
 			pinned: true,
 			expires: null,
-			person: ""
+			person: "",
+			conversation_id: ""
 		},
 		{
 			id: "mem2",
@@ -2866,7 +2867,8 @@ index 1234567..89abcde 100644
 						source: String(msg.source || 'extracted'),
 						pinned: false,
 						expires: null,
-						person: String(msg.person ?? '')
+						person: String(msg.person ?? ''),
+						conversation_id: String(msg.conversation_id ?? '')
 					};
 					memoryEntries = memoryEntries.filter((e) => e.id !== entry.id);
 					memoryEntries.push(entry);

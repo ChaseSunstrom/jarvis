@@ -998,3 +998,4 @@ is quiet. Done since:
   shall I…"); m03/m50/m48/m49/m55 are the pairing tests under load. M101 built. The 3.12 run of jarvis-core: 3537 passed,
   1 failed — the store race, fixed.
 - 09:37 — M86 ticked (plan pass 6/6 on the house). m85's live run hit the two-digit milestone regex (fixed since) — re-run pending; m87's card is not made when extraction already learned the day (the scenario's premise).
+- 09:39 — M89 ticked (plan pass 6/6). The sixteenth rebuild is queued behind the fifteenth's report run (core, orchestrator, console), then the gates the tree changed since 08:38, then its own report run.
