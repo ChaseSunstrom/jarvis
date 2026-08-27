@@ -5,14 +5,14 @@ import { FEATURED, FEATURED_KEYS, sectionOfGroup } from '../src/lib/sections/set
 /**
  * SETTINGS, cut to what a person changes (M54).
  *
- * Five sections a person can name — Assistant · Voice · House · Console ·
- * Tools — each opening on a few rows in plain words with one line saying why,
+ * Six sections a person can name — Assistant · Voice · House · Console ·
+ * System · Tools — each opening on a few rows in plain words with one line saying why,
  * and the rest of what the server sends behind EVERYTHING, exactly as the
  * server describes it. Two claims, and the second is the one that matters:
  *
  *   1. the plain rows are there, in words, with a why, and they save;
  *   2. **nothing was lost** — every setting the mock backend sends is on one
- *      of the five sections, as a plain row or behind EVERYTHING, and every
+ *      of the six sections, as a plain row or behind EVERYTHING, and every
  *      panel the old single page carried (pairing, voice identity, this
  *      console, text size, the event stream, the desktop) is reachable.
  *

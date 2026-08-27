@@ -62,13 +62,14 @@ print("five roles, and the settings the new sections feature")
 '
 
 # --- the information architecture, statically ------------------------------
-check "SETTINGS has exactly five sections, in order: Assistant · Voice · House · Console · Tools" python3 -c '
+check "SETTINGS has exactly six sections, in order: Assistant · Voice · House · Console · System · Tools" python3 -c '
 import re
 from pathlib import Path
 src = Path("jarvis-web/src/lib/screens.ts").read_text()
 blocks = re.findall(r"\{\n\t\tpath: .*?\n\t\}", src, re.S)
 sections = [re.search(r"path: .([^\x27]+).", b).group(1) for b in blocks if "within: \x27/settings\x27" in b]
-want = ["/settings/assistant", "/settings/voice", "/settings/house", "/settings/console", "/settings/tools"]
+# System (M114: the .env catalogue) sits beside Console, the other "this installation" section; Tools stays last.
+want = ["/settings/assistant", "/settings/voice", "/settings/house", "/settings/console", "/settings/system", "/settings/tools"]
 assert sections == want, f"settings sections are {sections}"
 for path in want:
     assert (Path("jarvis-web/src/routes") / path.lstrip("/") / "+page.svelte").is_file(), f"{path} has no page"
@@ -116,7 +117,7 @@ check "the phone offers the same front doors as the browser" \
 
 ensure_web_build
 run_playwright "the MODELS panel: rows from the server, a role choice writes the setting, four states" models.spec.ts
-run_playwright "the five sections, plain rows, and every old setting behind everything" settings.spec.ts
+run_playwright "the six sections, plain rows, and every old setting behind everything" settings.spec.ts
 run_playwright "the look, measured on the settings screens" 'look.spec.ts -g "Settings|Assistant|Voice settings|House settings|Console|Tools"'
 run_playwright "the settings screens in every state, every control live, nothing overflowing" \
     'states.spec.ts controls.spec.ts responsive.spec.ts -g "Assistant|Voice settings|House settings|Console|Tools|overflows"'
