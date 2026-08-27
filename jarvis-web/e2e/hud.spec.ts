@@ -159,9 +159,15 @@ test('the HUD scrolls to its controls on a short screen instead of clipping them
 	// landscape, or a long answer, pushed the readout and the mute button past
 	// the bottom edge with no way to reach either.
 	await page.setViewportSize({ width: 900, height: 360 });
+	// The boot sequence plays over the HUD on a first visit; under load (CI,
+	// verify-all on this box) the scroll below ran while it was still up
+	// and the mute button was "unreachable". Every other voice case skips
+	// it the same way.
+	await page.addInitScript(() => sessionStorage.setItem('jarvis:boot-played', '1'));
 	await page.goto('/');
 	const mic = page.getByTestId('mic');
 	await expect(mic).toBeVisible({ timeout: 10_000 });
+	await page.waitForTimeout(400);
 
 	const overflow = await page.evaluate(
 		() => getComputedStyle(document.querySelector('main')!).overflowY
