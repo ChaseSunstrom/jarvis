@@ -150,8 +150,11 @@ even buffered. An unknown value falls back to `off` with an error in the log,
 never to `enforce`; a typo must not be able to lock you out of your own house,
 and must not silently disable a gate you meant to turn on either.
 
-**`threshold`** — in units of standard deviations from your enrolled centre,
-averaged over all 46 dimensions, so it keeps its meaning when the room changes.
+**`threshold`** — in units of squared standard deviations from your enrolled
+centre, averaged over the three blocks (timbre, variability, pitch — each one
+vote), so it keeps its meaning when the room changes. One block more than
+twice the threshold out refuses on its own, whatever the other two say, and
+the verdict names it (`pitch-mismatch`).
 Omit it and each profile uses what enrolment worked out from its own
 leave-one-out spread: the **worst** enrolment sample times 1.25. The worst
 rather than the average on purpose — the average tells you how you usually
@@ -302,7 +305,17 @@ nothing about who produced it). Mean and standard deviation of those across the
 utterance, plus a soft-assigned log-F0 histogram: 46 dimensions.
 
 The score is the mean squared z-score against the enrolled per-dimension spread,
-with that spread shrunk toward a prior estimated from the enrolment set itself.
+with that spread shrunk toward a prior estimated from the enrolment set itself —
+taken per block and then averaged over the three blocks, so timbre (19
+dimensions), variability (19) and pitch (8) are three votes rather than 46. It
+used to be one mean over all 46, and on 27 Aug 2026 the operator's own profile
+accepted a synthetic voice — a woman's, against a man's — at 4.15 under a
+threshold of 4.93: pitch sat at 9.35, and 38 dimensions of timbre and
+variability outvoted it. Beside the mean there is a veto: one block more than
+`BLOCK_VETO` (2×) the threshold out is a refusal in its own right, with the
+reason naming the block. The ear's rule — the wrong pitch is a different
+person whatever the timbre says — and the one that makes `enforce` mean
+something against a stranger who happens to share your consonants.
 Not cosine similarity: cosine between two utterances of ordinary speech sits
 near 0.95 whoever is talking, so an absolute cosine threshold is a magic number
 that means nothing until it is tuned per microphone and silently means nothing
