@@ -98,6 +98,33 @@ async def test_a_reminder_finishing_is_not_recorded_twice(house):
     assert store.listing() == []
 
 
+async def test_what_the_narrator_said_or_asked_is_on_the_record(house):
+    """"What did you tell me while I was out?" reads this (M95); the narrator
+    writes to it (M86) — delivered narrations only, an offer once when asked and
+    once more when it acted, never one the limiter or the night held back."""
+    from jarvis.integrations.narrate import EVENT_NARRATED
+
+    jarvis, store, _tasks = house
+    assert EVENT_NARRATED == "narrate_narrated"
+    base = {"time": 1000.0, "entity_id": "cover.garage_door", "name": "Garage Door",
+            "message": "The Garage Door has opened", "area": "Garage", "importance": "normal"}
+    jarvis.bus.fire(EVENT_NARRATED, {**base, "delivered": False, "reason": "rate limit"})
+    jarvis.bus.fire(EVENT_NARRATED, {**base, "delivered": True, "reason": "asked",
+                                     "offer": {"service": "cover.close_cover", "question": "Shall I close it?"}})
+    jarvis.bus.fire(EVENT_NARRATED, {**base, "delivered": True, "reason": "asked",
+                                     "offer": {"service": "cover.close_cover", "question": "Shall I close it?"}})
+    jarvis.bus.fire(EVENT_NARRATED, {**base, "delivered": True, "acted": True, "answered": "yes",
+                                     "reason": "cover.close_cover on the user's yes",
+                                     "offer": {"service": "cover.close_cover", "question": "Shall I close it?"}})
+    await jarvis.bus.async_block_till_done()
+    notices = [n for n in store.entries if n.kind == "notice"]
+    assert [n.title for n in notices] == [
+        "The Garage Door has opened — Shall I close it?",
+        "The Garage Door has opened — done on your yes",
+    ], [n.title for n in notices]
+    assert notices[0].source == "narrate_narrated"
+
+
 async def test_the_briefing_leaves_one_too(house):
     jarvis, store, _tasks = house
     await jarvis.bus.async_fire(

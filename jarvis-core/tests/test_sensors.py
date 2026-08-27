@@ -1854,6 +1854,68 @@ async def test_a_no_or_no_answer_leaves_the_house_as_it_was(jarvis):
     assert reasons == ["declined", "timeout"], reasons
 
 
+async def test_with_a_toolbox_the_offer_is_a_held_question_that_any_yes_resolves(jarvis):
+    """M86, second half: the offer is a held, answerable request — not a device's alone.
+
+    With no phone connected, `companion.ask` queued the question and nobody
+    knew it had been asked (the live rig, 27 Aug 2026). Held in the approvals
+    registry it shows on the console's bar, reaches a phone through the same
+    bridge every held question uses, and a spoken yes to ANY conversation is
+    its answer — a question the house raised belongs to whoever answers it.
+    """
+    from jarvis.integrations.narrate import OFFER_TOOL
+    from jarvis.llm.tools import ToolRegistry
+
+    lock = FakeLock(jarvis)
+    registry = ToolRegistry(jarvis)
+    jarvis.data["llm_tools"] = registry
+    _manager, companion = await narrate_setup(jarvis, LOCK_RULE, answers=["Yes"])
+    await flip(jarvis, "lock.back_door", "locked", {"friendly_name": "Back Door"})
+    await flip(jarvis, "lock.back_door", "unlocked", {"friendly_name": "Back Door"})
+
+    assert companion.questions == [], "held in the registry, not asked of the companion directly"
+    assert lock.calls == [], "nothing runs before the answer"
+    waiting = registry.pending_for_conversation("somebody-elses-conversation")
+    assert len(waiting) == 1 and waiting[0]["tool"] == OFFER_TOOL and waiting[0]["answerable"]
+    assert "Shall I lock it?" in waiting[0]["arguments"]["question"]
+    asked = jarvis.data["narrate"].history[-1]
+    assert asked.delivered is True and asked.reason == "asked"
+    # not the model's to call
+    assert OFFER_TOOL not in [t["function"]["name"] for t in registry.as_openai_schema()]
+    assert OFFER_TOOL in registry.tools
+
+    outcome = await registry.approve_request(waiting[0]["request_id"], True, "yes, go ahead")
+    assert outcome.get("status") == "executed", outcome
+    assert lock.calls == [{"entity_id": "lock.back_door"}]
+    done = jarvis.data["narrate"].history[-1]
+    assert done.acted is True and done.answered == "yes, go ahead"
+    assert registry.pending_for_conversation("x") == []
+
+
+async def test_a_held_offer_answered_no_or_approved_bare_does_the_right_thing(jarvis):
+    """"No" through the same door leaves the house; a bare Approve is a yes."""
+    from jarvis.llm.tools import ToolRegistry
+
+    lock = FakeLock(jarvis)
+    registry = ToolRegistry(jarvis)
+    jarvis.data["llm_tools"] = registry
+    _manager, _companion = await narrate_setup(jarvis, LOCK_RULE, clock=Ticker(step=400.0))
+    await flip(jarvis, "lock.side_door", "locked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "unlocked", {"friendly_name": "Side Door"})
+    waiting = registry.pending_for_conversation("c1")
+    assert len(waiting) == 1, (waiting, [(e.reason, e.delivered) for e in jarvis.data["narrate"].history])
+    held = waiting[0]
+    await registry.approve_request(held["request_id"], True, "No")
+    assert lock.calls == []
+    assert jarvis.data["narrate"].history[-1].reason == "declined"
+
+    await flip(jarvis, "lock.side_door", "locked", {"friendly_name": "Side Door"})
+    await flip(jarvis, "lock.side_door", "unlocked", {"friendly_name": "Side Door"})
+    (held,) = registry.pending_for_conversation("c2")
+    await registry.approve_request(held["request_id"], True, None)
+    assert lock.calls == [{"entity_id": "lock.side_door"}]
+
+
 async def test_without_an_ask_service_the_offer_is_a_notice(jarvis):
     lock = FakeLock(jarvis)
     _manager, companion = await narrate_setup(jarvis, LOCK_RULE)

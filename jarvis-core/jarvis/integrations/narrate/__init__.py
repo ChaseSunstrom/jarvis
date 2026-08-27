@@ -86,6 +86,9 @@ DATA_LOCAL_MINUTES = "narrate_local_minutes"
 DATA_TOOLS = "llm_tools"
 
 EVENT_NARRATED = "narrate_narrated"
+#: The hidden tool a notice's offer is held under (M86). Never offered to the
+#: model; `tools.Tool.hidden` keeps it off the schema.
+OFFER_TOOL = "narrate_offer"
 
 DEFAULT_HISTORY = 200
 DEFAULT_IMPORTANCE = "normal"
@@ -400,6 +403,8 @@ class NarrationManager:
         # is not a rule, and without this its debounce was pinned at the
         # built-in 300s with no way for `narrate.min_interval` to move it.
         self.min_interval = float(defaults["min_interval"])
+        #: Offers held as questions, by entity — resolved by `_answer_offer`.
+        self._held: dict[str, Narration] = {}
         self.limiter = NarrationLimiter(
             max_per_hour=int(_number(options.get("max_per_hour"), DEFAULT_MAX_PER_HOUR)),
             max_burst=int(_number(options.get("max_burst"), DEFAULT_MAX_BURST)),
@@ -641,9 +646,23 @@ class NarrationManager:
         and nothing else; anything else, or no answer, leaves the house as it
         was. Without `companion.ask` the message goes as a notice.
         """
-        if narration.offer and self.jarvis.services.has_service("companion", "ask"):
-            await self._offer_and_act(narration)
-            return
+        if narration.offer:
+            # Through the approvals machinery when there is one (M86, second
+            # half): a held question shows on the console's bar, reaches a
+            # phone through the same bridge every held question uses, is
+            # answered by a spoken yes to any surface, and is on the record at
+            # once. `companion.ask` — the first shape — only ever reached a
+            # device: with none connected the question sat in the companion's
+            # queue and nothing said it had been asked (the live rig, 27 Aug
+            # 2026). It stays as the way in for a house with no toolbox.
+            registry = self.jarvis.data.get("llm_tools")
+            question = f"{narration.message.rstrip('.')} — {narration.offer.get('question', '')}".strip()
+            if registry is not None and hasattr(registry, "register") and hasattr(registry, "call"):
+                if await self._offer_as_a_held_question(registry, narration, question):
+                    return
+            if self.jarvis.services.has_service("companion", "ask"):
+                await self._offer_and_act(narration)
+                return
         if not self.jarvis.services.has_service("companion", "notify"):
             _LOGGER.warning(
                 "narrate: companion.notify is not available; %r was not delivered",
@@ -712,6 +731,84 @@ class NarrationManager:
         else:
             narration.reason = str((result or {}).get("status") or "no answer") if isinstance(result, dict) else "no answer"
         self.jarvis.bus.fire(EVENT_NARRATED, narration.as_dict())
+
+    async def _offer_as_a_held_question(self, registry: Any, narration: Narration, question: str) -> bool:
+        """Raise the offer as a held, answerable request; True when it is waiting."""
+        from ...llm.tools import TIER_APPROVAL
+
+        known = registry.tools
+        if OFFER_TOOL not in (known() if callable(known) else known):
+            registry.register(
+                name=OFFER_TOOL,
+                description=(
+                    "A notice's offer, held for the person's answer: the offered service runs "
+                    "on a yes and on nothing else. Raised by the house, never by the model."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {"type": "string"},
+                        "service": {"type": "string"},
+                        "question": {"type": "string"},
+                    },
+                    "required": ["entity_id", "service", "question"],
+                },
+                handler=self._answer_offer,
+                tier=TIER_APPROVAL,
+                answerable="answer",
+                hidden=True,
+            )
+        offer = narration.offer or {}
+        try:
+            result = await registry.call(
+                OFFER_TOOL,
+                {"entity_id": narration.entity_id, "service": str(offer.get("service", "")), "question": question},
+                None,
+            )
+        except Exception:
+            _LOGGER.exception("narrate: could not hold the offer as a question")
+            return False
+        if not isinstance(result, dict) or result.get("status") != "approval_required":
+            return False
+        self._held[narration.entity_id] = narration
+        narration.delivered = True
+        narration.reason = "asked"
+        self.jarvis.bus.fire(EVENT_NARRATED, narration.as_dict())
+        return True
+
+    async def _answer_offer(self, args: Mapping[str, Any], context: Any = None) -> dict[str, Any]:
+        """The held offer, resolved: run the service on a yes, nothing otherwise.
+
+        `answer` is what the person said — on the console, the phone, or by
+        voice through `spoken_answers` (M66). Approved with no words at all
+        (the console's Approve button) is a yes: they approved the offered
+        action. A "No" comes through as approved-with-an-answer and is judged
+        by the same table a spoken yes is.
+        """
+        entity_id = str(args.get("entity_id") or "")
+        service_ref = str(args.get("service") or "")
+        answer = args.get("answer")
+        said = "yes" if answer is None else str(answer)
+        narration = self._held.pop(entity_id, None)
+        acted = False
+        reason = "declined"
+        if _is_yes(said):
+            domain, _, service = service_ref.partition(".")
+            try:
+                await self.jarvis.services.async_call(
+                    domain, service, {"entity_id": entity_id}, blocking=True
+                )
+                acted = True
+                reason = f"{domain}.{service} on the user's yes"
+            except Exception:
+                _LOGGER.exception("narrate: the offered %s failed", service_ref)
+                reason = f"{service_ref} failed"
+        if narration is not None:
+            narration.answered = said
+            narration.acted = acted
+            narration.reason = reason
+            self.jarvis.bus.fire(EVENT_NARRATED, narration.as_dict())
+        return {"status": "ok", "acted": acted, "entity_id": entity_id}
 
     # --- reads ------------------------------------------------------------
     def recent(

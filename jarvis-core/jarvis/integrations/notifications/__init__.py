@@ -326,6 +326,44 @@ def _listen(jarvis: "Jarvis", store: NotificationStore) -> None:
         # notification for it is the machine telling you what you just did.
         return
 
+    # What the narrator said or asked (M86/M95). `narrate_narrated` is
+    # `narrate.EVENT_NARRATED`, by value so this never imports the narrator;
+    # the test pins the two. Delivered ones only — a narration the limiter or
+    # the quiet hours held back was not told to anyone, and "what did you tell
+    # me?" must not say it was. An offer fires twice (asked, then answered):
+    # the record carries the ask once and the outcome once it acted.
+    seen: set[tuple[str, float, bool]] = set()
+
+    async def on_narrated(event: Any) -> None:
+        data = event.data or {}
+        if not data.get("delivered") and not data.get("acted"):
+            return
+        key = (str(data.get("entity_id") or ""), float(data.get("time") or 0.0), bool(data.get("acted")))
+        if key in seen:
+            return
+        seen.add(key)
+        if len(seen) > 500:
+            seen.clear()
+        offer = data.get("offer") or {}
+        message = str(data.get("message") or "")
+        if data.get("acted"):
+            title = f"{message.rstrip('.')} — done on your yes"
+            body = str(data.get("reason") or "")
+        elif offer:
+            title = f"{message.rstrip('.')} — {offer.get('question') or 'shall I?'}"
+            body = "Asked; a yes runs " + str(offer.get("service") or "")
+        else:
+            title = message
+            body = str(data.get("area") or "")
+        await store.async_add(
+            kind="notice",
+            title=title,
+            body=body,
+            source="narrate_narrated",
+            link="/house/devices",
+        )
+
+    jarvis.bus.listen("narrate_narrated", on_narrated)
     jarvis.bus.listen(EVENT_TASK_COMPLETED, on_completed)
     jarvis.bus.listen(EVENT_TASK_FAILED, on_failed)
     jarvis.bus.listen(EVENT_TASK_CANCELLED, on_cancelled)

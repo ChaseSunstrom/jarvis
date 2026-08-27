@@ -389,7 +389,11 @@ def _register_tools(jarvis: "Jarvis", surface: Surface) -> None:
     )
     registry.register(
         name="clear_screen",
-        description="Take panels off the voice screen: one by name, or all of them when no panel is named.",
+        description=(
+            "Take panels off the voice screen — 'clear the screen', 'take that down', "
+            "'get rid of the camera': one by name, or all of them when no panel is named. "
+            "Call it; do not just say the screen is clear."
+        ),
         parameters=schema_object({"panel": {"type": "string", "description": "which panel — its title or what it shows; empty for all"}}, []),
         handler=tool_clear,
         tier=TIER_DIRECT,

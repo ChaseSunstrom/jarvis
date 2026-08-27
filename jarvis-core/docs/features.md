@@ -484,6 +484,37 @@ rather than merely left undocumented.
 
 ---
 
+## notices — Jarvis notices (M86)
+
+The `narrate:` block in `configuration.yaml` is a list of rules over state
+changes — a way in opened, a lock left unlocked, smoke or gas, a device gone
+unavailable — with quiet hours, a per-entity debounce (`min_interval`) and an
+hourly budget (`max_per_hour`, `max_burst`) so a flapping sensor cannot become
+a storm. What a rule matches is composed into one sentence ("The Garage Door
+has opened") and delivered through `companion.notify`: spoken where somebody
+is, a card where nobody is.
+
+A rule may **offer** what Jarvis could do about it: `offer: {service:
+cover.close_cover, question: "Shall I close it?"}`. An offer is a *held
+question*, raised through the same approvals machinery a Tier-3 tool uses
+(the hidden `narrate_offer` tool — never offered to the model): it shows on
+the console's held bar, reaches a paired phone through the bridge every held
+question uses, and is answered by a spoken "yes" to any surface (M66's
+`spoken_answers`), by the phone, or by the console's Approve. A yes runs the
+offered service on that entity and nothing else; "no", or no answer before
+the question expires, leaves the house as it was. A house with no toolbox at
+all (the `llm` integration absent) falls back to `companion.ask`.
+
+Delivered narrations — and an offer, once when asked and once more when it
+acted — land on the notifications record as kind `notice`, which is what
+"what did you tell me while I was out?" (M95) reads. A narration the limiter
+or the quiet hours held back is kept in `narrate.history` and the
+`recent_events` tool, but is not on the record as something that was said.
+
+What this does not do: narrate a change the house made because *you* asked
+for it in the same breath (the confirmation is the reply), or bypass the
+hourly budget for anything but `importance: critical`.
+
 ## plan → act → verify
 
 Not an integration — the loop that runs work nobody is sitting in front of.

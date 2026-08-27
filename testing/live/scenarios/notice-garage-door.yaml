@@ -3,10 +3,12 @@ capability: interactions
 gated-on: M86
 intent: >
   Jarvis notices. The garage door opens while nobody asked anything; the
-  narrate rule for it (shipped in configuration.yaml, no quiet hours) leaves a
-  notice with an offer — "Shall I close it?" — and the next spoken yes is the
-  answer. The rig opens the door mid-scenario, so the notice is one raised
-  after the turn's clock started, then says yes and expects the door closed.
+  narrate rule for it (shipped in configuration.yaml, no quiet hours) holds
+  the offer — "Shall I close it?" — as a question: on the console's bar, on a
+  phone if one is paired, on the notifications record, and answerable by a
+  spoken yes to any surface. The rig opens the door mid-scenario, so the
+  question is one raised after the turn's clock started, then says yes and
+  expects the door closed and the question gone.
 variants: [text]
 setup:
   states:
@@ -18,6 +20,7 @@ turns:
       states:
         cover.garage_door: open
     expect:
+      approval: {tool: narrate_offer, decision: hold, within: 90}
       notification: {kind: notice, title_contains: "garage", within: 90}
   - say: "Yes, close it."
     expect:

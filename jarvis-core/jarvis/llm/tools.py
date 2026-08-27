@@ -816,6 +816,10 @@ class Tool:
     #: caught it). Declared, never inferred: a tool that does not say so is
     #: escalated like any other, which is the safe direction to be wrong in.
     escalates_itself: bool = False
+    #: Not offered to the model. For work the house raises on its own behalf
+    #: through the approvals machinery — a notice's offer (M86) is a held
+    #: question with a handler, not something the model should ever call.
+    hidden: bool = False
     #: The ONE argument a human may fill in when they resolve this request.
     #:
     #: Almost always None, and that is the point. `approve_request` accepts an
@@ -1113,6 +1117,7 @@ class ToolRegistry:
         answerable: str | None = None,
         read_only: bool = False,
         escalates_itself: bool = False,
+        hidden: bool = False,
         summarise: Callable[[dict[str, Any]], str] | None = None,
         refuse: Callable[[dict[str, Any]], str | None] | None = None,
         replaces: str | None = None,
@@ -1169,6 +1174,7 @@ class ToolRegistry:
                 pin=pin,
                 read_only=read_only,
                 escalates_itself=escalates_itself,
+                hidden=hidden,
                 summarise=summarise,
                 refuse=refuse,
             )
@@ -1200,8 +1206,10 @@ class ToolRegistry:
         return sorted(self._tools)
 
     def as_openai_schema(self) -> list[dict[str, Any]]:
-        """The whole toolbox in the format Ollama's ``tools`` field wants."""
-        return [self._tools[name].schema() for name in sorted(self._tools)]
+        """The whole toolbox in the format Ollama's ``tools`` field wants — minus the hidden."""
+        return [
+            self._tools[name].schema() for name in sorted(self._tools) if not self._tools[name].hidden
+        ]
 
     # --- calling ----------------------------------------------------------
     async def call(self, name: str, args: Any = None, context: Any = None) -> Any:
@@ -1574,10 +1582,13 @@ class ToolRegistry:
         return [r.as_dict() for r in self._pending.values()]
 
     def pending_for_conversation(self, conversation_id: str | None) -> list[dict[str, Any]]:
-        """What is waiting on THIS conversation, oldest first.
+        """What is waiting on THIS conversation, oldest first — and on the house.
 
-        Only requests that were stamped with the conversation when raised —
-        one raised with no conversation is nobody's to answer by voice.
+        Requests stamped with the conversation when raised, plus the ones the
+        house raised with no conversation at all: a notice's offer (M86,
+        "the garage door has opened — shall I close it?") belongs to whoever
+        answers it, and "yes" said to any surface is that answer. A request
+        raised by ANOTHER conversation stays that conversation's.
         """
         if not conversation_id:
             return []
@@ -1585,7 +1596,7 @@ class ToolRegistry:
         return [
             r.as_dict()
             for r in self._pending.values()
-            if r.conversation_id == str(conversation_id)
+            if r.conversation_id == str(conversation_id) or not r.conversation_id
         ]
 
     def purge_expired(self, now: float | None = None) -> int:
