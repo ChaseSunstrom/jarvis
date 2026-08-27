@@ -350,8 +350,23 @@ class TimerManager:
             return live[0] if len(live) == 1 else None
         if text.startswith(f"{DOMAIN}."):
             text = text[len(DOMAIN) + 1 :]
-        key = slug(text)
-        return self.timers.get(key)
+        words = [w for w in text.replace("-", " ").split() if w not in ("the", "a", "my", "timer", "timers")]
+        key = slug(" ".join(words) or text)
+        found = self.timers.get(key) or self.timers.get(slug(text))
+        if found is not None:
+            return found
+        # What speech recognition left of the name: "Cancel the t-timer" for
+        # the tea timer (the live rig, 27 Aug 2026). A fragment that begins
+        # exactly one running timer's label is that timer; two candidates, or
+        # none, is the honest "no timer called …" so nobody's pasta is cancelled
+        # for their tea.
+        live = [t for t in self.timers.values() if t.state in (STATE_ACTIVE, STATE_PAUSED, STATE_FINISHED)]
+        fragment = key.strip("-")
+        if fragment:
+            starts = [t for t in live if slug(t.label).startswith(fragment)]
+            if len(starts) == 1:
+                return starts[0]
+        return None
 
     def listing(self) -> list[dict[str, Any]]:
         return [t.as_dict() for t in self.timers.values() if t.state != STATE_IDLE]

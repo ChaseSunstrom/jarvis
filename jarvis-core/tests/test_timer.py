@@ -277,3 +277,22 @@ async def test_an_active_timer_does_not_chime_late_after_a_restart(tmp_path):
     assert state is not None and state.state == STATE_FINISHED
     assert cards and "interrupted when Jarvis restarted" in cards[-1]["title"]
     await jarvis2.async_stop()
+
+
+
+async def test_a_fragment_that_begins_one_running_timer_is_that_timer(house):
+    """"Cancel the t-timer" was what speech recognition made of "cancel the tea
+    timer" (the live rig, 27 Aug 2026), and the tea timer stayed active. A
+    fragment naming exactly one running timer is that timer; an ambiguous
+    one, or a finished-and-idle one, is still "no timer called"."""
+    jarvis, _clock, _said, _cards = house
+    manager: TimerManager = jarvis.data["timer"]
+    await manager.async_start("2m", "tea")
+    await manager.async_start("10m", "toast")
+    assert manager.find("t") is None, "tea and toast both begin with t"
+    assert manager.find("te").label == "tea"
+    assert manager.find("the t-timer") is None
+    assert manager.find("the te timer").label == "tea"
+    assert manager.find("the tea timer").label == "tea"
+    await manager.async_cancel("toast")
+    assert manager.find("t").label == "tea", "toast is idle now; tea is the only running t"

@@ -2365,8 +2365,11 @@ _ACTION_REQUEST = re.compile(
     re.IGNORECASE,
 )
 _ACTION_CLAIMED = re.compile(
-    r"\b(done|is (?:now )?(?:on|off|locked|unlocked|open|closed|set|running|stopped|paused|"
-    r"playing|armed|disarmed|enabled|disabled|cancelled|canceled)|"
+    # "is off", "is now locked", "has been cancelled", "have been set": the
+    # perfect forms were missing, and "The tea timer has been cancelled, Sir."
+    # with no tool called passed the guard on the sixteenth house (27 Aug).
+    r"\b(done|(?:is|has been|have been|are) (?:now )?(?:on|off|locked|unlocked|open|closed|set|"
+    r"running|stopped|paused|playing|armed|disarmed|enabled|disabled|cancelled|canceled)|"
     r"(?:turned|switched|locked|unlocked|opened|closed|set|started|stopped|paused|"
     r"muted|armed|disarmed|enabled|disabled|cancelled|canceled) (?:it|them|the|that|off|on)|"
     r"noted|remembered|forgotten|scheduled|(?:made|taken) a note|written (?:it |that |this )?down|"
