@@ -2207,8 +2207,8 @@ index 1234567..89abcde 100644
 				}
 				const verdict =
 					received < 6400
-						? { accepted: false, score: null, threshold: against.threshold, confidence: 0, reason: 'no-speech', blocks: {}, label: null, nearest: null }
-						: { accepted: true, score: 2.314, threshold: against.threshold, confidence: 0.9, reason: 'match', blocks: {}, label: against.label, nearest: against.label };
+						? { accepted: false, score: null, threshold: against.threshold, confidence: 0, reason: 'no-speech', blocks: { timbre: 0, variability: 0, pitch: 0 }, label: null, nearest: null }
+						: { accepted: true, score: 2.314, threshold: against.threshold, confidence: 0.9, reason: 'match', blocks: { timbre: 2.1, variability: 1.6, pitch: 3.2 }, label: against.label, nearest: against.label };
 				res.writeHead(200, { 'content-type': 'application/json' });
 				res.end(JSON.stringify({ verdict, would_block: false, mode: 'observe', enforced: false }));
 			});

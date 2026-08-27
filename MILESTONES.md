@@ -1680,6 +1680,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     suggested threshold follow. The synthetic cast's 65 tests hold unchanged under the new scoring; three new ones pin
     the owner's timbre an octave up (refused, a block named), the owner on a cold morning (through), the constant.
     The live half waits for a house built from this tree and a quiet rig.
+  - 27 Aug 12:25: the console half — Settings › Voice's TEST names the block that refused on its own ("nearest: Chase;
+    pitch far out") and shows the three blocks under the verdict; `enrolment.test.ts` 27, `enrol.spec.ts` 8/8 against the mock,
+    whose verify verdict carries the blocks as the server's does.
   - 27 Aug 11:54: planned.
 ## Final
 - [ ] **M23 — Final integration** · size M · deps M00–M72

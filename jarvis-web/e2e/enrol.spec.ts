@@ -149,7 +149,7 @@ test('TEST says who it heard and what enforcement would have done', async ({ pag
 			status: 200,
 			contentType: 'application/json',
 			body: JSON.stringify({
-				verdict: { accepted: true, label: 'Ted', nearest: 'Ted', score: 2.314, threshold: 8.831, confidence: 0.9, reason: 'match', blocks: {} },
+				verdict: { accepted: true, label: 'Ted', nearest: 'Ted', score: 2.314, threshold: 8.831, confidence: 0.9, reason: 'match', blocks: { timbre: 2.1, variability: 1.6, pitch: 3.2 } },
 				would_block: false,
 				mode: 'observe'
 			})
@@ -162,8 +162,33 @@ test('TEST says who it heard and what enforcement would have done', async ({ pag
 	await expect(page.getByTestId('enrol-test-result')).toHaveText(
 		'Recognised as Ted · 2.31 against 8.83 · this turn would be allowed'
 	);
+	// The three blocks behind it, so a person can see which part of their voice the gate weighed (M105).
+	await expect(page.getByTestId('enrol-test-blocks')).toHaveText('timbre 2.10 · variability 1.60 · pitch 3.20');
 	// Compared with EVERYONE: no `label` on a test, or it could not say who.
 	expect(new URL(verifyUrl).searchParams.get('label')).toBeNull();
+});
+
+test('TEST names the block that refused on its own, and shows the three (M105)', async ({ page, context }) => {
+	await context.grantPermissions(['microphone']);
+	await gotoVoice(page);
+	await page.route('**/api/voice/speaker/verify**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				verdict: { accepted: false, label: null, nearest: 'Ted', score: 5.16, threshold: 4.93, confidence: 0.3, reason: 'pitch-mismatch', blocks: { timbre: 3.4638, variability: 2.6567, pitch: 9.3512 } },
+				would_block: false,
+				mode: 'observe'
+			})
+		});
+	});
+	await page.getByTestId('enrol-test').click();
+	await page.waitForTimeout(1200);
+	await page.getByTestId('enrol-test-stop').click();
+	await expect(page.getByTestId('enrol-test-result')).toHaveText(
+		'Not recognised (nearest: Ted; pitch far out) · 5.16 against 4.93 · the gate is not enforcing, so nothing would be blocked'
+	);
+	await expect(page.getByTestId('enrol-test-blocks')).toHaveText('timbre 3.46 · variability 2.66 · pitch 9.35');
 });
 
 test('TEST from a locked console is refused, and says how to unlock it', async ({ page, context }) => {

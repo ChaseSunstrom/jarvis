@@ -37,6 +37,7 @@
 		startRecording,
 		startSending,
 		verdictLine,
+		blocksLine,
 		withAccepted,
 		withRejected,
 		writeQuery,
@@ -63,6 +64,8 @@
 	let testing = $state(false);
 	let testBusy = $state(false);
 	let testResult = $state('');
+	/** The three blocks behind the last TEST, or nothing (M105). */
+	let testBlocks = $state('');
 
 	let mic: MicCapture | null = null;
 	let chunks: Int16Array[] = [];
@@ -82,6 +85,7 @@
 		if (nameProblem) return;
 		error = '';
 		testResult = '';
+		testBlocks = '';
 		session = beginSession(status);
 		if (!session.slots.length) {
 			error = 'the server sent no enrolment phrases, so there is nothing to read';
@@ -191,6 +195,7 @@
 		if (busy || session) return;
 		error = '';
 		testResult = '';
+		testBlocks = '';
 		const refused = await openMic();
 		if (refused) {
 			error = refused;
@@ -229,6 +234,7 @@
 				return;
 			}
 			testResult = verdictLine(payload ?? {});
+			testBlocks = blocksLine(payload ?? {});
 		} catch {
 			error = 'could not reach Jarvis';
 		} finally {
@@ -290,6 +296,7 @@
 		{#if nameProblem}<p class="bad" role="alert" data-testid="enrol-name-problem">{nameProblem}</p>{/if}
 		{#if testing}<p class="dim line" data-testid="enrol-test-listening">Listening — say anything at all in your ordinary voice, then STOP.</p>{/if}
 		{#if testResult}<p class="line" data-testid="enrol-test-result">{testResult}</p>{/if}
+		{#if testBlocks}<p class="line dim" data-testid="enrol-test-blocks">{testBlocks}</p>{/if}
 		{#if error}<p class="bad" role="alert" data-testid="enrol-error">{error}</p>{/if}
 	{:else}
 		<div class="r head">

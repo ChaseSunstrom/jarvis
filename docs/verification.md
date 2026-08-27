@@ -2125,7 +2125,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M102 — Jarvis learns from its own mistakes | **Built**, and live on the seventeenth's house (27 Aug 2026): the stop on the trace, the review, `what_went_wrong` answering from the record — the gate's one red was the judge reading a second real stop as invented, criterion fixed; ticks on the next green gate | `m102-learns-from-mistakes.sh` |
 | M103 — The phone shows what the house puts up | **Ticked** (7/7: the surface's panels and the task dock on the voice screen, live over the device channel; a phone-shaped socket saw a panel go up on the house) | `m103-the-phone-shows-it.sh`; `surface_on_the_phone_test.py` 12/12; goldens `voice-surface`, `voice-task-dock` |
 | M104 — Jarvis proposes a routine | Automated + Containerised (4/4 on 27 Aug 2026, the 10:21 house) | `m104-proposes-a-routine.sh`; `test_routines.py` (9) |
-| M105 — The gate says no to a voice that is not yours | **Built** (68 speaker tests; the live half waits for a house built from this tree and a quiet rig) | `m105-not-your-voice.sh`; `test_speaker_gate.py -k "wrong_pitch or cold_morning or veto"` |
+| M105 — The gate says no to a voice that is not yours | **Built** (68 speaker tests; the console's TEST shows the blocks and names the refusing one — `enrol.spec.ts` 8/8; the live half waits for a house built from this tree and a quiet rig) | `m105-not-your-voice.sh`; `test_speaker_gate.py -k "wrong_pitch or cold_morning or veto"`; `enrolment.test.ts` |
 
 1. **Never promote a row without a command that demonstrates it.** "Probably
    fine" is Unproven.

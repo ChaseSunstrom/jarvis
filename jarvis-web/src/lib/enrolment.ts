@@ -278,6 +278,8 @@ export interface VerifyResult {
 		score?: number | null;
 		threshold?: number | null;
 		reason?: string;
+		/** Per-block mean squared z — timbre, variability, pitch (M105). */
+		blocks?: Record<string, number>;
 	};
 	would_block?: boolean;
 	mode?: string;
@@ -299,6 +301,21 @@ function number(value: unknown): string {
  * One sentence about a TEST MY VOICE result: who it was, the numbers, and
  * what enforcement would have done — the same three things the phone says.
  */
+/**
+ * The three blocks behind a verdict, in the order the gate weighs them —
+ * timbre, variability, pitch — each a mean squared z against the enrolled
+ * spread, so the person can see WHICH part of their voice the gate found
+ * far, or near. Empty when the server sent no blocks (an older house, or a
+ * verdict that never got as far as scoring).
+ */
+export function blocksLine(result: VerifyResult): string {
+	const blocks = (result.verdict ?? {}).blocks ?? {};
+	const parts = (['timbre', 'variability', 'pitch'] as const)
+		.filter((name) => typeof blocks[name] === 'number')
+		.map((name) => `${name} ${number(blocks[name])}`);
+	return parts.join(' · ');
+}
+
 export function verdictLine(result: VerifyResult): string {
 	const verdict = result.verdict ?? {};
 	const numbers = `${number(verdict.score)} against ${number(verdict.threshold)}`;
@@ -310,7 +327,14 @@ export function verdictLine(result: VerifyResult): string {
 	if (UNVERIFIABLE.has(reason)) {
 		return `Could not judge that one (${reason}) — say a whole sentence, at your ordinary volume`;
 	}
-	const nearest = verdict.nearest ? ` (nearest: ${verdict.nearest})` : '';
+	// A block that refused on its own names itself in the reason (M105:
+	// "pitch-mismatch"); said as a person would, beside who it was nearest.
+	const block = reason.endsWith('-mismatch') ? reason.slice(0, -'-mismatch'.length) : '';
+	const nearest = verdict.nearest
+		? ` (nearest: ${verdict.nearest}${block ? `; ${block} far out` : ''})`
+		: block
+			? ` (${block} far out)`
+			: '';
 	const outcome = result.would_block
 		? 'with enforcement on, this turn would be refused'
 		: result.mode === 'enforce'

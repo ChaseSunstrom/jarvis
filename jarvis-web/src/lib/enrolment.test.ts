@@ -5,6 +5,7 @@ import {
 	cleanLabel,
 	labelProblem,
 	verdictLine,
+	blocksLine,
 	writeQuery,
 	beginSession,
 	durationMs,
@@ -197,6 +198,18 @@ describe('what TEST MY VOICE says', () => {
 		expect(
 			verdictLine({ verdict: { accepted: false, nearest: 'owner', score: 11.87, threshold: 9, reason: 'mismatch' }, would_block: false, mode: 'observe' })
 		).toBe('Not recognised (nearest: owner) · 11.87 against 9.00 · the gate is not enforcing, so nothing would be blocked');
+	});
+	it('a block that refused on its own is named beside who was nearest (M105)', () => {
+		expect(
+			verdictLine({ verdict: { accepted: false, nearest: 'Chase', score: 5.2, threshold: 4.93, reason: 'pitch-mismatch' }, would_block: false, mode: 'observe' })
+		).toBe('Not recognised (nearest: Chase; pitch far out) · 5.20 against 4.93 · the gate is not enforcing, so nothing would be blocked');
+	});
+	it('the three blocks are said in the order the gate weighs them, and nothing when the server sent none', () => {
+		expect(blocksLine({ verdict: { blocks: { pitch: 9.3512, timbre: 3.4638, variability: 2.6567 } } })).toBe(
+			'timbre 3.46 · variability 2.66 · pitch 9.35'
+		);
+		expect(blocksLine({ verdict: { blocks: {} } })).toBe('');
+		expect(blocksLine({})).toBe('');
 	});
 	it('too short to judge is not "not you"', () => {
 		expect(verdictLine({ verdict: { accepted: false, reason: 'no-speech' } })).toMatch(/^Could not judge that one \(no-speech\)/);

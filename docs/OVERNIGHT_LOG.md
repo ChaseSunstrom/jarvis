@@ -1066,3 +1066,4 @@ is quiet. Done since:
   the check run even with the tail annotation — the job log needs a token (BLOCKERS); the changed files pass under 3.12
   here (472), the full run is in progress.
 - 12:19 UTC — M95 ticked: 5/5 on the seventeenth's house (explain-yourself from the trace, what-did-you-tell-me from the record).
+- 12:25 UTC — the seventeenth, late gates: m99 9/9 (the probe reads replies by id), m59 17/17 (the watch says "changed once" now); m82 running, then its report. M105's console half: TEST names the refusing block and shows the three (8/8 e2e, 27 unit).
