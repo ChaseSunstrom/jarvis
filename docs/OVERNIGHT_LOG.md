@@ -1181,3 +1181,10 @@ is quiet. Done since:
   the lead on offer, eight fetches by hand; a round like that is handed back once, unexecuted, with a note to make one
   lead (the scripted-model test drives it). M23's own gate lists the six unticked as expected: M56, M77, M100 (the
   operator's), M108, M111, M114 (the twenty-third's). 16 pass / 9 fail at gate 25.
+- 18:55 UTC — verify-all's live-scenarios gate on the twenty-first (m25, 2255 s): 85/96, 153/164 turns, median 3.49 s,
+  p95 26.12 s, WER 1.8 % — my Playwright runs beside it, so the median is the box's. Eleven misses: seven already fixed
+  on the tree after the 17:10 image (the lock verb, the timer cancel, the two-jobs hand-back, the four research holds
+  on relative links), and three read here: "now do the same in the bedroom" answered with a question about the bed
+  light instead of turning it on; "look into which lights are on downstairs and tell me" done inline in thirty calls
+  instead of as the background task the M25 screen watches; a one-minute reminder confirmed "at 13:38" against a house
+  clock of 11:38. 16 pass / 10 fail at gate 26; the rest of verify-all runs on.
