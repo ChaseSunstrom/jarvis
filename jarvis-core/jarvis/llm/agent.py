@@ -2638,7 +2638,13 @@ def offered_instead(request: str, reply: str) -> bool:
     request, reply = str(request or ""), str(reply or "")
     if not request.strip() or not reply.strip():
         return False
-    if _QUESTION_OPENER.match(request):
+    # "Do the same in the kitchen." opens with a question word and is an
+    # order; a deed by reference is never read as a question.
+    if request.rstrip().endswith("?") or (
+        _QUESTION_OPENER.match(request) and not _REFERENCE_REQUEST.search(request)
+    ):
+        # A question is a question, however it is worded ("Is it the same in
+        # the bedroom?"); a deed by reference that is not asked is an order.
         return False
     if not (_ACTION_REQUEST.search(request) or _REFERENCE_REQUEST.search(request)):
         return False
@@ -2664,9 +2670,15 @@ def claimed_action(request: str, reply: str) -> bool:
     # screen clear?" answered "It is clear, Sir" claims nothing. The verbs
     # below are read as imperatives only when the request does not open as
     # a question.
-    if _QUESTION_OPENER.match(request):
+    # "Do the same in the kitchen." opens with a question word and is an
+    # order; a deed by reference is never read as a question.
+    if request.rstrip().endswith("?") or (
+        _QUESTION_OPENER.match(request) and not _REFERENCE_REQUEST.search(request)
+    ):
+        # A question is a question, however it is worded ("Is it the same in
+        # the bedroom?"); a deed by reference that is not asked is an order.
         return False
-    if not _ACTION_REQUEST.search(request):
+    if not (_ACTION_REQUEST.search(request) or _REFERENCE_REQUEST.search(request)):
         return False
     if _ACTION_DECLINED.search(reply):
         return False
