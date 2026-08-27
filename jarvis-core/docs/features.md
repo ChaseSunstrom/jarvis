@@ -9,6 +9,7 @@ action back, it can explain itself, and it remembers what you told it.
 |---|---|
 | [`briefing`](#briefing) | The summary Jarvis volunteers, morning and night |
 | [`undo`](#undo) | "Undo that" — and a clear refusal when that is not safe |
+| [`timer`](#timer) | A kitchen timer as an entity: counts down, answers "how long is left?", chimes where it was asked for |
 | [`trace`](#trace) | Why an automation did what it did, or did nothing |
 | [`memory`](#memory) | Durable notes, on disk, that you can read and delete |
 
@@ -111,6 +112,26 @@ plus the sections keyed by name, or `{"empty": true}` with an instruction to
 say so in one sentence rather than padding.
 
 ---
+
+## timer
+
+"Set a fifteen-minute timer for the pasta" makes `timer.pasta`: an entity that
+counts down on the house's clock, so "how long is left?" is read from its
+`remaining` attribute rather than worked out by a model, and "cancel the pasta
+timer" is a service call by name. When it finishes it leaves a reminder card
+and says so on the device that asked — the kitchen phone, the console that
+typed it — or wherever the person is when no device is known.
+
+```yaml
+timer: {}
+```
+
+Services `timer.start` / `pause` / `resume` / `cancel` / `snooze`; one model
+tool, `timer`. Durations arrive as seconds, `10m`, `1h30m` or `10:00`; a
+running timer restarted by label is replaced, not doubled; twenty at once is
+the ceiling. A timer that was counting when Jarvis restarted comes back
+`finished` with a card that says it was interrupted, because a late chime
+that pretends it was on time is worse than none.
 
 ## undo
 

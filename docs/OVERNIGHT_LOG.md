@@ -972,3 +972,4 @@ is quiet. Done since:
   both are the next live run's to show. The house's clock says CDT because the operator saved America/Chicago from
   the console on the 26th (recorded then); not changed.
 - 08:10 — M91 ticked (3/3): 76 gates converted to `check_pytest` by atomic replace while the quiet pass ran; no suite with a skip mark skips on this box (speaker+ssrf 103, harness selftest 43).
+- 08:22 — M97's timers built (`integrations/timer`, 10 tests, scenario, gate probe); waits for the sixteenth rebuild. CI on 2661073: the android mirrors job is red — being read.

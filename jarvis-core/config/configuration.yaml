@@ -1589,6 +1589,13 @@ narrate:
 
 surface: {}
 
+# Timers: "set a ten-minute timer for the pasta". A countdown is an entity
+# (`timer.pasta`, state active/paused/finished/idle, `remaining` in seconds)
+# on the house's clock; it chimes on the device that asked when it finishes
+# and leaves a reminder card. One model tool, `timer`; services timer.start
+# /pause/resume/cancel/snooze for automations. No options.
+timer: {}
+
 # n8n (M77): the house's workflows through n8n's own API. Empty url means
 # off — the tools then say so. Make the key under Settings → n8n API on the
 # n8n server; the assistant endpoint is the operator's (a Chat Trigger's

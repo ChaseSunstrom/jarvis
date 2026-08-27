@@ -1413,6 +1413,16 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m97-timers-routines-whats-new.sh`
   - 27 Aug 05:27: the routines and what's-new halves are built (read back, listed, tier 2 by default,
     capability cards, `whats_new`); timers as entities are the remaining half.
+  - 27 Aug 08:22: timers built, not ticked — `integrations/timer`: `timer.<label>` entities (active/paused/
+    finished/idle, `remaining` and `remaining_spoken` read from the entity, `finishes_at` in the house's zone)
+    counting on `get_clock`; five services and one `timer` tool (start/status/pause/resume/cancel/snooze);
+    the chime is a reminder card plus `companion.notify` kind `say` on the device that asked (M94's
+    `device_of`); a timer running across a restart comes back `finished` with an "interrupted" card rather
+    than chiming late. Suite `test_timer.py` 10 (a fake clock that moves only when the test says — the
+    automation tests' self-advancing one let a countdown finish inside the store's file write). Scenario
+    `timer-by-voice` (text, voice); the gate's live probe starts a five-second timer over the websocket and
+    waits for `finished` and the card — it needs the sixteenth rebuild. Found on the way: `1h30m` parsed
+    as thirty minutes (a `\b` between `h` and `3`).
 - [x] **M98 — The phone keeps up** · size M · deps M71, M66, M83 · parallel-ok M97
   - Scope: from the Android audit — the speaker gate's mode reaches the phone on every socket
     connect and on `jarvis_setting_changed` (today a phone against an enforcing house refuses

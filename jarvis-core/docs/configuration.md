@@ -137,6 +137,24 @@ trigger:
 
 For an offset, use a template condition on `next_setting`.
 
+## `timer:`
+
+```yaml
+timer: {}                       # no options; absent means no timers
+```
+
+A countdown is an entity — `timer.pasta` after "set a ten-minute timer for the
+pasta" — with state `active`, `paused`, `finished` or `idle` and attributes
+`remaining` (seconds), `remaining_spoken`, `finishes_at`, `duration`, `label`,
+`device` (where it was asked for). It counts on the house's clock
+(`jarvis: time_zone:`). When it finishes it leaves a `reminder` card and says
+so on the device that asked (`companion.notify`). Services: `timer.start`
+(`duration` — seconds, `10m`, `1h30m`, `10:00` — and `label`), `timer.pause`,
+`timer.resume`, `timer.cancel`, `timer.snooze` (`minutes`, default 5). The model
+has one tool, `timer`, with `action` start | status | pause | resume | cancel |
+snooze. A timer that was running when Jarvis restarted comes back `finished`
+with a card saying it was interrupted — it does not chime late.
+
 ## `sky:`
 
 ```yaml

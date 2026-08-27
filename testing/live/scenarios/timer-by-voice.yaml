@@ -1,0 +1,31 @@
+name: timer-by-voice
+capability: house
+gated-on: M97
+intent: >
+  A kitchen timer is the oldest thing anyone asks a voice assistant for, and
+  the house had no such entity: "set a ten-minute timer" became a reminder or
+  an apology. A timer is an entity (`timer.<label>`) that counts down on the
+  house's clock, answers "how long is left?" from its own attributes, chimes on
+  the device that asked when it finishes, and is cancelled by name. Short
+  durations here so the chime happens inside the scenario.
+variants: [text, voice]
+turns:
+  - say: "Set a fifteen-second timer for the pasta."
+    expect:
+      state: {timer.pasta: "active"}
+      reply_means: says a timer for the pasta is set, for fifteen seconds
+  - say: "How long is left on the pasta timer?"
+    expect:
+      reply_matches: "\\b(1[0-5]|[0-9]) seconds?\\b|under a quarter of a minute|less than fifteen"
+      reply_means: gives a remaining time in seconds, fewer than fifteen
+      # The chime: the inbox card the timer leaves when it finishes, waited on
+      # after this turn's reply — the fifteen seconds run out while we wait.
+      notification: {title_contains: pasta, kind: reminder, within: 40}
+  - say: "Set a two-minute timer for the tea."
+    expect:
+      state: {timer.tea: "active"}
+      reply_means: says a two-minute timer for the tea is set
+  - say: "Cancel the tea timer."
+    expect:
+      state: {timer.tea: "idle"}
+      reply_means: says the tea timer is cancelled (or stopped)
