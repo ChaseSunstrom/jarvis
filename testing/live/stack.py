@@ -258,10 +258,20 @@ class Stack:
 
     # --- bringing it up ---------------------------------------------------
     def up(self, timeout: float = 900.0) -> list[Container]:
-        """`up -d --wait`, per file, in order. Raises with what refused."""
+        """`up -d --no-recreate --wait`, per file, in order. Raises with what refused.
+
+        `--no-recreate`: this is "make sure the stack is up", not "apply
+        the tree". Without it every gate's first `up()` after a launcher's
+        `make up` recreated jarvis-core (a config hash that differs between
+        the two invocations), so the house booted once more than the run
+        ordered at the start of every live slice — the containers row was red
+        on three houses for it (27 Aug 2026), with the garage scenario itself
+        green. Images and compose changes are applied by the launchers'
+        `make up`, never by the rig.
+        """
         for path in self.files:
             _run(
-                ["docker", "compose", "-f", str(path), "up", "-d", "--wait"],
+                ["docker", "compose", "-f", str(path), "up", "-d", "--no-recreate", "--wait"],
                 timeout=timeout,
             )
         self.started_at = time.time()

@@ -1405,13 +1405,16 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m91-no-pass-on-a-skip.sh`
   - 27 Aug 08:10: ticked — gate 3/3. `check_pytest` reads the summary line: a failed or errored suite, one that ran nothing, or one that skipped more than the check allows (default none) fails the gate; `check_sh` + `tail` read the exit status alone, which is 0 for a suite that skipped everything. 76 gates converted (every `python3 -m pytest … | tail -N` check), replaced atomically while the quiet pass ran. The ten suites that carry skip marks (desktop's POSIX-only rows, ssrf's missing-tree rows, the speaker suite's inseparable impostor, the harness's no-IPv4 row) skip nothing on this box: speaker + ssrf 103 passed, harness selftest 43 passed, no `skipped` in either summary. The rig writes `results-<outer gate>.json` (a378a1c) so a gate's live red stays readable.
 
-- [ ] **M92 — The house by voice, beyond lights** · size M · deps M27 · parallel-ok M91, M93
+- [x] **M92 — The house by voice, beyond lights** · size M · deps M27 · parallel-ok M91, M93
   - Scope: live scenarios for the tools the rig never exercises — climate (`set_temperature`),
     a cover, a scene, a script, media, `note_append`, `sensor_compare`, `moon_phase`, a feed
     watch, a spoken `ask_user` question answered by the next turn, `show` and `clear_screen` by
     voice — each with a demo-house entity to act on and a state assertion, and the routing
     table extended to match.
   - Verify: `bash scripts/verify/m92-the-house-by-voice.sh`
+  - 27 Aug 17:23: ticked — gate 4/4 on the twenty-first house (17:10 images): the ten scenarios spoken and typed —
+    covers (the ends of the range are close and open), locks, climate, media, vacuum, the surface — with "Cleared,
+    Sir." held to a tool and "Take everything off the screen." heard as said.
 - [x] **M93 — Pick up where you left off** · size M · deps M17, M25 · parallel-ok M92
   - Scope: FUTURE #1 and #4 — a `?conversation=<id>` deep link on the voice screen and the id
     exposed on the page, so the rig's browser transport can hold a thread across turns and a
