@@ -1571,8 +1571,10 @@ narrate:
     - domains: [lock]
       on_state: unlocked
       # Asked, not done: "the back door has been unlocked since 23:10, Sir —
-      # shall I lock it?" with Yes and No, on whichever device you are at; a
-      # yes locks it, anything else leaves it. At night is when it matters.
+      # shall I lock it?" — a held question on the console's bar, on a paired
+      # phone, on the notifications record, answered by a yes said to Jarvis
+      # anywhere; a yes locks it, anything else leaves it. At night is when
+      # it matters.
       offer: {service: lock.lock, question: "Shall I lock it?"}
       quiet_hours: false
     - domains: [cover]
