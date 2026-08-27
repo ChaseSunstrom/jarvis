@@ -1191,6 +1191,39 @@ async def test_agent_survives_an_unreachable_model(tmp_path):
 # ===========================================================================
 # memory
 # ===========================================================================
+async def test_a_question_written_before_and_after_its_ask_user_hold_is_said_once(tmp_path):
+    """"Which light, Sir?" twice, with three blank lines between — the sixteenth house, 27 Aug 2026.
+
+    The model wrote the question, called ask_user (held: it waits for the
+    person), and — told its reply IS the question — wrote it again in the
+    round after. The first copy is the preamble, the second the answer;
+    `conversation.process` and the pipeline's intent-end must carry one.
+    """
+    jarvis, objects = await build_house(tmp_path)
+    question = "Which light should I turn on, Sir?"
+    first_round = [
+        {"model": MODEL, "message": {"role": "assistant", "content": question}, "done": False},
+        {
+            "model": MODEL,
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"function": {"name": "ask_user", "arguments": {"question": question}}}],
+            },
+            "done": False,
+        },
+        {"model": MODEL, "message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "stop"},
+    ]
+    fake = FakeOllama(first_round, say("\n\n\n" + question))
+    agent = make_agent(jarvis, fake, make_registry(jarvis))
+
+    result = await agent.process("Turn on the light.")
+
+    assert result.text.count(question) == 1, result.text
+    assert result.text.strip() == question
+    await shutdown(jarvis)
+
+
 async def test_conversation_memory_keeps_context_across_two_turns(tmp_path):
     jarvis, objects = await build_house(tmp_path)
     fake = FakeOllama(

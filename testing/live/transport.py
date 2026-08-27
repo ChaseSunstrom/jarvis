@@ -258,34 +258,25 @@ class Text:
         channelled = self.CHANNEL.match(text.strip())
         if channelled is not None:
             return await self._as_channel_message(channelled, started)
-        if stop_after is not None:
-            # A typed turn that is to be STOPPED runs the way the console's
-            # typed turns run — `assist_pipeline/run` from the intent stage —
-            # because that is the only path with a run to stop and a run-end
-            # to say `interrupted`. The REST call has neither: on 27 Aug 2026
-            # `stop-means-stop (text)` sent its stop into the void and read
-            # `interrupted=False` off a run that had never existed.
-            run = await self.client.run_pipeline(
-                text=text,
-                start_stage="intent",
-                end_stage="intent",
-                conversation_id=conversation_id,
-                timeout=timeout,
-                run_timeout=timeout,
-                stop_after=stop_after,
-            )
-            return _turn_from_run(run, text, started, self.name)
-        answer = await self.client.conversation(text, conversation_id=conversation_id)
-        response = (answer or {}).get("response") or {}
-        speech = ((response.get("speech") or {}).get("plain") or {}).get("speech") or ""
-        return Turn(
-            said=text,
-            transcript=text,
-            reply_text=str(speech),
-            conversation_id=str((answer or {}).get("conversation_id") or ""),
-            latency={"total": time.monotonic() - started},
-            transport=self.name,
+        # A typed turn runs the way the console's and the phone's typed turns
+        # run — `assist_pipeline/run` from the intent stage on the socket —
+        # not the REST call. Two things only the socket has: a run to STOP,
+        # with a run-end that says `interrupted` (M96: the REST path sent its
+        # stop into the void and read `interrupted=False` off a run that never
+        # existed, 27 Aug 2026), and the DEVICE the socket registered as
+        # (M94: "the lights in here" over REST came from no device, and the
+        # model guessed the living room). `conversation/process` stays covered
+        # by the channel path below and by the core's own tests.
+        run = await self.client.run_pipeline(
+            text=text,
+            start_stage="intent",
+            end_stage="intent",
+            conversation_id=conversation_id,
+            timeout=timeout,
+            run_timeout=timeout,
+            stop_after=stop_after,
         )
+        return _turn_from_run(run, text, started, self.name)
 
 
     async def _as_channel_message(self, match: "re.Match[str]", started: float) -> Turn:

@@ -1130,7 +1130,13 @@ class Runner:
                 if code and str(got.get("code") or "") != code:
                     fail(f"error code {got.get('code')!r}, expected {code!r}")
         elif spoken.error and not expect.get("no_reply"):
-            fail(f"the turn failed: {spoken.error}")
+            # A run the rig stopped itself (`stop_after`) ends `cancelled` by
+            # design — that is the stop working, and `interrupted` above is
+            # the assertion; `self-review (text)` failed on its own stop the
+            # first time the text transport could send one (27 Aug 2026).
+            code = str((spoken.error or {}).get("code") or "") if isinstance(spoken.error, dict) else ""
+            if not (turn.stop_after and code == "cancelled"):
+                fail(f"the turn failed: {spoken.error}")
 
         for entity_id, want_state in (expect.get("state") or {}).items():
             if not await observer.wait_for_state(entity_id, str(want_state)):

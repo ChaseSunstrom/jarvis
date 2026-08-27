@@ -1306,6 +1306,15 @@ web and of Tasker. Local only. Each row here is planned in that document.
     look — entering with the stagger, draggable, resizable, dismissable by hand or by voice
     ("clear the screen", "put the camera on the left") — and remembers where you left them.
   - Verify: `bash scripts/verify/m83-pull-things-up.sh`
+  - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
+    tools, five websocket commands, the console's panels over the page around the instrument —
+    dragged, resized, closed, entering with the stagger — and the mock. Surface suite 4, the
+    surface and layout specs 4/4, gate 14/15: the last check puts a panel up on the running
+    house and waits for the rebuild. `kind: chart` draws the sensor's history from the recorder
+    (`jarvis/sensors/history`), in its unit.
+  - 27 Aug 01:16: ticked — gate 15/15 on the running house: `show` put the sky up over the
+    websocket and the surface listed it; the surface and layout specs, look and states 4/4 and
+    green; surface suite 5. "Show me the front door camera" by voice in the room is the operator's.
 
 - [x] **M84 — Jarvis volunteers a briefing** · size S · deps M17, M60 · parallel-ok M85–M93
   - Scope: the audit of 27 Aug found `integrations/briefing` built, tested (20) and NOT on the
@@ -1621,7 +1630,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     house a phone-shaped socket that registered and subscribed saw the panel another socket placed go up
     (`jarvis/surface/place`) before it was taken down again.
 
-- [ ] **M104 — Jarvis proposes a routine** · size M · deps M86, M97, M87 · parallel-ok M103
+- [x] **M104 — Jarvis proposes a routine** · size M · deps M86, M97, M87 · parallel-ok M103
   - Scope: the house does the same things at the same times and nobody writes the routine. A miner over
     the recorder's history (`routines: days:` back, 14 by default) finds an entity put in the same state at
     the same time of day (a quarter-hour slot) on at least `min_days` distinct days with at most one day
@@ -1643,16 +1652,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     tool that never makes one, the morning schedule. Suite `test_routines.py` 9 on a real authored store with
     a fake recorder and a fake person answering. The gate's live half (the miner on the house's own history,
     a draft accepted over the websocket listed and removed) waits for a house built from this tree.
+  - 27 Aug 11:06: ticked — gate 4/4 on the sixteenth's house (the 10:21 image): `routines.propose ask=false` ran the
+    miner over the house's own recorder history and reported its candidates; a seeded draft accepted over the websocket
+    became an automation the house listed, and was removed. The morning proposal with its question is the operator's to hear.
 ## Final
-  - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
-    tools, five websocket commands, the console's panels over the page around the instrument —
-    dragged, resized, closed, entering with the stagger — and the mock. Surface suite 4, the
-    surface and layout specs 4/4, gate 14/15: the last check puts a panel up on the running
-    house and waits for the rebuild. `kind: chart` draws the sensor's history from the recorder
-    (`jarvis/sensors/history`), in its unit.
-  - 27 Aug 01:16: ticked — gate 15/15 on the running house: `show` put the sky up over the
-    websocket and the surface listed it; the surface and layout specs, look and states 4/4 and
-    green; surface suite 5. "Show me the front door camera" by voice in the room is the operator's.
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,
