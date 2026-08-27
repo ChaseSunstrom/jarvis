@@ -1285,7 +1285,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 26 Aug 23:32: gate 8/8 — the rules name the coding job, the denial guard catches "not a
     developer" for a registered tool and sends the reply back for the call, the address is one
     line (`llm: address: Sir`, Settings › Assistant) the persona no longer contradicts (test_llm 81).
-- [ ] **M82 — A coding job says when nobody can run it** · size S · deps M19 · parallel-ok M80
+- [x] **M82 — A coding job says when nobody can run it** · size S · deps M19 · parallel-ok M80
   - Scope: "this just gets stuck in queued" — the orchestrator had failed the job from its
     first poll ("opencode binary not installed": the image lacked unzip and the installer's
     failure was swallowed), and the core's watcher read its wrapper's "ok" instead of the job's
@@ -1293,6 +1293,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     job's own state and a failed job fails the card within one poll; the image unpacks OpenCode
     and proves the binary at build time; this house runs the `agents` profile.
   - Verify: `bash scripts/verify/m82-coding-worker.sh`
+  - 27 Aug 12:26: ticked — gate 6/6 on the seventeenth's house (the 11:45 image): a coding job ran end to end through the
+    orchestrator (OpenCode 1.18.23 in its own HOME), the Code screen names the worker, and the job's one-line result names
+    the check that failed rather than letting "2/3 checks passed" be read as "all tests pass".
   - 26 Aug 23:37, built, not ticked: the watcher reads the job's own state and a failed job fails
     the card within one poll (orchestrator suite 50); the image gets unzip and a fifteen-minute
     apt budget (three minutes killed the package list on this network, the WARN hid it, and the
