@@ -54,7 +54,7 @@ _LOGGER = logging.getLogger(__name__)
 #: shape a `file://` catalogue has — and only if its host is here. Widening
 #: this list is a code change somebody reads, not a configuration line.
 ALLOWED_HOSTS: frozenset[str] = frozenset(
-    {"api.github.com", "raw.githubusercontent.com", "registry.modelcontextprotocol.io"}
+    {"api.github.com", "raw.githubusercontent.com", "codeload.github.com", "registry.modelcontextprotocol.io"}
 )
 
 READER_GITHUB = "github"
@@ -71,8 +71,11 @@ TIMEOUT_S = 12.0
 MAX_BODY = 2_000_000
 MAX_PAGES = 5
 PAGE_SIZE = 100
-MAX_SKILL_FILES = 80
-MAX_SKILL_BYTES = 2_000_000
+MAX_SKILL_FILES = 400
+MAX_SKILL_BYTES = 4_000_000
+#: The whole repository comes down once, as a tarball; anthropics/skills is a
+#: few megabytes. Bigger is a repository, not a catalogue of skills.
+MAX_ARCHIVE_BYTES = 40_000_000
 
 #: The registry's remote transports this house can speak. `sse` is a
 #: transport the mcp integration does not implement (it has http and stdio),
@@ -219,57 +222,76 @@ async def read_github_skills(client: httpx.AsyncClient, source: Source) -> list[
 async def fetch_github_skill(client: httpx.AsyncClient, entry: Entry) -> dict[str, bytes]:
     """Every file under a skill folder, as `install.fetch_local` would read it.
 
-    ONE request for the repository's tree at the pinned commit (the git
-    trees API, recursive), then one per file from `raw.githubusercontent.com`
-    — never from a URL the listing could point anywhere. The contents API a
-    folder at a time cost a request per sub-folder and hit the 24-request
-    bound on the twentieth house (27 Aug 2026: canvas-design has scripts and
-    examples inside). Bounded by files and bytes so a folder that is really
-    a repository does not become a download.
+    ONE request: the repository's tarball at the pinned commit (GitHub
+    answers with a redirect to codeload.github.com, followed by hand and
+    only there), read in memory under a size cap, and only the skill's
+    folder taken from it. The contents API a folder at a time cost a request
+    per sub-folder; the trees API cost one per FILE — and canvas-design has
+    83 files, which is more than GitHub's sixty unauthenticated requests an
+    hour. Symlinks, hard links and anything that is not a plain file are
+    refused, as `fetch_local` refuses a symlink; a path that steps outside
+    the folder is refused by name.
     """
+    import io
+    import tarfile
+
     owner, repo, root, ref = github_parts(entry.url)
     if not _SHA.match(ref):
         raise RegistryError(f"{entry.id}: the folder is not pinned to a commit ({ref!r})")
-    tree = await fetch_json(
-        client, f"https://api.github.com/repos/{owner}/{repo}/git/trees/{ref}", params={"recursive": "1"}
-    )
-    rows = tree.get("tree") if isinstance(tree, dict) else None
-    if not isinstance(rows, list):
-        raise RegistryError(f"{entry.id}: GitHub did not answer with a tree")
-    if isinstance(tree, dict) and tree.get("truncated"):
-        raise RegistryError(f"{entry.id}: the repository's tree is too large to read in one piece")
+    archive = await _fetch_archive(client, f"https://api.github.com/repos/{owner}/{repo}/tarball/{ref}")
     prefix = root.rstrip("/") + "/"
-    wanted: list[tuple[str, int]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        path = str(row.get("path") or "")
-        if not path.startswith(prefix):
-            continue
-        relative = path[len(prefix):]
-        kind = str(row.get("type") or "")
-        if kind == "tree":
-            continue
-        if kind != "blob" or str(row.get("mode") or "") == "120000":
-            # A symlink (mode 120000) or a submodule (commit): the two ways a
-            # folder of plain files reaches outside itself. Refused, as
-            # fetch_local refuses a symlink.
-            raise RegistryError(f"{entry.id}: {relative} is a {'symlink' if kind == 'blob' else kind}, not a file")
-        if not all(re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$", part) for part in relative.split("/")):
-            raise RegistryError(f"{entry.id}: {relative!r} is not a usable file name")
-        wanted.append((relative, int(row.get("size") or 0)))
-    if not wanted:
-        raise RegistryError(f"{entry.id}: the folder {root} in {owner}/{repo} is empty")
-    if len(wanted) > MAX_SKILL_FILES:
-        raise RegistryError(f"{entry.id}: {len(wanted)} files; {MAX_SKILL_FILES} is the limit for one skill")
-    if sum(size for _, size in wanted) > MAX_SKILL_BYTES:
-        raise RegistryError(f"{entry.id}: {sum(size for _, size in wanted)} bytes; {MAX_SKILL_BYTES} is the limit")
     files: dict[str, bytes] = {}
-    for relative, _ in wanted:
-        files[relative] = await fetch_bytes(
-            client, f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{prefix}{relative}"
-        )
+    total = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
+            for member in tar:
+                # GitHub's tarball puts everything under `<owner>-<repo>-<sha7>/`.
+                parts = member.name.split("/", 1)
+                inner = parts[1] if len(parts) == 2 else ""
+                if not inner.startswith(prefix):
+                    continue
+                relative = inner[len(prefix):]
+                if not relative:
+                    continue
+                if member.isdir():
+                    continue
+                if not member.isfile():
+                    raise RegistryError(
+                        f"{entry.id}: {relative} is a {'symlink' if member.issym() else 'link' if member.islnk() else 'special file'}, not a file"
+                    )
+                if not all(re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$", part) for part in relative.split("/")):
+                    raise RegistryError(f"{entry.id}: {relative!r} is not a usable file name")
+                if len(files) >= MAX_SKILL_FILES:
+                    raise RegistryError(f"{entry.id}: more than {MAX_SKILL_FILES} files; that is not one skill")
+                total += member.size
+                if total > MAX_SKILL_BYTES:
+                    raise RegistryError(f"{entry.id}: more than {MAX_SKILL_BYTES} bytes; that is not one skill")
+                handle = tar.extractfile(member)
+                files[relative] = handle.read() if handle is not None else b""
+    except tarfile.TarError as err:
+        raise RegistryError(f"{entry.id}: the archive could not be read ({err})") from err
+    if not files:
+        raise RegistryError(f"{entry.id}: the folder {root} in {owner}/{repo} is empty")
     return files
+
+
+async def _fetch_archive(client: httpx.AsyncClient, url: str) -> bytes:
+    """A tarball from api.github.com, following its one redirect to codeload only."""
+    _check_host(url)
+    try:
+        response = await client.get(url, headers={"User-Agent": "jarvis-extensions"}, timeout=TIMEOUT_S * 5)
+        if response.status_code in (301, 302, 307, 308):
+            target = str(response.headers.get("location") or "")
+            if urlparse(target).hostname != "codeload.github.com":
+                raise RegistryError(f"{url}: redirected off GitHub's archive host ({target[:80]!r})")
+            response = await client.get(target, headers={"User-Agent": "jarvis-extensions"}, timeout=TIMEOUT_S * 5)
+    except httpx.HTTPError as err:
+        raise RegistryError(f"{url}: {err.__class__.__name__}: {err}") from err
+    if response.status_code != 200:
+        raise RegistryError(f"{url}: HTTP {response.status_code}")
+    if len(response.content) > MAX_ARCHIVE_BYTES:
+        raise RegistryError(f"{url}: {len(response.content)} bytes, {MAX_ARCHIVE_BYTES} is the limit for an archive")
+    return response.content
 
 
 # --- The MCP registry: servers with an http remote -------------------------

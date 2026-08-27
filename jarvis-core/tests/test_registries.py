@@ -193,63 +193,78 @@ async def test_read_github_skills_pins_to_the_branch_head_and_lists_the_folders(
     assert len(entries) == 19 and entries[0].ref == COMMIT[:12]
 
 
-@pytest.mark.asyncio
-async def test_fetch_github_skill_reads_the_tree_once_and_every_file_from_raw():
-    tree = {
-        "truncated": False,
-        "tree": [
-            {"path": "skills/academy-guide", "type": "tree"},
-            {"path": "skills/academy-guide/SKILL.md", "type": "blob", "mode": "100644", "size": 30},
-            {"path": "skills/academy-guide/scripts", "type": "tree"},
-            {"path": "skills/academy-guide/scripts/run.sh", "type": "blob", "mode": "100755", "size": 10},
-            {"path": "skills/other/SKILL.md", "type": "blob", "mode": "100644", "size": 5},
-            {"path": "README.md", "type": "blob", "mode": "100644", "size": 5},
-        ],
-    }
-    calls: list[str] = []
+def _tarball(members: dict[str, bytes | str], top: str = "anthropics-skills-0123456") -> bytes:
+    """An in-memory tar.gz the way GitHub lays one out: everything under one top folder."""
+    import io
+    import tarfile
 
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name, body in members.items():
+            if isinstance(body, str) and body.startswith("->"):
+                info = tarfile.TarInfo(f"{top}/{name}")
+                info.type = tarfile.SYMTYPE
+                info.linkname = body[2:]
+                tar.addfile(info)
+                continue
+            data = body if isinstance(body, bytes) else body.encode()
+            info = tarfile.TarInfo(f"{top}/{name}")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def _archive_transport(tar: bytes, calls: list[str]):
     def answer(request: httpx.Request) -> httpx.Response:
-        calls.append(request.url.path)
-        if request.url.host == "api.github.com":
-            return httpx.Response(200, json=tree)
-        return httpx.Response(200, content=b"#!/bin/sh\n" if request.url.path.endswith("run.sh") else b"---\nname: academy-guide\n---\nbody")
+        calls.append(f"{request.url.host}{request.url.path}")
+        if request.url.host == "api.github.com" and "/tarball/" in request.url.path:
+            return httpx.Response(302, headers={"location": f"https://codeload.github.com/anthropics/skills/legacy.tar.gz/{COMMIT}"})
+        if request.url.host == "codeload.github.com":
+            return httpx.Response(200, content=tar)
+        return httpx.Response(404)
 
+    return httpx.MockTransport(answer)
+
+
+@pytest.mark.asyncio
+async def test_fetch_github_skill_is_one_archive_and_only_the_folder_out_of_it():
+    tar = _tarball({
+        "README.md": "the repo",
+        "skills/academy-guide/SKILL.md": "---\nname: academy-guide\n---\nbody",
+        "skills/academy-guide/scripts/run.sh": "#!/bin/sh\n",
+        "skills/other/SKILL.md": "other",
+    })
+    calls: list[str] = []
     entries = parse_github_listing(_fixture("github-skills.json"), SKILLS, owner="anthropics", repo="skills", commit=COMMIT)
     entry = next(e for e in entries if e.id == "academy-guide")
-    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+    async with httpx.AsyncClient(transport=_archive_transport(tar, calls)) as client:
         files = await fetch_github_skill(client, entry)
     assert set(files) == {"SKILL.md", "scripts/run.sh"}
     assert files["scripts/run.sh"].startswith(b"#!")
-    assert calls[0] == f"/repos/anthropics/skills/git/trees/{COMMIT}"
-    assert calls[1:] == [
-        f"/anthropics/skills/{COMMIT}/skills/academy-guide/SKILL.md",
-        f"/anthropics/skills/{COMMIT}/skills/academy-guide/scripts/run.sh",
-    ], "one tree request, then one per file from raw"
+    assert calls == [
+        f"api.github.com/repos/anthropics/skills/tarball/{COMMIT}",
+        f"codeload.github.com/anthropics/skills/legacy.tar.gz/{COMMIT}",
+    ], "one archive request and its one redirect, whatever the file count"
 
 
 @pytest.mark.asyncio
-async def test_fetch_github_skill_refuses_a_symlink_a_submodule_and_too_much():
+async def test_fetch_github_skill_refuses_a_symlink_a_foreign_redirect_and_too_much():
     entries = parse_github_listing(_fixture("github-skills.json"), SKILLS, owner="anthropics", repo="skills", commit=COMMIT)
     entry = next(e for e in entries if e.id == "academy-guide")
-
-    def with_rows(rows):
-        return httpx.MockTransport(lambda r: httpx.Response(200, json={"tree": rows}))
-
-    link = [{"path": "skills/academy-guide/link", "type": "blob", "mode": "120000", "size": 3}]
-    async with httpx.AsyncClient(transport=with_rows(link)) as client:
+    linked = _tarball({"skills/academy-guide/SKILL.md": "x", "skills/academy-guide/link": "->/etc/passwd"})
+    async with httpx.AsyncClient(transport=_archive_transport(linked, [])) as client:
         with pytest.raises(RegistryError, match="symlink"):
             await fetch_github_skill(client, entry)
-    sub = [{"path": "skills/academy-guide/vendor", "type": "commit", "mode": "160000"}]
-    async with httpx.AsyncClient(transport=with_rows(sub)) as client:
-        with pytest.raises(RegistryError, match="commit"):
+    many = _tarball({f"skills/academy-guide/f{i}.md": "x" for i in range(401)})
+    async with httpx.AsyncClient(transport=_archive_transport(many, [])) as client:
+        with pytest.raises(RegistryError, match="not one skill"):
             await fetch_github_skill(client, entry)
-    big = [{"path": f"skills/academy-guide/f{i}.md", "type": "blob", "mode": "100644", "size": 1} for i in range(81)]
-    async with httpx.AsyncClient(transport=with_rows(big)) as client:
-        with pytest.raises(RegistryError, match="limit for one skill"):
-            await fetch_github_skill(client, entry)
-    heavy = [{"path": "skills/academy-guide/SKILL.md", "type": "blob", "mode": "100644", "size": 3_000_000}]
-    async with httpx.AsyncClient(transport=with_rows(heavy)) as client:
-        with pytest.raises(RegistryError, match="bytes"):
+
+    def elsewhere(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "https://evil.example/archive.tar.gz"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(elsewhere)) as client:
+        with pytest.raises(RegistryError, match="archive host"):
             await fetch_github_skill(client, entry)
 
 

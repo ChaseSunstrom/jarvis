@@ -1156,3 +1156,12 @@ is quiet. Done since:
   a background-plan request routed as delegation, a reminder's clock time judged for not saying "in a minute", a coding
   reply that called a failed second attempt a pass, and the injected phrase quoted back while saying it was ignored.
   The twenty-first started 17:09 (rebuild with everything since 15:55).
+- 17:30 UTC — the twenty-first's gates (17:10 images, everything since 15:55 rebuilt): M85 5/5, M87 6/6, M92 4/4,
+  M106 6/6, M109 6/6, M110 5/5, M112 6/6, M113 4/4 — all ticked; M107 (4/4 on the twentieth) ticked too. Reds: M111
+  (one opened task took a 28 % dock to 252 px on a 900 px screen — capped at 22 % now, and the small-screen case
+  measures the dock, not a page M76 lets scroll), M108 (the MCP install's new server sits in a folded list; the plan of
+  canvas-design met the 80-file bound — 83 files — so a skill is ONE tarball request now, whatever its count), M86's
+  containers row (the rig's own `up()` recreated the house at every slice — `--no-recreate`), M100 (the operator's
+  profile, BLOCKERS.md). verify-all runs next on that house, the first to cover M100+; the twenty-second (M114) and
+  twenty-third (rebuild, every open gate, a report) are queued behind it. 108 of 112 ticked; open: M56 and M77
+  (operator-blocked), M100 (the operator's enrolment), M108, M111, M114 (gates queued), M23 (verify-all).

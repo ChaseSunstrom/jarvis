@@ -40,7 +40,9 @@ test('INSTALL on an MCP server is a plan with the URL and the tier, and confirmi
 	await expect(page.getByTestId('install-note')).toContainText('nothing is downloaded');
 	await page.getByTestId('install-confirm').click();
 	await expect(page.getByTestId('install-plan')).toHaveCount(0);
-	await expect(page.getByText('ac-tandem-docs-mcp').first()).toBeVisible();
+	// The MCP servers fold re-reads after the install (epoch) and stays folded
+	// until opened: the new server is a row in it, drawn or not.
+	await expect(page.getByTestId('mcp-row-ac-tandem-docs-mcp')).toBeAttached({ timeout: 10_000 });
 });
 
 test('INSTALL on a registry skill is the usual plan: files, checksum, and what it asks for', async ({ page }) => {
