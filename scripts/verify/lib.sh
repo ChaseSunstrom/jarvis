@@ -34,7 +34,14 @@ verify_begin() {
     _V_ID="$1"
     _V_TITLE="$2"
     # M91: a live slice run by this gate writes results-<gate>.json beside the shared file.
-    export VERIFY_GATE="$(printf "%s" "$1" | tr "A-Z" "a-z")"
+    # The OUTER gate names the live results file: a milestone gate that runs a
+    # live slice sources this twice (once as itself, once as live_interaction.sh's
+    # "LIVE"), and the second name overwrote the first, so every gate's slice
+    # landed in results-live.json and the next gate's run buried the last
+    # one's failures. Set once, kept.
+    if [ -z "${VERIFY_GATE:-}" ]; then
+        export VERIFY_GATE="$(printf "%s" "$1" | tr "A-Z" "a-z")"
+    fi
     printf '\n== %s — %s ==\n' "$_V_ID" "$_V_TITLE"
 }
 
