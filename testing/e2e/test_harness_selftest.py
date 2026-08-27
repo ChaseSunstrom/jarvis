@@ -572,26 +572,26 @@ async def test_a_setting_that_does_not_exist_is_refused_with_the_nearest_and_not
         {
             "rules": [
                 {
-                    "match": "demo mode",
+                    "match": "party mode",
                     "responses": [
                         {
                             "tool_calls": [
                                 {
                                     "name": "change_setting",
-                                    "arguments": {"key": "demo mode", "value": True},
+                                    "arguments": {"key": "party mode", "value": True},
                                 }
                             ]
                         },
-                        {"say": "There is no demo mode, Sir."},
+                        {"say": "There is no party mode, Sir."},
                     ],
                 }
             ]
         }
     )
-    reply = await client.conversation("turn on demo mode")
+    reply = await client.conversation("turn on party mode")
     refused = reply["response"]["data"]["tool_calls"][0]["result"]
     assert refused["status"] == "error", refused
-    assert "no setting called 'demo mode'" in refused["error"]
+    assert "no setting called 'party mode'" in refused["error"]
     assert "the nearest are " in refused["error"]
     named = refused["error"].split("the nearest are ")[1].split(". Call")[0].split(", ")
     keys = {r["key"] for r in (await client.command("config/settings/list"))["settings"]}
