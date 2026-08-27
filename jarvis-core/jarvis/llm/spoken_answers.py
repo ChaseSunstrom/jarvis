@@ -115,6 +115,54 @@ def _affirmed(said: str) -> bool:
     return said in {normalise(a) for a in AFFIRMATIONS}
 
 
+#: Words that point back at the request rather than name anything new — and
+#: the joins between them. An affirmation followed only by these, the
+#: request's own words and stopwords is that affirmation: "yes, close it" to
+#: "Shall I close the garage door?" is a yes. Pinned to the contract's
+#: `tail_words`.
+TAIL_WORDS: frozenset[str] = frozenset(
+    {
+        "it", "that", "this", "one", "them", "those", "these",
+        "do", "go", "ahead", "now", "then", "so", "and",
+    }
+)
+
+
+def _request_words(request: Mapping[str, Any]) -> set[str]:
+    """The words a request was raised with: its summary and its question."""
+    arguments = request.get("arguments") if isinstance(request.get("arguments"), Mapping) else {}
+    text = " ".join(
+        str(part or "")
+        for part in (request.get("summary"), arguments.get("question"), arguments.get("summary"))
+    )
+    return set(normalise(text).split())
+
+
+def _opens_with_affirmation(said: str) -> bool:
+    words = said.split()
+    affirmations = {normalise(a) for a in AFFIRMATIONS}
+    return any(" ".join(words[:n]) in affirmations for n in range(1, len(words)))
+
+
+def _affirmed_with_tail(said: str, request: Mapping[str, Any]) -> bool:
+    """An affirmation followed by words that only re-say the request.
+
+    "Yes, close it." said to "Shall I close the garage door?" is a yes; on the
+    nineteenth house (27 Aug 2026) it was not, so the model read "close it"
+    as a new order and closed the living room window. A tail that names
+    anything the request did not — "yes, close the window" — is NOT a yes:
+    it is a new instruction, and the request keeps waiting.
+    """
+    words = said.split()
+    affirmations = {normalise(a) for a in AFFIRMATIONS}
+    for n in range(len(words) - 1, 0, -1):
+        if " ".join(words[:n]) in affirmations:
+            tail = words[n:]
+            allowed = TAIL_WORDS | STOPWORDS | _request_words(request)
+            return all(word in allowed for word in tail)
+    return False
+
+
 def _denied(said: str) -> bool:
     return said in {normalise(d) for d in DENIALS}
 
@@ -171,7 +219,7 @@ def decide(pending: Sequence[Mapping[str, Any]], utterance: str) -> Decision:
 def _decide_one(request: Mapping[str, Any], raw: str, said: str) -> Decision:
     answerable = request.get("answerable")
     if not answerable:
-        if _affirmed(said):
+        if _affirmed(said) or _affirmed_with_tail(said, request):
             return Decision(KIND_APPROVE, 0)
         if _denied(said):
             return Decision(KIND_DENY, 0)
@@ -186,12 +234,20 @@ def _decide_one(request: Mapping[str, Any], raw: str, said: str) -> Decision:
         return Decision(KIND_ANSWER, 0, raw)
 
     picked = _pick_choice(said, choices)
-    if picked is None and (_affirmed(said) or _denied(said)):
+    affirmed = _affirmed(said) or _affirmed_with_tail(said, request)
+    if picked is not None and said != normalise(picked) and _opens_with_affirmation(said) and not affirmed:
+        # "Yes, close the window" contains the choice "yes" as a phrase, and
+        # the rest is a new order about something the question never named.
+        # The yes is not taken: taking it would close the garage AND leave the
+        # model to close the window. A denial with a tail ("no, leave it open")
+        # is taken: dismissing runs nothing, whatever the tail says.
+        picked = None
+    if picked is None and (affirmed or _denied(said)):
         # "yeah" for a choice that is "yes": the choice list is the answer
         # vocabulary, and the lists say which of its entries this word is.
         # Checked before the dismissal below, or "nope" would dismiss a
         # question whose choices were yes and no.
-        wanted = _affirmed(said)
+        wanted = affirmed
         fitting = [
             c for c in choices if (_affirmed(normalise(c)) if wanted else _denied(normalise(c)))
         ]

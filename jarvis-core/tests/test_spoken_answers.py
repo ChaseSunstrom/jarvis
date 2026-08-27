@@ -31,7 +31,8 @@ def _request(spec: dict) -> dict:
     return {
         "request_id": f"req-{spec['tool']}",
         "tool": spec["tool"],
-        "arguments": {},
+        "arguments": dict(spec.get("arguments") or {}),
+        "summary": str(spec.get("summary") or ""),
         "answerable": spec.get("answerable"),
         "choices": list(spec.get("choices") or []),
         "tainted": bool(spec.get("tainted")),
@@ -42,6 +43,7 @@ def test_the_lists_are_the_tables():
     assert spoken_answers.AFFIRMATIONS == frozenset(CONTRACT["affirmations"])
     assert spoken_answers.DENIALS == frozenset(CONTRACT["denials"])
     assert spoken_answers.STOPWORDS == frozenset(CONTRACT["stopwords"])
+    assert spoken_answers.TAIL_WORDS == frozenset(CONTRACT["tail_words"])
     assert list(spoken_answers.EDGE_FILLERS) == CONTRACT["normalisation"]["edge_fillers"]
 
 
