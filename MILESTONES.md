@@ -1708,7 +1708,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     a Piper phrase that lands under the operator's configured 4.93 composite (4.88 on the nineteenth) is still
     accepted; the tighter gate is in the operator's hands — drop the outlier sample (the console shows the
     self-scores), or set the threshold nearer the suggested one — and the M100 slice on the twentieth says how often.
-- [ ] **M106 — Notes read as they were written** · size M · deps M99, M83 · parallel-ok M105
+- [x] **M106 — Notes read as they were written** · size M · deps M99, M83 · parallel-ok M105
   - Scope: the operator's report of 27 Aug 14:17 — "can you make MD text in notes and stuff display correctly
     as MD". Jarvis writes markdown everywhere it writes prose (research reports land as notes with headings
     and lists; the model's replies carry bold and bullets; a task's result, a reflection's card, a review's
@@ -1732,7 +1732,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     body, the surface its note; the mock seeds a markdown note and answers "in markdown" with markdown;
     `markdown.spec.ts` 3/3 and `notes.spec.ts` 5/5 against the mock; svelte-check 0. Ticks when its gate runs on
     a rebuilt console and the notes on the house read as written.
-- [ ] **M107 — Settings rows line up** · size S · deps M99 · parallel-ok M106
+  - 27 Aug 17:24: ticked — gate 6/6 on the twenty-first house (17:10 images): the renderer escapes first and links
+    http(s) only (the M113 allowlist), the Markdown component is under Notes, the chat bubble, the task result, the
+    notification body and the surface note, and the note opens rendered — headings, a list, bold, raw HTML as text —
+    edits and comes back; a reply reads its bold once it has settled.
+- [x] **M107 — Settings rows line up** · size S · deps M99 · parallel-ok M106
   - Scope: the operator's report of 27 Aug 14:22 — "a lot of settings aren't aligned correctly". The console's
     own review pictures show it: the value column's left edge is 617 px in the Models panel, 582 px in the
     Assistant panel and 611 px in Whose voice, and within one panel the controls come in four widths (a short
@@ -1750,6 +1754,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     within a panel (one width now; before: 937/895/870). A snippet declared inside `{#if}` never reaches a
     component — the package notice under a locked row went missing that way and is back (`noted`). Tick
     when the gate passes on the rebuilt console.
+  - 27 Aug 17:24: ticked — gate 4/4 on the twentieth house (15:55 images) and green again on the twenty-first: every
+    value cell on every tab at one left edge (574 px at 1440×900), every control in a panel one width, the package
+    notice back under a locked row.
 - [ ] **M108 — Browse and install skills and MCP servers from the registries** · size L · deps M65, M40 · parallel-ok M107
   - Scope: the operator's report of 27 Aug 14:22 — "I still can't browse/download MCP servers/skills from
     anthropic in the UI (or other places)". Settings › Tools has a catalogue of what is installed (M65); it
@@ -1766,7 +1773,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     house (their reachability is the box's) and installs one skill and one server into a scratch config.
   - Verify: `bash scripts/verify/m108-registries.sh`
   - 27 Aug 14:24: planned, from the report.
-- [ ] **M109 — Injection is a gate, not a prompt** · size M · deps M47 · parallel-ok M106
+- [x] **M109 — Injection is a gate, not a prompt** · size M · deps M47 · parallel-ok M106
   - Scope: the operator's report of 27 Aug 14:22 — "we shouldn't rely on prompts to prevent jarvis from
     executing stuff inside of text (like when browsing the web)". The structure exists — a turn that has read
     anything from outside (a page, a message, a file, a notification) is tainted in `ToolRegistry`, every
@@ -1787,7 +1794,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     and pins that no words un-taint a turn; `docs/injection.md` says what is enforced where and what a prompt line is
     for. The gate's live half (the four red-team scenarios) waits for a rebuilt house and a quiet rig.
 ## Final
-- [ ] **M110 — The desktop app starts from a downloaded folder** · size S · deps M50 · parallel-ok M108
+  - 27 Aug 17:24: ticked — gate 6/6 on the twenty-first house (17:10 images): the taint table (refuses / outbound
+    read held when composed, followed when shown / inside read runs / tier 3 / escalates), the security suite, the
+    doc's four mechanisms, and the four red-team scenarios on the house — the page's instruction, the message's, the
+    exfiltration and the cross-conversation leak.
+- [x] **M110 — The desktop app starts from a downloaded folder** · size S · deps M50 · parallel-ok M108
   - Scope: the operator's report of 27 Aug 14:48 — `./jarvis-desktop-app` from `~/Downloads/jarvis-desktop-app-linux`
     aborts: "The SUID sandbox helper binary was found, but is not configured correctly … chrome-sandbox is owned by
     root and has mode 4755"; `chmod 4755` changes nothing (the owner is the user), `sudo` is refused by Electron,
@@ -1802,6 +1813,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     helper), a closed port shows the notice page. Measured on the way: a sandboxed renderer dies loading any non-http
     page here (`file:`, `data:`, a custom scheme — exit 5), so the notice is its own small window without the
     renderer sandbox; the console's window keeps it. Tick when the gate passes with the packaged binary rebuilt.
+  - 27 Aug 17:24: ticked — gate 5/5 on the twenty-first house: Chromium's three checks on the helper (vitest, the
+    operator's exact folder among the cases), the switch set before ready from node_modules under xvfb, a closed port
+    drawing the notice page in its own window, the packaged binary rebuilt and started from the folder naming the URL
+    it tried, and the README saying so.
 - [ ] **M111 — Tasks on the voice tab are a brief** · size S · deps M76 · parallel-ok M108
   - Scope: the operator's report of 27 Aug 15:19 — "fix the tasks taking up the entire screen on the voice tab and
     causing a scroll; it should just be a simple brief with the task like it was before, on the sides or below the
