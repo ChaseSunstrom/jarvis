@@ -500,7 +500,10 @@ question*, raised through the same approvals machinery a Tier-3 tool uses
 (the hidden `narrate_offer` tool — never offered to the model): it shows on
 the console's held bar, reaches a paired phone through the bridge every held
 question uses, and is answered by a spoken "yes" to any surface (M66's
-`spoken_answers`), by the phone, or by the console's Approve. A yes runs the
+`spoken_answers`) — when that conversation has nothing of its own waiting: a
+conversation's own question comes first, and the house's question is said
+once, where it was raised, never repeated into other conversations — by the
+phone, or by the console's Approve. A yes runs the
 offered service on that entity and nothing else; "no", or no answer before
 the question expires, leaves the house as it was. A house with no toolbox at
 all (the `llm` integration absent) falls back to `companion.ask`.
