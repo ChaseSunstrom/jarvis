@@ -78,8 +78,12 @@ jobs:
           set -uo pipefail
           # The job log needs a token to read; the check run's annotations do
           # not. A failing test is named on the check run, so a red job can be
-          # reproduced from the public API. (`-rf`: pytest's own FAILED lines.)
-          python -m pytest ${{ matrix.suite.paths }} -q -rf --timeout=120 --timeout-method=signal 2>&1 | tee pytest.log
+          # reproduced from the public API. (`-rfE`: pytest's own FAILED and
+          # ERROR lines. `-rf` alone hid every error: twice on 27 Aug a red
+          # core leg carried nothing but "exit code 1", because a test that
+          # errored in setup or teardown is not a FAILED row, and `-r` with an
+          # explicit letter drops pytest's default `E`.)
+          python -m pytest ${{ matrix.suite.paths }} -q -rfE --timeout=120 --timeout-method=signal 2>&1 | tee pytest.log
           status=${PIPESTATUS[0]}
           # `|| true`: the default shell here is `bash -e`, and with pipefail a
           # grep that finds no FAILED line — every green run — returned 1 and

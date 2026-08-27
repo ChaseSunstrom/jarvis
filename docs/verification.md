@@ -67,7 +67,7 @@ recomputes every row and fails when the table drifts.
 
 | Suite | Test functions | Command |
 |---|---:|---|
-| `jarvis-core` (110 files) | 2967 | `grep -rhoE '^\s*(async )?def test_' jarvis-core/tests \| wc -l` |
+| `jarvis-core` (115 files) | 3022 | `grep -rhoE '^\s*(async )?def test_' jarvis-core/tests \| wc -l` |
 | `jarvis-desktop` | 536 | `… jarvis-desktop/tests` |
 | `jarvis-browser` | 219 | `… jarvis-browser/tests` |
 | `jarvis-orchestrator` + `jarvis-sandbox` | 20 + 6 | `… jarvis-orchestrator/tests`, `… jarvis-sandbox/tests` |
@@ -75,11 +75,11 @@ recomputes every row and fails when the table drifts.
 | `evals` (entity resolution; 19 documented skips at collection) | 3 | `… evals/test_resolution.py` |
 | `jarvis-web` (vitest, 43 files) | 710 | `grep -rhoE '^\s*(it\|test)\(' jarvis-web/src --include='*.test.ts' \| wc -l` |
 | `jarvis-web` (Playwright, 39 spec files; five per-screen loops multiply these) | 244 | `grep -rhoE '^\s*test\(' jarvis-web/e2e/*.spec.ts \| wc -l` |
-| `android-app` (JVM, `@Test`) | 227 | `grep -rho '@Test' android-app/app/src/test \| wc -l` |
+| `android-app` (JVM, `@Test`) | 233 | `grep -rho '@Test' android-app/app/src/test \| wc -l` |
 | `android-app/tools` (spec files) | 63 | `ls android-app/tools/*_test.py \| wc -l` |
 | `testing/e2e` (the harness) | 81 | `… testing/e2e` |
 | `testing/live` (the rig's own tests; scenarios) | 49; 50 scenarios | `… testing/live/tests`; `ls testing/live/scenarios/*.yaml \| wc -l` |
-| `scripts/verify` (gates) | 91 | `ls scripts/verify/m[0-9][0-9]-*.sh \| wc -l` |
+| `scripts/verify` (gates) | 100 | `ls scripts/verify/m[0-9][0-9]-*.sh \| wc -l` |
 
 Within `jarvis-core`, by file (test functions, 2026-08-27; the command is the one above with the file name):
 
@@ -89,20 +89,20 @@ Within `jarvis-core`, by file (test functions, 2026-08-27; the command is the on
 | `test_features.py` | 115 | the shipped feature set, end to end |
 | `test_web_integration.py` | 92 | `web.search`/`fetch`/`crawl`/`browse`, fencing, and the turn-taint that backs it |
 | `test_vision.py` | 94 | camera frames as fenced, untrusted input |
-| `test_api.py` | 90 | REST + websocket wire contract, auth, binary audio frames |
+| `test_api.py` | 91 | REST + websocket wire contract, auth, binary audio frames |
 | `test_packaging.py` | 91 | the shipped `config/` is coherent; compose/YAML agreement |
 | `test_automation.py` | 75 | triggers, conditions, actions, run modes |
-| `test_voice.py` | 85 | pipeline runner, Wyoming protocol framing, pipeline store |
+| `test_voice.py` | 86 | pipeline runner, Wyoming protocol framing, pipeline store |
 | `test_mqtt.py` | 59 | discovery, entity mapping, value templates |
-| `test_llm.py` | 81 | agent, tool registry, the approval gate |
+| `test_llm.py` | 85 | agent, tool registry, the approval gate |
 | `test_domains.py` | 47 | every domain service verb |
 | `test_speaker.py` | 54 | the voiceprint: DSP against the DFT definition, and whether it separates anyone |
 | `test_speaker_gate.py` | 64 | what the system does with that answer — what a refused turn reaches, who is speaking, what the API hands out (M71) |
 | `test_orchestrator.py` | 46 | delegation, coding jobs, the double-gated shell path |
 | `test_recorder.py` | 44 | SQLite recorder, history, logbook, sun, person |
-| `test_device_control.py` | 40 | cross-device command dispatch and tiering |
+| `test_device_control.py` | 42 | cross-device command dispatch and tiering |
 | `test_local_integrations.py` | 40 | template, rest, command_line, hue, wled, demo |
-| `test_api_companion.py` | 28 | the device channel over the websocket |
+| `test_api_companion.py` | 29 | the device channel over the websocket |
 | `test_companion.py` | 26 | presence ranking, routing, escalation |
 | `test_core.py` | 44 | bus, state machine, services, registries |
 | `**`test_e2e.py`**` | jarvis-core/tests/__pycache__:0
