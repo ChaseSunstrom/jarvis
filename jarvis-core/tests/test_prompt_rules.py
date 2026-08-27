@@ -48,3 +48,11 @@ def test_an_ambiguous_request_is_a_question_that_names_the_candidates():
     assert "When the words fit more than one thing" in TOOL_RULES
     assert "NAME the candidates" in TOOL_RULES
     assert "never pick\n  one, and never say it is done" in TOOL_RULES
+
+
+def test_asking_after_a_job_never_starts_it_again():
+    """"Is that finished yet?" after a restart started a second sensor audit on
+    the sixteenth house (27 Aug): task_status was called, then
+    run_background_task again. The rule says status, and only that."""
+    assert '"Is that finished yet?", "how is it going?" about work already started is' in TOOL_RULES
+    assert "never start the work again" in TOOL_RULES

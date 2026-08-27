@@ -11,10 +11,14 @@ intent: >
   and a real restart between the two turns, as memory-remember-and-recall does.
 variants: [text]
 turns:
+  # A job that runs long enough to be interrupted and short enough to finish
+  # again inside the five minutes the completion is given: every sensor took
+  # the model four to six minutes on the sixteenth house, and the completion
+  # came after the window.
   - say: >
-      Put this in the background rather than answering now: go through every
-      sensor in the house, work out which ones look wrong, and write it up.
-      Tell me when it is done.
+      Put this in the background rather than answering now: read every light
+      and switch in the house, list which are on, and write it up as a short
+      note. Tell me when it is done.
     expect:
       task: {kind: background, within: 45}
       reply_means: "says the work is under way and that it will report back"
