@@ -1671,6 +1671,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     that person only — never as the operator — and reports the operator's self-scores and suggested
     threshold under the new scoring (their data; reported, not asserted).
   - Verify: `bash scripts/verify/m105-not-your-voice.sh`
+  - 27 Aug 12:00: built, not ticked — `verify` scores the three blocks as equals and refuses on one block
+    over `BLOCK_VETO` (2×) the threshold, naming it ("timbre-mismatch", "pitch-mismatch"); the self-scores and the
+    suggested threshold follow. The synthetic cast's 65 tests hold unchanged under the new scoring; three new ones pin
+    the owner's timbre an octave up (refused, a block named), the owner on a cold morning (through), the constant.
+    The live half waits for a house built from this tree and a quiet rig.
   - 27 Aug 11:54: planned.
 ## Final
 - [ ] **M23 — Final integration** · size M · deps M00–M72

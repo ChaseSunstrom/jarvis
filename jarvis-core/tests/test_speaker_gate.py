@@ -860,6 +860,39 @@ async def test_enrolling_with_a_name_adds_a_second_person(jarvis):
     assert status["label"] == "owner" and status["samples"] == len(_ENROL)
 
 
+def test_the_owners_timbre_with_the_wrong_pitch_is_refused_and_says_pitch(profile):
+    """M105. A voice with the owner's formants an octave up is another person by
+    any ear; on 27 Aug 2026 the operator's profile accepted a synthetic voice
+    whose pitch block sat at 1.9× the threshold, because 8 pitch dimensions
+    were outvoted by 38 of timbre and variability. Blocks are votes now, and
+    one far beyond the threshold is a refusal that names itself."""
+    from synth_voice import SynthSpeaker
+
+    twin = SynthSpeaker("twin", f0=OWNER.f0 * 1.9, formants=OWNER.formants)
+    verdict = profile.verify(embed(twin.utterance(seconds=2.5, seed=31)))
+    assert verdict.accepted is False, verdict
+    assert verdict.blocks["pitch"] > profile.threshold, verdict.blocks
+    # refused by a block that names itself — an octave up moves the harmonics
+    # the timbre block reads as well as the pitch block, and either may be the
+    # one that speaks first; "mismatch" alone would be the old composite talking
+    assert verdict.reason.endswith("-mismatch"), verdict.reason
+    assert max(verdict.blocks.values()) > profile.threshold * 2.0, verdict.blocks
+
+
+def test_the_owner_on_a_cold_morning_still_gets_through(profile):
+    """The veto must not turn a cold morning into a stranger: a little low, a
+    little quiet, a little hoarse is the owner, and every block is near enough."""
+    verdict = profile.verify(embed(OWNER.utterance(seconds=2.4, seed=41, f0_scale=0.92, gain=0.12)))
+    assert verdict.accepted is True, verdict
+    assert max(verdict.blocks.values()) <= profile.threshold * 2.0, verdict.blocks
+
+
+def test_the_block_veto_is_the_gates_constant(profile):
+    from jarvis.voice import speaker
+
+    assert 1.5 <= speaker.BLOCK_VETO <= 3.0
+
+
 async def test_status_says_when_an_enrolment_is_in_progress(jarvis):
     """A client that has just enrolled someone can wait for the house to listen again.
 

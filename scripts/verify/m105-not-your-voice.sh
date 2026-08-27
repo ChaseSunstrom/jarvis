@@ -17,7 +17,7 @@ use_venv
 check "the composite scores the three blocks as equals, and one block far out is a veto" python3 -c '
 import inspect
 from jarvis.voice import speaker
-src = inspect.getsource(speaker.SpeakerProfile.verify)
+src = inspect.getsource(speaker.VoiceProfile.verify)
 assert "BLOCK_VETO" in src, "no per-block veto in verify()"
 assert "pitch-mismatch" in src or "-mismatch" in src, "the veto does not name its block"
 assert hasattr(speaker, "BLOCK_VETO") and 1.5 <= float(speaker.BLOCK_VETO) <= 3.0, getattr(speaker, "BLOCK_VETO", None)

@@ -258,6 +258,11 @@ ENROLMENT_PROMPTS: tuple[str, ...] = (
 #: mode against your own voice and your own room before turning enforcement on;
 #: `docs/voice-identity.md` says how.
 DEFAULT_THRESHOLD = 4.0
+#: One block this many times over the threshold refuses on its own, whatever
+#: the other two say (M105). Twice: the owner's own worst block on a cold
+#: morning sits near the threshold, not at double it; a different voice's
+#: pitch sat at 1.9× the operator's threshold while the composite passed.
+BLOCK_VETO = 2.0
 MIN_THRESHOLD = 1.0
 MAX_THRESHOLD = 25.0
 
@@ -948,11 +953,26 @@ class VoiceProfile:
                 confidence=0.0,
                 reason="nothing-measurable",
             )
-        score = total / counted
         blocks = {name: (pair[0] / pair[1] if pair[1] else 0.0) for name, pair in totals.items()}
-        close_enough = score <= self.threshold
+        # The three blocks are three votes, not 19 + 19 + 8 dimensions. On 27
+        # Aug 2026 the operator's own profile accepted a synthetic Piper voice
+        # — a woman's, against a man's — at 4.15 under a threshold of 4.93:
+        # timbre 3.46 and variability 2.66 outvoted pitch 9.35 because pitch
+        # is eight dimensions of forty-six. The score is the mean of the
+        # blocks that were measured (a pitchless utterance is scored on the
+        # other two, as before), and one block far beyond the threshold is a
+        # refusal in its own right, named — the ear's rule: the wrong pitch is
+        # a different person whatever the timbre says.
+        counted_blocks = [name for name, pair in totals.items() if pair[1] and name not in skipped]
+        score = sum(blocks[name] for name in counted_blocks) / len(counted_blocks)
+        vetoed = next(
+            (name for name in counted_blocks if blocks[name] > self.threshold * BLOCK_VETO), None
+        )
+        close_enough = score <= self.threshold and vetoed is None
         accepted = close_enough and not pitchless
-        if not close_enough:
+        if vetoed is not None:
+            reason = f"{vetoed}-mismatch"
+        elif not close_enough:
             reason = "mismatch"
         elif pitchless:
             reason = "unverifiable-no-pitch"
