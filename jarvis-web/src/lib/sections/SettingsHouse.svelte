@@ -13,7 +13,7 @@
 	import SettingsFold from '$lib/components/SettingsFold.svelte';
 	import { SectionLink } from '$lib/sectionLink.svelte';
 	import { SettingsStore } from '$lib/settingsStore.svelte';
-	import { Panel, Pill, ScreenState, SkeletonRows } from '$lib/ui';
+	import { Panel, Pill, ScreenState, SkeletonRows, SettingRow } from '$lib/ui';
 	import { featuredOf, sectionOfGroup } from './settingsPlan';
 
 	const store = new SettingsStore();
@@ -66,16 +66,12 @@
 					{/each}
 					<!-- The rooms are not a setting; they are a registry with its own
 					     section. A link, so this page does not grow a second editor. -->
-					<div class="setting" data-testid="plain-areas">
-						<div class="what">
-							<b>Rooms</b>
-							<span class="why">The areas voice commands resolve against, and what is in each.</span>
-						</div>
+					<SettingRow label="Rooms" why="The areas voice commands resolve against, and what is in each." testid="plain-areas">
 						<span class="value">managed on HOUSE</span>
-						<div class="acts">
+						{#snippet acts()}
 							<a class="go" href="/house/areas" data-testid="areas-link">OPEN AREAS →</a>
-						</div>
-					</div>
+						{/snippet}
+					</SettingRow>
 				{/snippet}
 			</Panel>
 
@@ -115,14 +111,7 @@
 		font-size: var(--jv-fs-sm);
 		color: var(--jv-text-dim);
 	}
-	.setting {
-		display: grid;
-		grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 1.4fr) auto;
-		align-items: center;
-		gap: var(--jv-space-2) var(--jv-space-4);
-		padding: var(--jv-space-3) 0;
-		border-bottom: 1px solid var(--jv-line-hair);
-	}
+	/* The row's grid is SettingRow's (M107). */
 	.setting:last-child {
 		border-bottom: 0;
 	}
@@ -168,9 +157,6 @@
 		border-color: var(--jv-line);
 	}
 	@media (max-width: 720px) {
-		.setting {
-			grid-template-columns: minmax(0, 1fr);
-		}
 		.acts {
 			justify-content: flex-start;
 		}

@@ -1725,6 +1725,13 @@ web and of Tasker. Local only. Each row here is planned in that document.
     are equal, and that no control in a panel is narrower than the widest by more than a button's width.
   - Verify: `bash scripts/verify/m107-settings-line-up.sh`
   - 27 Aug 14:24: planned, from the report.
+  - 27 Aug 14:57: built. One `SettingRow` grid (`jarvis-web/src/lib/ui/SettingRow.svelte`: a fixed label column,
+    a value column, a fixed acts column) under every plain row, raw row, model role and the Voice/Console/House
+    rows; the sections' own `.setting` grids are gone. `e2e/settings-layout.spec.ts` measures every value cell's
+    left edge across the four tabs (all 574 px at 1440×900; before: 574/556/546/559) and every control's width
+    within a panel (one width now; before: 937/895/870). A snippet declared inside `{#if}` never reaches a
+    component — the package notice under a locked row went missing that way and is back (`noted`). Tick
+    when the gate passes on the rebuilt console.
 - [ ] **M108 — Browse and install skills and MCP servers from the registries** · size L · deps M65, M40 · parallel-ok M107
   - Scope: the operator's report of 27 Aug 14:22 — "I still can't browse/download MCP servers/skills from
     anthropic in the UI (or other places)". Settings › Tools has a catalogue of what is installed (M65); it

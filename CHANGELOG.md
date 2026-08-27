@@ -7,6 +7,8 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+- Settings rows line up (M107): one `SettingRow` grid under every row on every tab — label, value and actions in fixed columns — so the values start at one edge and the controls share a width; a layout spec measures it.
+
 ### In progress — from the audit of 27 Aug 2026 (`docs/AUDIT_2026-08-27.md`)
 - **M91 — a gate cannot pass on a skip.** Every verify gate that runs a pytest suite now reads the suite's summary line: a suite that skipped (beyond what the check allows), ran nothing, or errored fails the gate, where the exit status alone let a fully-skipped suite pass. Each gate's live slice keeps its own results file.
 - **M105 — the gate says no to a voice that is not yours.** The speaker gate scores its three blocks — timbre, variability, pitch — as three votes rather than forty-six dimensions, and one block twice over the threshold refuses on its own, naming itself; the operator's own profile had accepted a synthetic voice whose pitch sat at 1.9× the threshold because eight pitch dimensions were outvoted by thirty-eight. The self-scores and the suggested threshold follow the same scoring.

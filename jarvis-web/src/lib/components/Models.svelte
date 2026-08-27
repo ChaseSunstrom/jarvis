@@ -28,7 +28,7 @@ not answer is named at the foot with why.
 	import type { ModelRow, ModelsPayload, SettingResult } from '$lib/jarvisClient';
 	import { toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
-	import { Panel, Pill, ScreenState, Select } from '$lib/ui';
+	import { Panel, Pill, ScreenState, Select, SettingRow } from '$lib/ui';
 
 	interface Props {
 		conn: Connection | null;
@@ -271,11 +271,11 @@ not answer is named at the foot with why.
 				     same API the raw rows use; a value is what LLM_URL names it,
 				     shown against the model it stands for. -->
 				<div class="roles" data-testid="model-roles">
-					<div class="role">
-						<div class="what">
+					<SettingRow testid="role-row-chat">
+						{#snippet what()}
 							<b>Chat</b>
 							<span class="why">Answers every conversation, and research and coding unless those name their own.</span>
-						</div>
+						{/snippet}
 						<Select
 							value={payload?.roles.chat.value ?? ''}
 							testid="role-chat"
@@ -283,15 +283,15 @@ not answer is named at the foot with why.
 							disabled={busyRole !== '' || !chatChoices.length}
 							onchange={(e) => choose('chat', (e.currentTarget as HTMLSelectElement).value)}
 						/>
-					</div>
-					<div class="role">
-						<div class="what">
+					</SettingRow>
+					<SettingRow testid="role-row-fast">
+						{#snippet what()}
 							<b>Fast</b>
 							<span class="why">
 								A smaller model for the voice path.
 								{#if payload?.roles.fast.source === 'gateway'}The gateway routes <code>house-fast</code> to it; nothing in Jarvis uses that route yet.{:else}Nothing routes to it yet — the fast path lands with M60.{/if}
 							</span>
-						</div>
+						{/snippet}
 						<Select
 							value={payload?.roles.fast.value ?? ''}
 							testid="role-fast"
@@ -299,12 +299,12 @@ not answer is named at the foot with why.
 							disabled={busyRole !== '' || !chatOptions.length}
 							onchange={(e) => choose('fast', (e.currentTarget as HTMLSelectElement).value)}
 						/>
-					</div>
-					<div class="role">
-						<div class="what">
+					</SettingRow>
+					<SettingRow testid="role-row-vision">
+						{#snippet what()}
 							<b>Vision</b>
 							<span class="why" data-testid="role-vision-why">{visionWhy}</span>
-						</div>
+						{/snippet}
 						<Select
 							value={payload?.roles.vision.value ?? ''}
 							testid="role-vision"
@@ -312,7 +312,7 @@ not answer is named at the foot with why.
 							disabled={busyRole !== '' || !visionConfigured || !visionChoices.length}
 							onchange={(e) => choose('vision', (e.currentTarget as HTMLSelectElement).value)}
 						/>
-					</div>
+					</SettingRow>
 				</div>
 			{/snippet}
 		</ScreenState>
@@ -429,17 +429,6 @@ not answer is named at the foot with why.
 		margin-top: var(--jv-space-3);
 		border-top: 1px solid var(--jv-line-soft);
 	}
-	.role {
-		display: grid;
-		grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 1.4fr);
-		align-items: center;
-		gap: var(--jv-space-2) var(--jv-space-4);
-		padding: var(--jv-space-3) 0;
-		border-bottom: 1px solid var(--jv-line-hair);
-	}
-	.role:last-child {
-		border-bottom: 0;
-	}
 	.why {
 		font-size: var(--jv-fs-xs);
 		line-height: 1.5;
@@ -475,9 +464,6 @@ not answer is named at the foot with why.
 		.tags {
 			grid-column: 2;
 			justify-content: flex-start;
-		}
-		.role {
-			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 </style>

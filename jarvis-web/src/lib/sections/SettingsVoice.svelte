@@ -22,8 +22,7 @@
 		Panel,
 		Pill,
 		ScreenState,
-		SkeletonRows
-	} from '$lib/ui';
+		SkeletonRows, SettingRow } from '$lib/ui';
 	import { featuredOf, sectionOfGroup } from './settingsPlan';
 
 	const store = new SettingsStore();
@@ -223,14 +222,12 @@
 					testid="speaker-unsupported"
 				/>
 			{:else if speakerState === 'ready' || (speakerState === 'offline' && speaker)}
-				<div class="setting">
-					<div class="what"><b>Mode</b><span class="dim">whether other voices are refused</span></div>
+				<SettingRow label="Mode" why="whether other voices are refused">
 					<span class="value">
 						<Pill tone={who.active ? 'live' : 'neutral'} testid="speaker-mode">{who.mode ?? 'off'}</Pill>
 					</span>
-				</div>
-				<div class="setting">
-					<div class="what"><b>Enrolled</b><span class="dim">whose samples the gate compares a voice with</span></div>
+				</SettingRow>
+				<SettingRow label="Enrolled" why="whose samples the gate compares a voice with">
 					<span class="value" data-testid="speaker-samples">
 						{#if people.length === 1}
 							{people[0].samples} of {people[0].max_samples ?? who.max_samples} samples
@@ -240,7 +237,7 @@
 							nobody — the gate is inert until somebody enrols
 						{/if}
 					</span>
-				</div>
+				</SettingRow>
 
 				<!--
 				  One row per person. `data-jv-row` so the menu inventory measures
@@ -285,10 +282,7 @@
 				{/if}
 
 				{#if who.enrolled}
-					<div class="setting">
-						<div class="what">
-							<b>Threshold</b><span class="dim">mean squared z · lower is stricter</span>
-						</div>
+					<SettingRow label="Threshold" why="mean squared z · lower is stricter">
 						<span class="value" data-testid="speaker-threshold">
 							{who.threshold}
 							{#if who.configured_threshold != null}
@@ -314,17 +308,16 @@
 								</span>
 							{/if}
 						</span>
-					</div>
+					</SettingRow>
 				{/if}
 
 				<EnrolVoice status={speaker} onDone={loadSpeaker} />
 
-				<div class="setting">
-					<div class="what">
-						<b>{people.length > 1 ? 'Forget everyone' : 'Forget this voice'}</b>
-						<span class="dim">{people.length > 1 ? 'deletes every voiceprint' : 'deletes the voiceprint'}</span>
-					</div>
-					<div class="acts">
+				<SettingRow
+					label={people.length > 1 ? 'Forget everyone' : 'Forget this voice'}
+					why={people.length > 1 ? 'deletes every voiceprint' : 'deletes the voiceprint'}
+				>
+					{#snippet acts()}
 						<Button
 							variant="danger"
 							testid="speaker-forget"
@@ -338,8 +331,8 @@
 						>
 							{speakerBusy ? 'deleting…' : 'FORGET'}
 						</Button>
-					</div>
-				</div>
+					{/snippet}
+				</SettingRow>
 				{#if speakerError}
 					<p class="note bad" data-testid="speaker-error" role="alert">{speakerError}</p>
 				{/if}
@@ -395,14 +388,7 @@
 		font-size: var(--jv-fs-sm);
 		color: var(--jv-text-dim);
 	}
-	.setting {
-		display: grid;
-		grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 1.4fr) auto;
-		align-items: center;
-		gap: var(--jv-space-2) var(--jv-space-4);
-		padding: var(--jv-space-3) 0;
-		border-bottom: 1px solid var(--jv-line-hair);
-	}
+	/* The row's grid is SettingRow's (M107). */
 	.setting:last-child {
 		border-bottom: 0;
 	}
@@ -464,9 +450,6 @@
 		color: var(--jv-text);
 	}
 	@media (max-width: 720px) {
-		.setting {
-			grid-template-columns: minmax(0, 1fr);
-		}
 		.acts {
 			justify-content: flex-start;
 		}

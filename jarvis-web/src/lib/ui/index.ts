@@ -17,6 +17,7 @@ export { default as Toggle } from './Toggle.svelte';
 export { default as Field } from './Field.svelte';
 export { default as Panel } from './Panel.svelte';
 export { default as Row } from './Row.svelte';
+export { default as SettingRow } from './SettingRow.svelte';
 export { default as Pill } from './Pill.svelte';
 export { default as Toolbar } from './Toolbar.svelte';
 export { default as Tabs } from './Tabs.svelte';

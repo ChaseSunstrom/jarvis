@@ -17,7 +17,7 @@
 	import { SectionLink } from '$lib/sectionLink.svelte';
 	import { TEXT_SIZES, applyTextSize, readTextSize, writeTextSize } from '$lib/textSize';
 	import { toasts } from '$lib/toast';
-	import { Button, Panel, Pill, ScreenState, SkeletonRows } from '$lib/ui';
+	import { Button, Panel, Pill, ScreenState, SkeletonRows, SettingRow } from '$lib/ui';
 
 	interface ClientConfig {
 		pipeline?: string;
@@ -186,11 +186,7 @@
 	     read while you read it. -->
 	<Panel title="Text size" meta="this browser only" testid="text-size">
 		{#snippet children()}
-			<div class="setting">
-				<div class="what">
-					<b>Scale</b>
-					<span class="dim">multiplies every size in the interface</span>
-				</div>
+			<SettingRow label="Scale" why="multiplies every size in the interface">
 				<!-- A segmented choice: the current size is raised, not lit. The accent
 				     is for what is about to happen, and a preference already in effect
 				     is not that. -->
@@ -206,7 +202,7 @@
 						</Button>
 					{/each}
 				</div>
-			</div>
+			</SettingRow>
 			<p class="note">
 				STANDARD is whatever text size this browser is already set to — so raising it in the
 				browser and raising it here compound, which is the intent. Everything in the console and
@@ -226,34 +222,32 @@
 	-->
 	<Panel title="This console" meta={config.backend ?? '…'} live={link.status === 'open'} testid="console-env">
 		{#snippet children()}
-			<div class="setting">
-				<div class="what"><b>Backend</b><span class="dim">how this console reaches Jarvis</span></div>
+			<SettingRow label="Backend" why="how this console reaches Jarvis">
 				<span class="value">
 					<Pill tone={link.status === 'open' ? 'live' : 'neutral'} testid="backend-kind">{config.backend ?? '…'}</Pill>
 				</span>
-			</div>
-			<div class="setting">
-				<div class="what"><b>URL</b><code>{config.backendUrlVar ?? 'JARVIS_URL'}</code></div>
+			</SettingRow>
+			<SettingRow>
+				{#snippet what()}<b>URL</b><code>{config.backendUrlVar ?? 'JARVIS_URL'}</code>{/snippet}
 				<span class="value mono" data-testid="backend-url">{config.backendUrl || 'not configured'}</span>
-			</div>
-			<div class="setting">
-				<div class="what"><b>Token</b><code>{config.backendTokenVar ?? 'JARVIS_TOKEN'}</code></div>
+			</SettingRow>
+			<SettingRow>
+				{#snippet what()}<b>Token</b><code>{config.backendTokenVar ?? 'JARVIS_TOKEN'}</code>{/snippet}
 				<span class="value" data-testid="backend-token">
 					{config.tokenConfigured ? '•••••••• held server-side' : 'not configured'}
 				</span>
-			</div>
-			<div class="setting">
-				<div class="what"><b>Version</b><span class="dim">reported by the backend</span></div>
+			</SettingRow>
+			<SettingRow label="Version" why="reported by the backend">
 				<span class="value mono">{backendConfig?.version ?? backendConfig?.ha_version ?? 'unknown'}</span>
-			</div>
-			<div class="setting">
-				<div class="what"><b>Voice pipeline</b><code>JARVIS_PIPELINE</code></div>
+			</SettingRow>
+			<SettingRow>
+				{#snippet what()}<b>Voice pipeline</b><code>JARVIS_PIPELINE</code>{/snippet}
 				<span class="value" data-testid="pipeline-name">
 					{config.pipeline || 'not set'}{#if pipelineNames.length}
 						<span class="dim"> · available: {pipelineNames.join(', ')}</span>
 					{/if}
 				</span>
-			</div>
+			</SettingRow>
 			<p class="note">
 				These are server-side environment variables — the browser never receives the token. Change
 				<code>JARVIS_BACKEND</code>, <code>JARVIS_URL</code>, <code>JARVIS_TOKEN</code> or
@@ -373,14 +367,7 @@
 	.line.bad {
 		color: var(--jv-danger-text);
 	}
-	.setting {
-		display: grid;
-		grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 1.4fr) auto;
-		align-items: center;
-		gap: var(--jv-space-2) var(--jv-space-4);
-		padding: var(--jv-space-3) 0;
-		border-bottom: 1px solid var(--jv-line-hair);
-	}
+	/* The row's grid is SettingRow's (M107). */
 	.setting:last-child {
 		border-bottom: 0;
 	}
@@ -533,9 +520,6 @@
 	}
 
 	@media (max-width: 720px) {
-		.setting {
-			grid-template-columns: minmax(0, 1fr);
-		}
 		.seg {
 			grid-column: 1;
 			justify-self: start;
