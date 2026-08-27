@@ -28,3 +28,12 @@ def test_a_gated_tool_is_called_not_refused():
 def test_the_tool_rules_name_the_held_actions():
     assert "Unlocking, sending, running and" in TOOL_RULES
     assert "the call is the\n  initiation" in TOOL_RULES
+
+
+def test_the_rules_say_what_it_means_in_a_follow_up():
+    """The smoke slice's one steady miss (27 Aug): "Now turn it off again" after
+    "turn on the bed light" turned it ON again, typed, in three gates. The
+    rule names the pronoun and the direction."""
+    assert '"It", "that", "the same" and "again" in a follow-up mean the thing this' in TOOL_RULES
+    assert "Do the opposite of what" in TOOL_RULES
+
