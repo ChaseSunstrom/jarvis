@@ -1188,3 +1188,10 @@ is quiet. Done since:
   light instead of turning it on; "look into which lights are on downstairs and tell me" done inline in thirty calls
   instead of as the background task the M25 screen watches; a one-minute reminder confirmed "at 13:38" against a house
   clock of 11:38. 16 pass / 10 fail at gate 26; the rest of verify-all runs on.
+- 19:15 UTC — from verify-all's gates 26–29 and CI's last two waves: the compose gate's resilience scenarios repeated the
+  bedroom miss ("shall I turn that on?" for "do the same in the bedroom"), so the claim guard has a twin — an offer to do
+  the deed, with nothing called, is sent back once to act (8b5da58); a one-minute reminder confirmed two hours off is
+  `in_minutes` now, the house's arithmetic (e0d6c53); the phone's task-dock golden re-recorded for the token's 1 dp
+  (the APK workflow named it). CI's web e2e went 11 → 7 → 6 reds across the waves; the last seven were state earlier
+  spec files left in the single-worker mock, a race in the enrol case, and the hud case's boot sequence — all fixed
+  (30c77b0, 18cf62c). The core, browser, desktop, orchestrator, lint, static and android-spec jobs are green.
