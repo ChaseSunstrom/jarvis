@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
 	import { groupReadings, type CameraStill, type MomentRow, type ReadingsPayload, type SkySummary } from '$lib/dashboards/widgets';
+	import Markdown from '$lib/components/Markdown.svelte';
 	import Chart from '$lib/dashboards/Chart.svelte';
 	import type { SeriesData } from '$lib/dashboards/series';
 	import CameraStillView from '$lib/dashboards/CameraStill.svelte';
@@ -166,7 +167,8 @@
 		{:else if panel.kind === 'note' || panel.kind === 'page'}
 			<div class="text" data-testid="surface-text-{panel.id}">
 				{#if panel.url}<span class="src">{panel.url}</span>{/if}
-				<p>{panel.text || 'Nothing to show yet.'}</p>
+				<!-- A note on the screen reads as it was written (M106). -->
+				{#if panel.text}<Markdown text={panel.text} />{:else}<p>Nothing to show yet.</p>{/if}
 			</div>
 		{/if}
 	</div>

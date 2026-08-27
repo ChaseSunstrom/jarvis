@@ -28,6 +28,7 @@
 	import { touchKnowledge } from '$lib/knowledge/store.svelte';
 	import { toasts } from '$lib/toast';
 	import { Button, EmptyState, Field, Input, Panel, Pill, ScreenState, type Status } from '$lib/ui';
+	import Markdown from '$lib/components/Markdown.svelte';
 
 	interface NoteRow {
 		id: string;
@@ -71,6 +72,8 @@
 						: 'ready'
 	);
 	const dirty = $derived(Boolean(open) && draft !== (open?.body ?? ''));
+	/** READ draws the markdown; EDIT is the textarea (M106). A fresh open reads. */
+	let mode = $state<'read' | 'edit'>('read');
 	/** The note the URL asks for, which the graph sets by selecting a node. */
 	const wanted = $derived(page.url.pathname.endsWith('/notes') ? page.url.searchParams.get('open') ?? '' : '');
 
@@ -133,6 +136,7 @@
 			});
 			open = answer.note;
 			draft = answer.note.body ?? '';
+			mode = 'read';
 		} catch (e) {
 			err = describeError(e);
 		}
@@ -300,9 +304,25 @@
 				<Panel title={note.title} meta={dirty ? 'edited' : busy === 'save' ? 'saving' : 'saved'} live={dirty} testid="note-editor">
 					{#snippet children()}
 						<h2 class="sr" data-testid="note-title">{note.title}</h2>
-						<Field label="The note, in markdown">
-							<Input bind:value={draft} rows={16} mono testid="note-body" />
-						</Field>
+						<!-- Read first, edit on request (M106): a note is prose Jarvis or
+						     a person wrote in markdown, and it used to open straight into
+						     a monospace textarea — a research report as raw characters.
+						     An edited note stays in the editor until it is saved or the
+						     next note is opened; a fresh open reads. -->
+						<div class="mode" role="tablist" aria-label="Read or edit">
+							<Button testid="note-mode-read" variant={mode === 'read' ? 'primary' : undefined} onclick={() => (mode = 'read')} disabled={dirty}
+								title={dirty ? 'Save or discard the edit to read it rendered' : 'Read the note as it was written'}>READ</Button>
+							<Button testid="note-mode-edit" variant={mode === 'edit' ? 'primary' : undefined} onclick={() => (mode = 'edit')}>EDIT</Button>
+						</div>
+						{#if mode === 'read'}
+							<div class="read" data-testid="note-read">
+								<Markdown text={draft} />
+							</div>
+						{:else}
+							<Field label="The note, in markdown">
+								<Input bind:value={draft} rows={16} mono testid="note-body" />
+							</Field>
+						{/if}
 						<div class="foot">
 							<div class="links" data-testid="note-links">
 								{#if note.links.length}
@@ -476,6 +496,19 @@
 	.list li:hover .act,
 	.act:focus-within {
 		opacity: 1;
+	}
+	.mode {
+		display: flex;
+		gap: 0.4rem;
+		margin-bottom: 0.6rem;
+	}
+	.read {
+		min-height: 12rem;
+		padding: 0.6rem 0.8rem;
+		border: 1px solid var(--jv-line, rgba(127, 127, 127, 0.3));
+		border-radius: 4px;
+		line-height: 1.5;
+		overflow-wrap: anywhere;
 	}
 	.editor-side {
 		min-width: 0;

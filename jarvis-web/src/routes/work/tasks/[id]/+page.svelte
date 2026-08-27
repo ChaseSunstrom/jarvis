@@ -17,6 +17,8 @@
 	 * left, the output at the right, everything else below, and a held action
 	 * as a bar with the warning rule down its edge.
 	 */
+	import Markdown from '$lib/components/Markdown.svelte';
+	import { looksLikeMarkdown } from '$lib/markdown';
 	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { openConnection, type Connection, type ConnectionStatus } from '$lib/connection';
@@ -510,7 +512,11 @@
 												{/snippet}
 											</Row>
 											{#if child.result}
-												<p class="finding">{child.result}</p>
+												{#if looksLikeMarkdown(child.result ?? '')}
+													<div class="finding"><Markdown text={child.result ?? ''} /></div>
+												{:else}
+													<p class="finding">{child.result}</p>
+												{/if}
 											{/if}
 										</li>
 									{/each}
@@ -546,7 +552,14 @@
 					{#if it.result}
 						<Panel title="Result" testid="task-result-panel">
 							{#snippet children()}
-								<pre class="result" data-testid="task-result">{it.result}</pre>
+								<!-- A job's write-up is prose the model wrote, headings and lists
+								     included (M106): rendered when it reads as markdown, kept
+								     verbatim in a <pre> when it is a plain block of text. -->
+								{#if looksLikeMarkdown(it.result ?? '')}
+									<div class="result" data-testid="task-result"><Markdown text={it.result ?? ''} /></div>
+								{:else}
+									<pre class="result" data-testid="task-result">{it.result}</pre>
+								{/if}
 							{/snippet}
 						</Panel>
 					{/if}

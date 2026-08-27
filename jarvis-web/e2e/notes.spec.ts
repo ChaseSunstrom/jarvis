@@ -22,6 +22,8 @@ test('every note is listed, with its tags', async ({ page }) => {
 test('a note opens, edits and saves', async ({ page }) => {
 	await page.goto('/notes');
 	await page.getByTestId('note-row-boiler-serviced').click();
+	// A note opens READ (M106); the textarea is a click away.
+	await page.getByTestId('note-mode-edit').click();
 
 	const editor = page.getByTestId('note-editor');
 	await expect(editor).toBeVisible();

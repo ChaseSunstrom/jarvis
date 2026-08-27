@@ -14,6 +14,8 @@
 	 * that produced it. Every one of those is a field on the record, not a
 	 * reconstruction.
 	 */
+	import Markdown from '$lib/components/Markdown.svelte';
+	import { looksLikeMarkdown } from '$lib/markdown';
 	import { Button, Pill } from '$lib/ui';
 	import type { Snippet } from 'svelte';
 
@@ -67,7 +69,11 @@
 		{#if when}<time>{when}</time>{/if}
 	</header>
 
-	{#if body}<p class="body">{body}</p>{/if}
+	{#if body}
+		<!-- A card's body is prose Jarvis wrote — a reflection's lesson, a
+		     review's finding, a briefing — and reads as it was written (M106). -->
+		{#if looksLikeMarkdown(body)}<div class="body"><Markdown text={body} /></div>{:else}<p class="body">{body}</p>{/if}
+	{/if}
 
 	<footer>
 		{#if link}

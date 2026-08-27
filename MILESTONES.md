@@ -1690,6 +1690,73 @@ web and of Tasker. Local only. Each row here is planned in that document.
     pitch far out") and shows the three blocks under the verdict; `enrolment.test.ts` 27, `enrol.spec.ts` 8/8 against the mock,
     whose verify verdict carries the blocks as the server's does.
   - 27 Aug 11:54: planned.
+- [ ] **M106 — Notes read as they were written** · size M · deps M99, M83 · parallel-ok M105
+  - Scope: the operator's report of 27 Aug 14:17 — "can you make MD text in notes and stuff display correctly
+    as MD". Jarvis writes markdown everywhere it writes prose (research reports land as notes with headings
+    and lists; the model's replies carry bold and bullets; a task's result, a reflection's card, a review's
+    note), and the console shows every one of them as the raw text: the Notes page has no read view at all —
+    a note opens straight into a monospace textarea — and the chat bubble, the task's result, a notification's
+    body and the surface's note panel print the characters. One safe renderer, no dependency: `markdown.ts`
+    escapes first and then draws a conservative subset — headings, paragraphs, bullet and numbered lists,
+    bold, italic, inline and fenced code, blockquotes, rules, links to http(s) only (`rel=noopener`) — so a
+    note the model wrote from a hostile page cannot smuggle markup or a `javascript:` link into the console;
+    raw HTML in the text stays text. `Markdown.svelte` draws it. The Notes page opens a note READ (rendered)
+    with EDIT for the textarea and back; the chat bubble renders an assistant's text; the task's result, the
+    notification's body and the surface's note panel render theirs. Unit tests pin the subset and the
+    injection cases; Playwright opens a markdown note and reads headings and a list, edits it, and sees a
+    chat reply's bold; the mock's notes carry markdown. The phone's chat bubble and note view are the second
+    half (no markdown there either), noted for the phone's own milestone.
+  - Verify: `bash scripts/verify/m106-notes-read-as-written.sh`
+  - 27 Aug 14:19: planned, from the report.
+  - 27 Aug 14:29: built, not ticked — `markdown.ts` (escape first, a conservative subset, http(s) links only) with
+    six unit tests including the injection cases; `Markdown.svelte`; the Notes page opens READ with EDIT for the
+    textarea; the chat bubble renders a settled assistant reply, the task page its results and findings, a card its
+    body, the surface its note; the mock seeds a markdown note and answers "in markdown" with markdown;
+    `markdown.spec.ts` 3/3 and `notes.spec.ts` 5/5 against the mock; svelte-check 0. Ticks when its gate runs on
+    a rebuilt console and the notes on the house read as written.
+- [ ] **M107 — Settings rows line up** · size S · deps M99 · parallel-ok M106
+  - Scope: the operator's report of 27 Aug 14:22 — "a lot of settings aren't aligned correctly". The console's
+    own review pictures show it: the value column's left edge is 617 px in the Models panel, 582 px in the
+    Assistant panel and 611 px in Whose voice, and within one panel the controls come in four widths (a short
+    native select, a medium one, a full-width input, a right-aligned input-with-buttons). One `SettingRow`
+    grid — label, value, actions — with the same column edges in every panel on every Settings tab, every
+    control filling its cell (selects styled like inputs), actions right and values left. A Playwright
+    layout spec measures every row's value-cell left edge across the five tabs at 1440×900 and asserts they
+    are equal, and that no control in a panel is narrower than the widest by more than a button's width.
+  - Verify: `bash scripts/verify/m107-settings-line-up.sh`
+  - 27 Aug 14:24: planned, from the report.
+- [ ] **M108 — Browse and install skills and MCP servers from the registries** · size L · deps M65, M40 · parallel-ok M107
+  - Scope: the operator's report of 27 Aug 14:22 — "I still can't browse/download MCP servers/skills from
+    anthropic in the UI (or other places)". Settings › Tools has a catalogue of what is installed (M65); it
+    cannot look outward. Two registries, read by the server on the operator's behalf through an allowlist of
+    hosts and shown as one browsable list with search: Anthropic's public skills repository
+    (github.com/anthropics/skills — every SKILL.md with its name, description and path) and the MCP server
+    registry (registry.modelcontextprotocol.io — name, description, transport, package). INSTALL puts a skill
+    into `config/skills/<name>/SKILL.md` (then it is offered to the model like any other) and an MCP server
+    into `configuration.yaml`'s `mcp:` block with its command or URL; both are Tier-3 held actions, named
+    with what they will write, and a skill's SKILL.md is scanned by the same injection guard every fetched
+    page passes through before it is written. What is installed shows where it came from and UPDATE/REMOVE.
+    The phone's Tools screen lists the same catalogue (read-only). Unit tests with recorded registry
+    replies; Playwright against the mock's registry; the live half browses the real registries from the
+    house (their reachability is the box's) and installs one skill and one server into a scratch config.
+  - Verify: `bash scripts/verify/m108-registries.sh`
+  - 27 Aug 14:24: planned, from the report.
+- [ ] **M109 — Injection is a gate, not a prompt** · size M · deps M47 · parallel-ok M106
+  - Scope: the operator's report of 27 Aug 14:22 — "we shouldn't rely on prompts to prevent jarvis from
+    executing stuff inside of text (like when browsing the web)". The structure exists — a turn that has read
+    anything from outside (a page, a message, a file, a notification) is tainted in `ToolRegistry`, every
+    tool that is not read-only then needs a human, `remember` and `note_create` refuse on a tainted turn, a
+    fetched page's text is marked untrusted, a narrated tool call in prose never runs — and the prompt's
+    lines about it are a courtesy to the model, not the defence. This milestone proves that in code and
+    closes what it finds: a table test over EVERY registered tool asserting its behaviour on a tainted turn
+    (acts → held; reads that can carry data outward, `web_fetch`/`web_search`/`send_*` → refused or held;
+    pure reads → allowed), so a new tool cannot arrive ungated; a test that the taint outlives the turn that
+    read the page for as long as the content is in the conversation; a test that a page cannot un-taint a
+    turn by any words; the four red-team scenarios on the house every run; and a page in
+    `docs/voice-identity.md`'s register — `docs/injection.md` — that says what is enforced where, and what a
+    prompt line is for. Anything the table finds ungated is fixed in the registry, never in a prompt.
+  - Verify: `bash scripts/verify/m109-injection-is-a-gate.sh`
+  - 27 Aug 14:24: planned, from the report.
 ## Final
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds

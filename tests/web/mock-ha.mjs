@@ -38,6 +38,11 @@ export const MOCK_TOKEN = 'test-token';
 export const TRANSCRIPT = 'turn on the lab lights';
 export const DELTAS = ['Turning ', 'on the ', 'lab lights.'];
 export const RESPONSE = DELTAS.join('');
+// A reply with markdown in it (M106): asked for "in markdown", the mock
+// answers with a heading, bold and a list, so the console proves it reads
+// as written and not as characters.
+export const DELTAS_MD = ['## Lights\n\n', 'The **lab lights** are on.\n\n', '- lab: on\n', '- bed: off'];
+export const RESPONSE_MD = DELTAS_MD.join('');
 export const TTS_PATH = '/api/tts_proxy/test.mp3';
 
 /** Minimal valid 16-bit mono WAV (decodable by decodeAudioData). */
@@ -1688,6 +1693,21 @@ index 1234567..89abcde 100644
 	// mistake the notes integration exists to prevent.
 	let notes = [
 		{
+			// A research report, as Jarvis writes them: headings, a list, bold —
+			// so the page proves it reads as written (M106), not as characters.
+			id: "cheap-rate-report",
+			slug: "cheap-rate-report",
+			title: "Cheap rate report",
+			body: "# Cheap rate report\n\nThe handbook says the **cheap rate** runs 00:30–07:30.\n\n## Findings\n\n- dishwasher: 2.2 kW\n- washing machine: 2.1 kW\n\nRun `make test` before trusting it. <b>not html</b>",
+			tags: ["research"],
+			created: new Date(Date.now() - 3_600_000).toISOString(),
+			updated: new Date(Date.now() - 3_600_000).toISOString(),
+			links: [],
+			backlinks: [],
+			bytes: 190,
+			path: "notes/cheap-rate-report.md"
+		},
+		{
 			id: "boiler-serviced",
 			slug: "boiler-serviced",
 			title: "Boiler serviced",
@@ -2385,17 +2405,20 @@ index 1234567..89abcde 100644
 				error: null,
 				duration_ms: 15
 			});
-			for (const delta of DELTAS) {
+			const markdown = /markdown/i.test(String(text ?? ''));
+			const deltas = markdown ? DELTAS_MD : DELTAS;
+			for (const delta of deltas) {
 				await sleep(25);
 				event(r.id, 'intent-progress', { chat_log_delta: { content: delta } });
 			}
 			await sleep(15);
 			const conversationId = r.conversationId ?? 'conv-mock-1';
-			recordTurn(conversationId, text, RESPONSE);
+			const response = markdown ? RESPONSE_MD : RESPONSE;
+			recordTurn(conversationId, text, response);
 			event(r.id, 'intent-end', {
 				intent_output: {
 					conversation_id: conversationId,
-					response: { speech: { plain: { speech: RESPONSE } } }
+					response: { speech: { plain: { speech: response } } }
 				}
 			});
 		}

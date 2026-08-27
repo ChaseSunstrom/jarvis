@@ -14,6 +14,8 @@
 	 * conclusion.
 	 */
 	import { summariseArgs, type ChatMessage } from '$lib/chat';
+	import Markdown from '$lib/components/Markdown.svelte';
+	import { looksLikeMarkdown } from '$lib/markdown';
 
 	let { message }: { message: ChatMessage } = $props();
 
@@ -81,10 +83,18 @@
 		{/if}
 
 		{#if message.content}
-			<p class="text" data-testid="chat-text">{message.content}{#if showCaret}<span
-						class="caret"
-						aria-hidden="true"
-					></span>{/if}</p>
+			<!-- A reply with headings, bullets or bold reads as it was written
+			     (M106); a plain sentence, and every word the user typed, stays a
+			     paragraph. Rendered only once the turn has settled: a half-streamed
+			     `**` would flicker between bold and asterisks. -->
+			{#if message.role === 'assistant' && !showCaret && looksLikeMarkdown(message.content)}
+				<div class="text" data-testid="chat-text"><Markdown text={message.content} /></div>
+			{:else}
+				<p class="text" data-testid="chat-text">{message.content}{#if showCaret}<span
+							class="caret"
+							aria-hidden="true"
+						></span>{/if}</p>
+			{/if}
 		{:else if message.pending}
 			<p class="text waiting" data-testid="chat-waiting">
 				{#if running}
