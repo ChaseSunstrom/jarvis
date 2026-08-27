@@ -831,6 +831,10 @@ class JarvisConversation(
     }
 
     override fun onBusEvent(type: String, data: JSONObject) {
+        if (activity.apply(type, data)) {
+            ui.onActivity(activity)
+            if (type.startsWith("vision_look_")) ui.onLooking(activity.lookingCaption().isNotEmpty())
+        }
         // A held ACTION (M98): raised on this phone's consent screen and answered
         // with jarvis/approve on this socket. A held QUESTION (`answerable` set)
         // reaches the phone through companion.ask instead, as before.
@@ -848,10 +852,6 @@ class JarvisConversation(
                     JSONObject().put("request_id", id).put("approved", approved),
                 )
             }
-        }
-        if (activity.apply(type, data)) {
-            ui.onActivity(activity)
-            if (type.startsWith("vision_look_")) ui.onLooking(activity.lookingCaption().isNotEmpty())
         }
     }
 
