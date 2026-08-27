@@ -149,6 +149,20 @@ async def test_describe_says_where_each_value_came_from(tmp_path):
     assert rows["llm.model"]["apply"] == "live"
 
 
+async def test_a_choice_written_as_a_yaml_boolean_shows_its_word_and_an_absent_switch_its_default(tmp_path):
+    """`voice: speaker: mode: off` is `False` by the time YAML is done with it,
+    and a choice row against [off, observe, enforce] then matched nothing;
+    `demo.enabled` absent from the YAML showed `null` for a fixture house that
+    was up (the server audit, 27 Aug 2026)."""
+    overlay = await _overlay(tmp_path, {})
+    raw = {"voice": {"speaker": {"mode": False}}, "jarvis": {"name": "Jarvis"}}
+    rows = {row["key"]: row for row in overlay.describe(raw, {})}
+    assert rows["voice.speaker.mode"]["value"] == "off"
+    assert rows["voice.speaker.mode"]["source"] == "yaml"
+    assert rows["demo.enabled"]["value"] is True
+    assert rows["demo.enabled"]["source"] == "default"
+
+
 async def test_the_allowlist_is_membership_not_a_prefix(tmp_path):
     """`llm.model` is editable; `llm.expose` decides what the model can see."""
     assert spec_for("llm.model").key == "llm.model"

@@ -67,6 +67,9 @@ async def make_house(tmp_path: Path, web: FakeWeb, **options: Any) -> tuple[Jarv
     await jarvis.async_setup({"notifications": {"max_entries": 50}})
     registry = ToolRegistry(jarvis)
     jarvis.data["llm_tools"] = registry
+    # The fake web lives on loopback, which the address check refuses unless the
+    # operator names the host; the tests name it, and one test below does not.
+    options = {"allowed_hosts": ["127.0.0.1"], **options}
     assert await watch_integration.async_setup(jarvis, {"interval": 60, "_transport": web.transport, **options}) is True
     manager = jarvis.data["watch"]
     return jarvis, manager, registry
@@ -310,4 +313,41 @@ async def test_reading_is_read_only_and_setting_a_watch_is_not(tmp_path):
         assert registry.is_read_only(registry.get(name)) is True, f"{name} escalates on a tainted turn"
     for name in ("watch_page", "watch_feed", "watch_for", "cancel_watch"):
         assert registry.is_read_only(registry.get(name)) is False, f"{name} would run on a hostile page's say-so"
+    await jarvis.async_stop()
+
+
+async def test_a_private_address_is_refused_before_any_request_is_made(tmp_path):
+    """`read_page` (Tier 1) read http://127.0.0.1:8080/healthz from inside the
+    core while `web_fetch` for the same URL was refused: the plain fetch ran on
+    any browser error with no address check of its own (the server audit,
+    27 Aug 2026). Now every plain fetch is checked, and a refusal is final."""
+    from jarvis.integrations.watch import WatchFetchRefused
+
+    web = FakeWeb()
+    web.pages["http://127.0.0.1:1/secret"] = PAGE_V1
+    jarvis, manager, _registry = await make_house(tmp_path, web, allowed_hosts=[])
+    for url in ("http://127.0.0.1:1/secret", "http://10.0.0.5/", "http://169.254.169.254/latest", "http://[::1]/"):
+        with pytest.raises(WatchFetchRefused):
+            await manager.fetch_text(url, render=False)
+        with pytest.raises(WatchFetchRefused):
+            await manager.fetch_feed(url)
+    assert web.hits == [], "a refused address reached the transport"
+    await jarvis.async_stop()
+
+
+async def test_a_redirect_to_a_private_address_is_refused_at_the_hop(tmp_path):
+    class Bouncer(FakeWeb):
+        def __call__(self, request: httpx.Request) -> httpx.Response:
+            self.hits.append(str(request.url))
+            if str(request.url) == "http://127.0.0.1:1/start":
+                return httpx.Response(302, headers={"location": "http://10.0.0.9/inside"})
+            return httpx.Response(200, text=PAGE_V1, headers={"content-type": "text/html"})
+
+    from jarvis.integrations.watch import WatchFetchRefused
+
+    web = Bouncer()
+    jarvis, manager, _registry = await make_house(tmp_path, web)
+    with pytest.raises(WatchFetchRefused):
+        await manager.fetch_text("http://127.0.0.1:1/start", render=False)
+    assert web.hits == ["http://127.0.0.1:1/start"], "the private hop was fetched"
     await jarvis.async_stop()

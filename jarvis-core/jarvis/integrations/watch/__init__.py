@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
+import ipaddress
 import json
 import logging
 import re
@@ -67,6 +68,17 @@ TICK_SECONDS = 5.0
 EXCERPT_CHARS = 400
 MAX_TEXT_CHARS = 200_000
 FETCH_TIMEOUT = 20.0
+#: Redirect hops followed by the plain fetch, each one address-checked.
+MAX_REDIRECTS = 5
+
+
+class WatchFetchRefused(Exception):
+    """The address may not be read from here: private, loopback, link-local,
+    a cloud metadata name, or the browser's own refusal. Final — no fallback."""
+
+
+def _is_refusal(text: Any) -> bool:
+    return "refused" in str(text or "").lower()
 KINDS = ("page", "feed", "question")
 
 
@@ -290,6 +302,12 @@ class WatchManager:
         self._lock = asyncio.Lock()
         #: A transport for tests; None means the real network.
         self.transport: Any = config.get("_transport")
+        #: Hosts exempt from the private-address block — the LAN things a person
+        #: genuinely means to watch (a printer's status page). Named here, in
+        #: the operator's config, never by the model.
+        self.allowed_hosts: tuple[str, ...] = tuple(
+            str(h).strip().lower() for h in (config.get("allowed_hosts") or []) if str(h).strip()
+        )
 
     # --- persistence ------------------------------------------------------
     def load(self) -> None:
@@ -377,7 +395,15 @@ class WatchManager:
         return bool(web) and self.jarvis.services.has_service("web", "fetch")
 
     async def fetch_text(self, url: str, *, render: bool = True) -> tuple[str, str]:
-        """``(title, text)`` of a page: jarvis-browser when configured, this process when not."""
+        """``(title, text)`` of a page: jarvis-browser when configured, this process when not.
+
+        Whichever reads it, the address is checked first, and a refusal by the
+        browser is final. Until 27 Aug 2026 the plain fetch below ran on *any*
+        browser error — a refused host included — with no address check of its
+        own, so `read_page` (Tier 1) read `http://127.0.0.1:8080/healthz` from
+        inside the core while `web_fetch` for the same URL was refused.
+        """
+        await self._guard(url)
         if render and self._browser_configured():
             try:
                 result = await self.jarvis.services.async_call(
@@ -385,24 +411,82 @@ class WatchManager:
                 )
                 if isinstance(result, dict) and (result.get("text") or result.get("content")):
                     return str(result.get("title") or ""), normalise(str(result.get("text") or result.get("content") or ""))
+                if isinstance(result, dict) and _is_refusal(result.get("error")):
+                    raise WatchFetchRefused(str(result.get("error")))
                 # The browser answered without a page (an error result, a
                 # refused host): said at INFO, because the plain fetch below
                 # does not run the page's JavaScript and a reader that quietly
                 # fell back is how "Loading…" reaches the model as the page.
                 _LOGGER.info("watch: jarvis-browser gave no text for %s (%s); reading it here without JavaScript",
                              url, (result or {}).get("error") if isinstance(result, dict) else result)
+            except WatchFetchRefused:
+                raise
             except Exception as err:  # noqa: BLE001 - fall through to the plain fetch
+                if _is_refusal(str(err)):
+                    raise WatchFetchRefused(str(err)) from err
                 _LOGGER.info("watch: jarvis-browser could not read %s (%s); reading it here without JavaScript", url, err)
-        async with httpx.AsyncClient(timeout=FETCH_TIMEOUT, follow_redirects=True, transport=self.transport) as client:
-            response = await client.get(url, headers={"User-Agent": "Jarvis watch"})
-            response.raise_for_status()
-            return html_to_text(response.text)
+        response = await self._get(url)
+        return html_to_text(response.text)
 
     async def fetch_feed(self, url: str) -> tuple[str, list[FeedEntry]]:
-        async with httpx.AsyncClient(timeout=FETCH_TIMEOUT, follow_redirects=True, transport=self.transport) as client:
-            response = await client.get(url, headers={"User-Agent": "Jarvis watch"})
-            response.raise_for_status()
-            return parse_feed(response.content)
+        await self._guard(url)
+        response = await self._get(url)
+        return parse_feed(response.content)
+
+    # --- the address check ------------------------------------------------------
+    async def _guard(self, url: str) -> None:
+        """Refuse a private, loopback, link-local or metadata address, by
+        literal and — for a name — by every address it resolves to."""
+        from ...helpers import ssrf
+
+        verdict = ssrf.check(url, self.allowed_hosts)
+        if not verdict:
+            raise WatchFetchRefused(f"refused: {verdict.reason}")
+        host = str(verdict.host or "")
+        if host.lower().rstrip(".") in self.allowed_hosts:
+            return
+        # The helper's block is the machine itself and the metadata names; the
+        # browser service refuses the whole private space, and so does this
+        # (jarvis-browser: "refused: host … resolves to a blocked (private/local)
+        # address"). RFC 1918, loopback, link-local, multicast, reserved. A
+        # tailnet address (100.64/10) is not private in this sense and passes.
+        if ssrf.is_ip_literal(host):
+            addresses = [host.strip("[]").split("%", 1)[0]]
+        else:
+            try:
+                infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+            except OSError as err:
+                raise WatchFetchRefused(f"refused: {host!r} does not resolve ({err})") from err
+            addresses = [str(info[4][0]) for info in infos]
+        for address in addresses:
+            try:
+                parsed = ipaddress.ip_address(address)
+            except ValueError:
+                raise WatchFetchRefused(f"refused: {host!r} resolves to something that is not an address")
+            if (
+                ssrf.is_blocked_ip(address)
+                or parsed.is_private or parsed.is_loopback or parsed.is_link_local
+                or parsed.is_multicast or parsed.is_reserved or parsed.is_unspecified
+            ):
+                raise WatchFetchRefused(
+                    f"refused: host {host!r} resolves to a blocked (private/local) address"
+                )
+
+    async def _get(self, url: str) -> httpx.Response:
+        """One GET, redirects followed by hand so every hop is checked too."""
+        async with httpx.AsyncClient(timeout=FETCH_TIMEOUT, follow_redirects=False, transport=self.transport) as client:
+            current = url
+            for _hop in range(MAX_REDIRECTS + 1):
+                response = await client.get(current, headers={"User-Agent": "Jarvis watch"})
+                if response.status_code in (301, 302, 303, 307, 308) and response.headers.get("location"):
+                    current = str(response.next_request.url) if response.next_request else str(
+                        httpx.URL(current).join(response.headers["location"])
+                    )
+                    await self._guard(current)
+                    continue
+                response.raise_for_status()
+                return response
+            raise WatchFetchRefused(f"refused: more than {MAX_REDIRECTS} redirects from {url}")
 
     # --- checking -------------------------------------------------------------
     async def check(self, watch: Watch, *, baseline: bool = False) -> dict[str, Any]:

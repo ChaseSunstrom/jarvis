@@ -29,10 +29,32 @@ class ConfigError(Exception):
 
 
 class JarvisSafeLoader(yaml.SafeLoader):
-    """SafeLoader with the config-dir bound for relative includes."""
+    """SafeLoader with the config-dir bound for relative includes.
+
+    A mapping with the same key twice is refused, naming both lines. PyYAML
+    keeps the last one silently: configuration.yaml carried two `n8n:` blocks
+    (M37's and M77's) for a day, the first one dead and its comments
+    describing tiers the loaded block did not have (27 Aug 2026).
+    """
 
     config_dir: Path = Path(".")
     secrets: dict[str, Any] = {}
+
+    def construct_mapping(self, node: yaml.Node, deep: bool = False) -> Any:  # type: ignore[override]
+        if isinstance(node, yaml.MappingNode):
+            seen: dict[Any, int] = {}
+            for key_node, _value in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    continue  # `<<:` may legitimately appear more than once
+                key = self.construct_object(key_node, deep=deep)
+                if isinstance(key, (str, int, float, bool)) and key in seen:
+                    raise ConfigError(
+                        f"{key!r} appears twice in {node.start_mark.name} "
+                        f"(lines {seen[key]} and {key_node.start_mark.line + 1}); "
+                        "the second would silently replace the first"
+                    )
+                seen[key] = key_node.start_mark.line + 1
+        return super().construct_mapping(node, deep=deep)
 
 
 def _rel(loader: JarvisSafeLoader, node: yaml.Node) -> Path:
@@ -204,7 +226,10 @@ def load_yaml(path: Path, config_dir: Path, secrets: dict[str, Any]) -> Any:
     _Loader.config_dir = config_dir
     _Loader.secrets = secrets
     with path.open("r", encoding="utf-8") as handle:
-        return yaml.load(handle, Loader=_Loader) or {}
+        loaded = yaml.load(handle, Loader=_Loader)
+    # `or {}` here turned an included list document (`[]` in automations.yaml)
+    # into a mapping, and one empty mapping became one phantom automation.
+    return {} if loaded is None else loaded
 
 
 def load_secrets(config_dir: Path) -> dict[str, Any]:

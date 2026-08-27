@@ -2404,7 +2404,9 @@ index 1234567..89abcde 100644
 					// The approvals banner asks for what is already waiting when it
 					// mounts, so a reload does not lose a held action.
 					if (domain === 'n8n' && service === 'status') {
-						ok(msg.id, { changed_states: [], service_response: world.n8n });
+						// The server's shape: a service response is keyed `response` (the
+						// websocket handler), never Home Assistant's REST `service_response`.
+						ok(msg.id, { changed_states: [], response: world.n8n });
 						break;
 					}
 					if (domain === 'llm' && service === 'pending_requests') {
@@ -2416,7 +2418,8 @@ index 1234567..89abcde 100644
 							world.approvals.splice(world.approvals.indexOf(gone), 1);
 							broadcast('jarvis_approval_expired', { ...gone, expired: true });
 						}
-						ok(msg.id, { response: world.approvals });
+						// As jarvis-core answers: llm.pending_requests returns `{pending}`.
+						ok(msg.id, { changed_states: [], response: { pending: world.approvals } });
 						break;
 					}
 					if (!SERVICES[domain]?.[service]) {

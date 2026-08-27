@@ -858,3 +858,11 @@ is quiet. Done since:
   re-measured, no pass on a skip, the house by voice beyond lights, pick up where you left off). M84 built:
   the briefing block in configuration.yaml, `get_briefing` routed as its own capability, the
   briefing-on-demand scenario, gate 6/8 — the two live checks wait for the fifteenth rebuild.
+- 04:07 — the audit's second pass, from the server, console and agentic reports: `read_page` read
+  loopback and LAN pages through the watch integration's unguarded fallback (address-checked now, the
+  private space refused, the browser's refusal final; test_watch 15); empty includes made a phantom
+  automation and scene (test_core 44); the dead M37 `n8n:` block and a loader that refuses duplicate
+  keys; three settings rows told the truth (test_settings 34); the claimed-action guard learned the
+  record verbs; `get_user_context` on the house clock; the approvals seed and the n8n row read the
+  server's shape, the mock answers in it (vitest 770). M94–M97 planned; the six audit reports kept
+  under docs/research/audits/.

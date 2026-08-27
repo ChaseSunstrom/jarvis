@@ -29,7 +29,10 @@
 		error = '';
 		try {
 			const result = await connection.client.callService('n8n', 'status', {}, { returnResponse: true });
-			const payload = (result as { service_response?: Status })?.service_response ?? (result as Status);
+			// The websocket keys a service response `response` — `service_response` is Home
+			// Assistant's REST name, and reading it here made the whole envelope the status,
+			// so the row said "connected" to a house with no n8n (27 Aug 2026).
+			const payload = (result as { response?: Status })?.response ?? (result as Status);
 			status = payload && typeof payload === 'object' ? payload : null;
 		} catch (e) {
 			error = describeError(e);

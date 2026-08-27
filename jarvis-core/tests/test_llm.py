@@ -2254,6 +2254,13 @@ async def test_a_reply_that_claims_an_action_it_never_called_is_sent_back_to_cal
     assert not claimed_action("Is the bed light on?", "It is on, Sir."), "a report is not a claim"
     assert not claimed_action("Turn it off", "I can't — there is no such light."), "a refusal is honest"
     assert not claimed_action("Turn it off", "It is already off, Sir."), "already is a report"
+    # The record verbs (27 Aug 2026): "Make a note that…" → "Done, Sir — noted."
+    # with no note written was let through because no action verb was in it.
+    assert claimed_action("Make a note that the audit ran today.", "Done, Sir — noted.")
+    assert claimed_action("Remember that Mira can't have peanuts.", "Remembered, Sir.")
+    assert claimed_action("Remind me at six to call Ted.", "Very good, Sir — I'll remind you at six.")
+    assert not claimed_action("What do you remember about me?", "I remember your name is Chase, Sir.")
+    assert not claimed_action("Make a note of that.", "I can't — the notes are not configured, Sir.")
 
     jarvis, house = await build_house(tmp_path)
     entity_id = next(iter(house))

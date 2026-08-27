@@ -677,39 +677,6 @@ channels:
   #   number: "+447700900000"
 
 # ---------------------------------------------------------------------------
-# n8n — the automations you already have, callable by name. OFF.
-# ---------------------------------------------------------------------------
-# Somebody with a homelab already has an n8n, and it is where the odd jobs live
-# — the thing that renames the camera clips, the thing that emails the meter
-# reading. None of that should be rebuilt here; this lets Jarvis call it.
-#
-# Three refusals, in this order:
-#
-#   1. `enabled: false` is the shipped value. It runs code on another machine,
-#      so it is opt-in — an install that ignores this block gets no tools, no
-#      HTTP client and no listener.
-#   2. The `workflows:` list is an ALLOW-LIST, not a discovery. n8n's API can
-#      list everything on the instance; this deliberately does not turn that
-#      into tools, so adding a workflow to n8n can never silently add a
-#      capability to Jarvis.
-#   3. Each one is Tier 3 — a human says yes — unless you lower it yourself.
-#      Running an automation has effects Jarvis cannot see: it might send an
-#      email or open a garage.
-#
-# A workflow is started through its Webhook trigger node, because n8n's public
-# API cannot start an arbitrary workflow. One without a `webhook:` is listed
-# and refuses to run, saying which node it needs.
-n8n:
-  enabled: false
-  url: !env_var N8N_URL http://127.0.0.1:5678
-  # In secrets.yaml, never here:
-  # api_key: !secret n8n_api_key
-  workflows: []
-  # - name: bins
-  #   webhook: bins-out          # the path on the Webhook node
-  #   description: Put the bins out reminder on the calendar
-  #   tier: 3                    # 1 = run it, 2 = background, 3 = ask first
-
 # ---------------------------------------------------------------------------
 # Observability — what the agent did, step by step, and what each step cost.
 # ---------------------------------------------------------------------------

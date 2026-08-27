@@ -292,6 +292,43 @@ def test_config_include_secret_env_and_packages(tmp_path, monkeypatch):
     assert "packages" not in config  # folded away
 
 
+def test_a_duplicate_top_level_key_is_refused_with_both_lines(tmp_path):
+    """PyYAML keeps the last of two equal keys silently. configuration.yaml
+    carried two `n8n:` blocks for a day (M37's and M77's), the first dead and
+    its comments describing tiers the loaded block did not have (27 Aug 2026).
+    The loader names the file and both lines instead."""
+    from jarvis.config import ConfigError
+
+    _write(tmp_path, "configuration.yaml", "jarvis:\n  name: A\nn8n:\n  url: a\nvoice: {}\nn8n:\n  url: b\n")
+    with pytest.raises(ConfigError) as err:
+        load_config(tmp_path)
+    assert "'n8n' appears twice" in str(err.value) and "lines 3 and 6" in str(err.value)
+
+
+def test_a_merge_key_may_appear_twice(tmp_path):
+    _write(tmp_path, "base.yaml", "a: 1\n")
+    _write(
+        tmp_path, "configuration.yaml",
+        "jarvis:\n  name: A\nx: &x\n  p: 1\ny: &y\n  q: 2\nz:\n  <<: *x\n  <<: *y\n",
+    )
+    assert load_config(tmp_path)["z"] == {"p": 1, "q": 2}
+
+
+def test_an_empty_included_list_stays_a_list(tmp_path):
+    """`automation: !include automations.yaml` with `[]` in the file came back
+    as `{}`, and `as_list({})` made one phantom automation of it — on, exposed,
+    on every house (the server audit, 27 Aug 2026)."""
+    from jarvis.automation.util import as_list
+
+    _write(tmp_path, "automations.yaml", "[]\n")
+    _write(tmp_path, "configuration.yaml", "jarvis:\n  name: A\nautomation: !include automations.yaml\n")
+    config = load_config(tmp_path)
+    assert config["automation"] == []
+    assert as_list(config["automation"]) == []
+    assert as_list({}) == []
+    assert as_list({"alias": "x"}) == [{"alias": "x"}]
+
+
 def test_an_empty_env_var_default_is_empty_and_not_two_quote_characters(
     tmp_path, monkeypatch
 ):

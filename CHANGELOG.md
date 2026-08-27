@@ -7,6 +7,28 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+### In progress — from the audit of 27 Aug 2026 (`docs/AUDIT_2026-08-27.md`)
+- **M84 — Jarvis volunteers a briefing.** The briefing block is on the house; "what's my briefing?" is
+  one `get_briefing` call. Ticked when the rig hears it after the rebuild.
+- **M85 — work survives a restart**, **M86 — Jarvis notices**, **M87 — overnight reflection**,
+  **M88 — a plan on the screen**, **M89 — stack hygiene**, **M90 — the claims register re-measured**,
+  **M91 — a gate cannot pass on a skip**, **M92 — the house by voice beyond lights**,
+  **M93 — pick up where you left off**, **M94 — in here**, **M95 — Jarvis reads its own record**,
+  **M96 — stop means stop**, **M97 — timers, routines read back, what's new**: planned, unticked.
+
+### Fixed (the audit's first pass, unticked)
+- `read_page` (Tier 1) could read loopback and LAN addresses through the watch integration's plain
+  fetch; every plain fetch is address-checked now, redirects hop by hop, and the browser's refusal
+  is final. `watch: allowed_hosts:` names the LAN things an operator means to watch.
+- An empty `automations.yaml`/`scenes.yaml` no longer produces a phantom automation and scene; a
+  duplicate top-level key in `configuration.yaml` is refused with both line numbers.
+- The orchestrator is told the house's model server and key; delegation can reach a model.
+- Settings rows: the fast-model note is true, `voice.speaker.mode` shows `off` rather than `false`,
+  `demo.enabled` shows its real default. The approvals banner seeds from a real server; the n8n row
+  no longer says "connected" to a house with no n8n.
+- "Make a note that…" answered "Done, Sir — noted." with nothing written is caught like any other
+  claimed action; `get_user_context` reads the house's clock.
+
 ### Added
 - **M77 — n8n, the house's workflows.** Jarvis is a client of the operator's n8n server: it lists
   workflows and their recent runs, asks the n8n assistant for a proposal (its words come back

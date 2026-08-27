@@ -2303,7 +2303,12 @@ def register_builtin_tools(
         driving = _config_state("driving")
         awake = _config_state("awake")
         active_device = _config_state("active_device")
-        hour = time.localtime().tm_hour
+        # The house's clock, not the process's: in a container with TZ unset
+        # `time.localtime()` is UTC, and "awake" was answered from the wrong
+        # hour (the agentic audit, 27 Aug 2026).
+        from ..automation.util import get_clock
+
+        hour = get_clock(jarvis).now().hour
 
         home = presence == STATE_HOME if presence not in (None, STATE_UNKNOWN, STATE_UNAVAILABLE) else None
         is_driving = driving == STATE_ON if driving is not None else False

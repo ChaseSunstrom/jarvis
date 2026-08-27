@@ -2285,6 +2285,12 @@ _CUE_WINDOW = 60
 _ACTION_REQUEST = re.compile(
     r"\b(turn|switch|set|lock|unlock|open|close|dim|brighten|start|stop|play|pause|"
     r"mute|unmute|arm|disarm|run|trigger|enable|disable|cancel|"
+    # The record verbs. "Make a note that the audit ran" was answered "Done,
+    # Sir — noted." with nothing called and no note written (27 Aug 2026):
+    # the guard never looked, because none of the verbs above was in the
+    # request. A note, a memory, a reminder, a schedule, a watch — each is
+    # an action with a tool, and a claim of one is checked like a lock.
+    r"note|remember|forget|remind|schedule|watch|write (?:it |that |this )?down|jot|"
     # "now do the same in the bedroom": an action by reference to the last
     # one. Without this the guard let "the bedroom light is now on" through
     # with nothing called, twice, on resilience-core-restart (26 Aug).
@@ -2295,7 +2301,9 @@ _ACTION_CLAIMED = re.compile(
     r"\b(done|is (?:now )?(?:on|off|locked|unlocked|open|closed|set|running|stopped|paused|"
     r"playing|armed|disarmed|enabled|disabled|cancelled|canceled)|"
     r"(?:turned|switched|locked|unlocked|opened|closed|set|started|stopped|paused|"
-    r"muted|armed|disarmed|enabled|disabled|cancelled|canceled) (?:it|them|the|that|off|on))\b",
+    r"muted|armed|disarmed|enabled|disabled|cancelled|canceled) (?:it|them|the|that|off|on)|"
+    r"noted|remembered|forgotten|scheduled|(?:made|taken) a note|written (?:it |that |this )?down|"
+    r"(?:i(?:'ll| will) remind|reminder (?:is )?set|(?:i am|i'm) (?:now )?watching))\b",
     re.IGNORECASE,
 )
 #: A capability the model has, denied. "you make me a react app" →

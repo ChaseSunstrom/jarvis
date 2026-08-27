@@ -78,6 +78,10 @@ class SettingSpec:
     apply_hook: Callable[["Jarvis", Any], bool] | None = None
     #: Offer the console a list to choose from, when one can be discovered.
     choices_hook: Callable[["Jarvis"], list[str]] | None = None
+    #: What the integration uses when the key is absent from the YAML, so the
+    #: console draws the real state rather than an empty control: `demo.enabled`
+    #: showed `null` for a fixture house that was up (27 Aug 2026).
+    default: Any = None
 
 
 @dataclass(slots=True)
@@ -130,6 +134,21 @@ def _number(low: float, high: float, integer: bool = False) -> Callable[[Any], A
         return number
 
     return check
+
+
+def _as_shown(spec: "SettingSpec", value: Any) -> Any:
+    """The value a row shows: the spec's default when nothing is set, and for a
+    choice, YAML's booleans as the words they were written as.
+
+    `voice: speaker: mode: off` reaches Python as `False` — YAML 1.1 reads
+    `off` as a boolean — and a choice row drawn against [off, observe, enforce]
+    then matched nothing (27 Aug 2026). The gate coerced it; the row did not.
+    """
+    if value is None:
+        return spec.default
+    if spec.type == "choice" and isinstance(value, bool):
+        return "on" if value else "off"
+    return value
 
 
 def _bool(value: Any) -> bool:
@@ -391,10 +410,9 @@ SETTINGS: tuple[SettingSpec, ...] = (
         group="Assistant",
         type="choice",
         apply=APPLY_LIVE,
-        note="A smaller model for the voice path, named as LLM_URL names it. "
-        "Recorded on the running agent, and read by nothing yet: the fast "
-        "path lands with M60, and this is where it will look. Empty means "
-        "the conversation model.",
+        note="A smaller model for the voice path, named as LLM_URL names it: every "
+        "spoken turn is answered by this model when it is set (M60), and by the "
+        "conversation model when it is empty.",
         validate=_optional_text(120),
         apply_hook=_apply_agent_attr("fast_model"),
         choices_hook=_model_choices,
@@ -458,6 +476,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Demo mode",
         group="House",
         type="boolean",
+        default=True,
         note="The fixture house — fake lights, a lock, a garage door, sensors, a vacuum — for "
         "trying Jarvis with no hardware. Off removes them at once; a real house wants it off.",
         validate=_bool,
@@ -937,7 +956,7 @@ class SettingsOverlay:
                     "type": spec.type,
                     "apply": spec.apply,
                     "note": spec.note,
-                    "value": self.values.get(spec.key, yaml_value),
+                    "value": _as_shown(spec, self.values.get(spec.key, yaml_value)),
                     "yaml_value": yaml_value,
                     "source": source,
                     "unapplied_reason": unapplied.get(spec.key),

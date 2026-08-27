@@ -926,9 +926,14 @@ export class JarvisClient {
 		const result = await this.callService('llm', 'pending_requests', {}, {
 			returnResponse: true
 		});
-		const list = Array.isArray(result)
-			? result
-			: (result?.response ?? result?.result ?? result?.requests ?? []);
+		// The server answers `{response: {pending: [...]}}` (llm.pending_requests
+		// returns `{pending}`, and the websocket keys a service response `response`).
+		// Reading `response` as the list itself found an object, not an array, and
+		// the banner never seeded from a real server (the console audit, 27 Aug 2026).
+		const payload = Array.isArray(result) ? result : (result?.response ?? result?.result ?? result);
+		const list = Array.isArray(payload)
+			? payload
+			: (payload?.pending ?? payload?.requests ?? []);
 		return Array.isArray(list) ? list : [];
 	}
 
