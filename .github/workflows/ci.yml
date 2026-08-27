@@ -79,6 +79,12 @@ jobs:
       # a hang is one named failing test and the rest of the suite still runs.
       - name: Run tests
         working-directory: ${{ matrix.suite.dir }}
+        env:
+          # Unbuffered: through `tee` pytest's stdout is a pipe and Python
+          # block-buffers it, so a process killed at the end leaves an EMPTY
+          # log — which is what the first PR comment carried (27 Aug 2026,
+          # run 33087733490: "Run tests" red, pytest.plain of zero bytes).
+          PYTHONUNBUFFERED: "1"
         run: |
           set -uo pipefail
           # The job log needs a token to read; the check run's annotations do
@@ -120,8 +126,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -u
-          rows=$(grep -E '^(FAILED|ERROR) ' pytest.plain | head -n 30 || true)
-          [ -n "$rows" ] || rows=$(tail -n 25 pytest.plain || true)
+          if [ ! -s pytest.plain ]; then
+            # Nothing pytest said: the log is missing (an earlier step
+            # failed) or empty (pytest was killed before it flushed — see
+            # PYTHONUNBUFFERED on the test step).
+            rows="pytest.plain is $( [ -f pytest.plain ] && echo empty || echo missing ) — pytest wrote nothing; $(wc -l < pytest.log 2>/dev/null || echo 0) line(s) in pytest.log"
+          else
+            rows=$(grep -E '^(FAILED|ERROR) ' pytest.plain | head -n 30 || true)
+            [ -n "$rows" ] || rows=$(tail -n 25 pytest.plain || true)
+          fi
           branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq '.[0].number' 2>/dev/null || true)
           if [ -z "$pr" ]; then echo "no open PR for $branch; nothing to comment on"; exit 0; fi
