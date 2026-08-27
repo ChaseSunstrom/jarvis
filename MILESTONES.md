@@ -1407,6 +1407,16 @@ web and of Tasker. Local only. Each row here is planned in that document.
     screen, and "what's new?" answers from that record. Scenarios `timer-by-voice`,
     `routine-by-voice`, `tool-authored-and-listed`.
   - Verify: `bash scripts/verify/m97-timers-routines-whats-new.sh`
+- [ ] **M98 — The phone keeps up** · size M · deps M71, M66, M83 · parallel-ok M97
+  - Scope: from the Android audit — the speaker gate's mode reaches the phone on every socket
+    connect and on `jarvis_setting_changed` (today a phone against an enforcing house refuses
+    every turn while Settings says the opposite); a held Tier-3 action can be approved on the
+    phone through its keyguard-aware consent screen (`summary` as the headline, `jarvis/approve`
+    as the answer); a text field on the voice screen runs the same pipeline (`spoken: false`);
+    the tier contract records the phone's ask-once-on-tier-2 or the phone stops doing it; PHONE
+    TASKS either gets a server command that ships a task definition or goes. Mirrors and
+    Robolectric pin each; the M71 gate's device rows re-run.
+  - Verify: `bash scripts/verify/m98-the-phone-keeps-up.sh`
 
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1

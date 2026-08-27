@@ -14,7 +14,8 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   **M88 — a plan on the screen**, **M89 — stack hygiene**, **M90 — the claims register re-measured**,
   **M91 — a gate cannot pass on a skip**, **M92 — the house by voice beyond lights**,
   **M93 — pick up where you left off**, **M94 — in here**, **M95 — Jarvis reads its own record**,
-  **M96 — stop means stop**, **M97 — timers, routines read back, what's new**: planned, unticked.
+  **M96 — stop means stop**, **M97 — timers, routines read back, what's new**,
+  **M98 — the phone keeps up**: planned, unticked.
 
 ### Fixed (the audit's first pass, unticked)
 - `read_page` (Tier 1) could read loopback and LAN addresses through the watch integration's plain
