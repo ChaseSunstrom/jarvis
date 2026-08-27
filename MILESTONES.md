@@ -1403,7 +1403,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     says so; the console and the phone send it on tap and on "Jarvis, stop". Scenario
     `voice-barge-in`.
   - Verify: `bash scripts/verify/m96-stop-means-stop.sh`
-- [ ] **M97 — Timers, routines read back, what's new** · size M · deps M25, M83 · parallel-ok M96
+- [x] **M97 — Timers, routines read back, what's new** · size M · deps M25, M83 · parallel-ok M96
   - Scope: "set a ten-minute timer for the pasta", "how long is left?", "snooze" — a timer entity,
     chimed on the device that asked, on the surface as a `readings` panel; a routine authored by
     voice is read back ("weekdays at 07:00: kitchen lights on") and `list_automations` names it;
@@ -1423,6 +1423,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     `timer-by-voice` (text, voice); the gate's live probe starts a five-second timer over the websocket and
     waits for `finished` and the card — it needs the sixteenth rebuild. Found on the way: `1h30m` parsed
     as thirty minutes (a `\b` between `h` and `3`).
+  - 27 Aug 08:56: ticked — gate 11/11 on the house the quiet pass rebuilt at 08:38 (this tree): the routines
+    half as before (readback, listed, tier 2, capability moments, `whats_new`, the live routine turn) and the
+    timers half live — a five-second `timer.gate_probe` started over the websocket went `active` → `finished`
+    inside twenty seconds and left its card; suites automation API, create_tool, notifications, timer (10);
+    the three scenarios gated. The `timer-by-voice` scenario runs in the report run.
 - [x] **M98 — The phone keeps up** · size M · deps M71, M66, M83 · parallel-ok M97
   - Scope: from the Android audit — the speaker gate's mode reaches the phone on every socket
     connect and on `jarvis_setting_changed` (today a phone against an enforcing house refuses

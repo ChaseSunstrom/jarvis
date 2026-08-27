@@ -35,8 +35,8 @@ from pathlib import Path
 t = Path("jarvis-core/jarvis/integrations/timer/__init__.py").read_text()
 assert "EntityPlatform(jarvis, DOMAIN, DOMAIN)" in t and "get_clock(self.jarvis)" in t
 for s in ("start", "pause", "resume", "cancel", "snooze"):
-    assert "jarvis.services.register(DOMAIN, " + chr(34) + s + chr(34) in t, s
-assert 'name="timer"' in t and "device_of(jarvis, context)" in t and '"kind": "say"' in t
+    assert "jarvis.services.register(DOMAIN, \"" + s + "\"" in t, s
+assert "name=\"timer\"" in t and "device_of(jarvis, context)" in t and "\"kind\": \"say\"" in t
 assert "\ntimer: {}\n" in Path("jarvis-core/config/configuration.yaml").read_text()
 assert "## `timer:`" in Path("jarvis-core/docs/configuration.md").read_text()
 assert "## timer" in Path("jarvis-core/docs/features.md").read_text()

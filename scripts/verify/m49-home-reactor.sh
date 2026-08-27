@@ -76,14 +76,18 @@ print(f"{body} body/display uses, {mono} mono uses (data only)")
 '
 
 # --- one bar, five tabs, the HUD first --------------------------------------
-check "five tabs in one bar, and the voice screen is the first" python3 -c '
+check "six tabs in one bar, the voice screen first" python3 -c '
 import re
 from pathlib import Path
 src = Path("jarvis-web/src/lib/screens.ts").read_text()
 blocks = re.findall(r"\{\n\t\tpath: .*?\n\t\}", src, re.S)
 nav = [re.search(r"path: .([^\x27]+).", b).group(1) for b in blocks if "nav: true" in b]
 assert nav[0] == "/", f"the first tab is {nav[0]}, not the voice screen"
-assert len(nav) == 5, f"{len(nav)} tabs: {nav}"
+# Five when M49 drew the bar; six since the dashboard became a destination
+# of its own (610ec24) beside the four front doors of b4a7f77. The order is
+# the claim: voice, then the dashboard, the house, the work, the knowledge,
+# the settings.
+assert nav == ["/", "/dashboards", "/house", "/work", "/knowledge", "/settings"], f"{len(nav)} tabs: {nav}"
 hud = [b for b in blocks if "hud: true" in b]
 assert len(hud) == 1 and "path: \x27/\x27" in hud[0], "the voice screen is not marked hud: true"
 layout = Path("jarvis-web/src/routes/+layout.svelte").read_text()

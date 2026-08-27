@@ -152,7 +152,9 @@ import sys
 from pathlib import Path
 bundled = Path("jarvis-core/jarvis/integrations/skills/bundled")
 files = sorted(p for p in bundled.rglob("*") if p.is_file())
-extras = [p.name for p in files if p.name != "SKILL.md"]
+# index.json at the root is the M65 catalogue of the bundled skills: a listing
+# the Tools screen browses, read and never run, not a program beside a skill.
+extras = [p.name for p in files if p.name != "SKILL.md" and not (p.name == "index.json" and p.parent == bundled)]
 assert not extras, f"something other than a SKILL.md ships: {extras}"
 words = sum(len(p.read_text(encoding="utf-8").split()) for p in files)
 print(f"{len(files)} SKILL.md files, {words} words, nothing executable")

@@ -123,7 +123,10 @@ check_pytest() {
     # after its fourth check with no FAIL line when pytest was not yet on the
     # PATH. A suite that fails must be reported, not abort the gate.
     out=$(bash -o pipefail -c "$snippet" 2>&1) || status=$?
-    summary=$(printf '%s\n' "$out" | grep -E "^(=+ )?([0-9]+ (passed|failed|error|skipped|deselected|xfailed|xpassed|warning)s?(, )?)+|no tests ran|^ERROR" | tail -1)
+    # `|| true`: grep exits 1 when there is no summary line (pytest missing,
+    # a crash before collection), and under the gates' `set -e` that ended
+    # the gate with no FAIL line — m97 died after its second check that way.
+    summary=$(printf '%s\n' "$out" | grep -E "^(=+ )?([0-9]+ (passed|failed|error|skipped|deselected|xfailed|xpassed|warning)s?(, )?)+|no tests ran|^ERROR" | tail -1 || true)
     if [ -z "$summary" ]; then
         _v_fail "$label" "no pytest summary line in the output:
 $(printf '%s\n' "$out" | tail -5)"

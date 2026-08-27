@@ -975,3 +975,13 @@ is quiet. Done since:
 - 08:22 — M97's timers built (`integrations/timer`, 10 tests, scenario, gate probe); waits for the sixteenth rebuild. CI on 2661073: the android mirrors job is red — being read.
 - 08:44 — M99 built (retry, live Areas/schedule/settings, a room for a phone, the unshown fields; spec 6/6); waits for the rebuild.
 - 08:51 — M99 ticked (9/9): the quiet pass rebuilt the stack at 08:38 (core + console) from this tree, so the live half ran on it; the house now also runs the timer integration and the reflection fix ("overnight reflection at 03:30" in its log — the first time).
+- 08:56 — M97 ticked (11/11 on the rebuilt house; timer.gate_probe active → finished, card left). Gate fixes on the way: `check_pytest` under
+  `set -e` (a failing suite, or no summary line, ended the gate silently), m45 allows the M65 catalogue's index.json, m42 counts the
+  delegation's backends on the lead task's children (one `delegate_to_agents` call is now the right shape), m97's quoting.
+  Quiet pass so far: m37 10/10, m40 13/13, m45 15/15 on re-run, m48's pairing red is a load flake (passes alone).
+- 09:01 — quiet pass reds read: m48/m49's pairing-secret test is a load flake (e2e.spec.ts 44/44 alone in 1.1 min; the gate ran it
+  beside my console builds and spec runs); m49's tab pin said five where the bar has had six since the dashboard became a destination
+  (610ec24) — pinned to the six in order. CI on 6c816c8: `python · jarvis-core` red in 3.6 min with no FAILED line on the check run
+  (the job's own annotations carry pytest's FAILED lines and there are none) — the log needs a token (`gh auth login` would open it);
+  a Python 3.12 venv (`.venv312`, uv) now runs the suite the way CI does, to find it here. A local full run on 3.11 was stopped:
+  the voice tests found the live stack's wake service on 127.0.0.1:10400 and waited on it.
