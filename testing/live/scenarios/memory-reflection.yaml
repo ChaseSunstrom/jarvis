@@ -12,9 +12,13 @@ intent: >
   learned, and answers from the record.
 variants: [text]
 turns:
-  - say: "My daughter is called Mira, and she is allergic to peanuts."
+  # Said in a shape the per-turn extractor does not pick up (no "my daughter",
+  # no "remember that"): extraction keeps facts the moment they are said, and a
+  # day whose one fact was already kept leaves the reflection nothing to learn
+  # and no card to leave — which is right, and which this scenario is not about.
+  - say: "Mira, the youngest in this house, reacts badly to peanuts — a fact for you."
     expect:
-      reply_means: "acknowledges it, as a note about the user's daughter, without inventing anything"
+      reply_means: "acknowledges it, as a note about Mira and peanuts, without inventing anything"
   - say: "What did you learn about me today?"
     reflect: true
     expect:

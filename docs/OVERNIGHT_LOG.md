@@ -997,3 +997,4 @@ is quiet. Done since:
   resilience-core-restart's second turn are the model's variance ("it" turned on again; "the bedroom has no ceiling lights,
   shall I…"); m03/m50/m48/m49/m55 are the pairing tests under load. M101 built. The 3.12 run of jarvis-core: 3537 passed,
   1 failed — the store race, fixed.
+- 09:37 — M86 ticked (plan pass 6/6 on the house). m85's live run hit the two-digit milestone regex (fixed since) — re-run pending; m87's card is not made when extraction already learned the day (the scenario's premise).

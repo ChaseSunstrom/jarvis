@@ -1323,13 +1323,20 @@ web and of Tasker. Local only. Each row here is planned in that document.
     up after the restart"). The proactive-moment scenario passes across the memory scenario's
     restart in the same run.
   - Verify: `bash scripts/verify/m85-work-survives-a-restart.sh`
-- [ ] **M86 — Jarvis notices** · size M · deps M59, M17, M66 · parallel-ok M85, M87
+- [x] **M86 — Jarvis notices** · size M · deps M59, M17, M66 · parallel-ok M85, M87
   - Scope: a door or lock left open/unlocked after a configured hour, a sensor unchanged for
     longer than its kind allows, a device that went unavailable — one spoken nudge (or a quiet
     notification when nobody is present) with the action offered as a held request answerable
     by a spoken yes ("Lock it?" → "yes"); at most one nudge per thing per night; a Settings row
     to turn each kind off. Verified with the demo house's lock and a probe sensor on the rig.
   - Verify: `bash scripts/verify/m86-jarvis-notices.sh`
+  - 27 Aug 09:37: ticked — the plan pass's gate 6/6 on the rebuilt house: the narrate rules ship in the
+    config and parse (an offer per rule), the sensors suite's narrate/offer tests 15, `recent_events` is
+    among the tools, and on the house the demo lock flipped and `recent_events` named it
+    (`lock.front_door_lock`, one event). The spoken nudge with a held "lock it?" is the live
+    house-notice scenario the rig cannot yet drive (it needs quiet hours set to now and an observe
+    turn) — noted under M25's rule, not claimed here.
+
 - [ ] **M87 — Overnight reflection** · size M · deps M15, M16 · parallel-ok M86, M88
   - Scope: once a night the day's conversations are read from the archive and consolidated into
     at most five durable facts about the user and the house (memory entries with a `learned`

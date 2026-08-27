@@ -2105,7 +2105,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 |---|---|---|
 | M84 — Jarvis volunteers a briefing | **Built** (gate 6/8 offline) | `scripts/verify/m84-briefing.sh`; `test_features.py -k briefing` (20); scenario `briefing-on-demand` |
 | M85 — Work survives a restart | **Built** (4/5) | `m85-work-survives-a-restart.sh`; `test_taskengine.py` (+1); scenario `task-survives-a-restart` (a real restart between turns) |
-| M86 — Jarvis notices | **Built** (3/5) | `m86-jarvis-notices.sh`; `test_sensors.py -k "narrat or offer"` (15); the live half flips the demo lock and reads `recent_events` |
+| M86 — Jarvis notices | **Ticked** (6/6 on the house: rules ship and parse, the lock flipped and `recent_events` named it) | `m86-jarvis-notices.sh`; `test_sensors.py -k "narrat or offer"` (15) |
 | M87 — Overnight reflection | **Built** (4/6) | `m87-overnight-reflection.sh`; `test_memory_reflection.py` (6); scenario `memory-reflection` with `reflect: true` |
 | M88 — A plan on the screen | **Built** (6/7) | `m88-a-plan-on-the-screen.sh`; `test_surface.py` (7); `surface.spec.ts` 4/4 |
 | M89 — Stack hygiene | **Built** (3/5) | `m89-stack-hygiene.sh`; `test_packaging.py` (+3); the two stack checks wait for the recreate |

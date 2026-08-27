@@ -158,8 +158,15 @@ class Reflection:
                 if turn.role != "user" or float(turn.timestamp or 0.0) < since:
                     continue
                 text = " ".join(str(turn.content or "").split())
-                if len(text) >= MIN_TURN_CHARS and "<untrusted" not in text:
-                    out.append((str(getattr(turn, "speaker", "") or ""), text))
+                if len(text) < MIN_TURN_CHARS or "<untrusted" in text:
+                    continue
+                # "Off the record" turns extraction off for a turn; a reflection
+                # that read it back at night would keep what the person said not
+                # to keep. The mute is the person's, and it holds all day.
+                muted = getattr(self.memory, "extraction_muted", None)
+                if callable(muted) and muted(text):
+                    continue
+                out.append((str(getattr(turn, "speaker", "") or ""), text))
         return out
 
     def _known(self) -> list[str]:

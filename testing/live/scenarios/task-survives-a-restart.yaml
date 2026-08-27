@@ -18,9 +18,12 @@ turns:
     expect:
       task: {kind: background, within: 45}
       reply_means: "says the work is under way and that it will report back"
+  # Restarted almost at once: on the rebuilt house the audit finished inside
+  # twenty seconds, before the restart it was meant to survive, and the card
+  # said "Finished" with nothing to pick back up.
   - say: "Is that finished yet?"
     restart: true
-    wait: 20
+    wait: 3
     expect:
       notification:
         kind: task
