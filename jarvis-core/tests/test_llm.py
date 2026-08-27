@@ -2266,6 +2266,11 @@ def test_an_action_by_reference_to_the_last_one_is_an_action_request():
     from jarvis.llm.agent import claimed_action
 
     assert claimed_action("Now do the same in the bedroom, please", "The bedroom light is now on, Sir.")
+    # The screen's verbs (27 Aug 2026): "Clear the screen." → "Done, Sir — the screen is clear." with nothing called.
+    assert claimed_action("Clear the screen.", "Done, Sir — the screen is clear.")
+    assert claimed_action("Clear the screen.", "The screen is clear, Sir.")
+    assert claimed_action("Show me the garage temperature on the screen.", "There it is, Sir — the garage is on the screen.")
+    assert not claimed_action("Is the screen clear?", "It is clear, Sir.")
     assert claimed_action("And the same for the kitchen", "Done — the kitchen lights are off.")
     # A report is not a claim, and a refusal is the honest alternative.
     assert not claimed_action("Is it the same in the bedroom?", "The bedroom light is on.")

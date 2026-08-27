@@ -2355,6 +2355,11 @@ _CUE_WINDOW = 60
 _ACTION_REQUEST = re.compile(
     r"\b(turn|switch|set|lock|unlock|open|close|dim|brighten|start|stop|play|pause|"
     r"mute|unmute|arm|disarm|run|trigger|enable|disable|cancel|"
+    # The screen's verbs. "Clear the screen." was answered "Done, Sir — the
+    # screen is clear." with nothing called, by voice and typed, on the
+    # seventeenth house (27 Aug 2026): a panel put up or taken down is a
+    # tool call like any other, and a claim of one is checked like a lock.
+    r"clear|show|display|dismiss|hide|put (?:it |that |the )?(?:up|on)|take (?:it |that |the )?down|"
     # The record verbs. "Make a note that the audit ran" was answered "Done,
     # Sir — noted." with nothing called and no note written (27 Aug 2026):
     # the guard never looked, because none of the verbs above was in the
@@ -2372,7 +2377,8 @@ _ACTION_CLAIMED = re.compile(
     # perfect forms were missing, and "The tea timer has been cancelled, Sir."
     # with no tool called passed the guard on the sixteenth house (27 Aug).
     r"\b(done|(?:is|has been|have been|are) (?:now )?(?:on|off|locked|unlocked|open|closed|set|"
-    r"running|stopped|paused|playing|armed|disarmed|enabled|disabled|cancelled|canceled)|"
+    r"running|stopped|paused|playing|armed|disarmed|enabled|disabled|cancelled|canceled|clear|"
+    r"cleared|on the screen|showing|up on|taken down|gone)|"
     r"(?:turned|switched|locked|unlocked|opened|closed|set|started|stopped|paused|"
     r"muted|armed|disarmed|enabled|disabled|cancelled|canceled) (?:it|them|the|that|off|on)|"
     r"noted|remembered|forgotten|scheduled|(?:made|taken) a note|written (?:it |that |this )?down|"
