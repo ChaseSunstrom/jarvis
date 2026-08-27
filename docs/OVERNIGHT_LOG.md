@@ -944,3 +944,7 @@ is quiet. Done since:
   pipeline a transcribed sentence takes (mirror check), and the tier contract records the phone's ask-once on
   tier 2 as the phone's own consent for its own device (both mirrors green, server contract suite 10). gradle
   green. Left under M98: PHONE TASKS' way in, and a room for a companion device on the console (M94's area).
+- 05:44 — the M91 gate: check_pytest proven on a skipping suite and an empty one (2/3); its third check
+  counts 87 pytest checks across the gates that still read the exit status — the conversion script is
+  ready and runs once verify-all has stopped sourcing the gates. The fifteenth's launcher now runs every
+  planned milestone's gate on the rebuilt house after the quiet pass.
