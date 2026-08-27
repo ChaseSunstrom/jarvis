@@ -71,3 +71,10 @@ def test_two_jobs_at_once_are_a_lead_never_the_pieces_by_hand():
     tests" on the eighteenth house (27 Aug): the model fetched the page itself
     and started the coding job directly — no lead, nothing to follow."""
     assert "never the pieces done\n   by hand in the turn" in DEFAULT_PERSONA
+
+
+def test_stop_that_is_cancel_task_and_nothing_else():
+    """"Actually, stop that job." on the eighteenth house (27 Aug): cancel_task,
+    then the whole audit done by hand in the turn, then run_background_task
+    again. Stop means stop."""
+    assert '"Stop that", "cancel that\n  job" is cancel_task and nothing else' in TOOL_RULES

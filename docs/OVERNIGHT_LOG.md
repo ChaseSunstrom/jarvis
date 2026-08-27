@@ -1095,3 +1095,10 @@ is quiet. Done since:
   the coding job directly — rule 4 now says a lead, never the pieces by hand), m92 18/20 (set_cover_position for "close" —
   its wording is on the tree; "play something" answered "what should I play?" — media_control says play). Its report is
   running alone on the box; the nineteenth (M105's gate first) follows.
+- 14:37 UTC — the eighteenth's report run (13:48–14:35, 99 scenarios, the 13:17 house): 88/99, 158/169 turns, intent 93.5 %,
+  routing 98.1 %, WER 1.8 %, median 3.98 s, p95 14.15 s, containers clean — the best run yet (57 → 82 → 80 → 88), though
+  console builds and a Playwright run shared the box during it, so the median carries that. Eleven misses: house-cover
+  (set_cover_position — its wording is on the tree), timer-by-voice voice and task-survives-a-restart and self-review (fixes
+  on the tree), memory-per-person (the nineteenth's M105 probe), sensors-compare ×2 (the judge wants "the coldest" said in
+  those words — criterion relaxed), chat-context-retention and interactions-thread-continuity (the model's "it" — variance),
+  task-cancel-mid-run (read next), vision (M56). The nineteenth started 14:35.

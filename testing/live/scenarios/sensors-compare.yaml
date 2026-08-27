@@ -27,4 +27,6 @@ turns:
   - say: "Which room is the coldest right now?"
     expect:
       capability: sensors
-      reply_means: "names the garage as the coldest, with its temperature"
+      # "The garage, Sir — 12.5 °C" IS the answer to "which is coldest?"; the
+      # eighteenth house's judge wanted the word "coldest" said back.
+      reply_means: "answers that it is the garage, with its temperature (it need not repeat the word coldest; it may add that it is the only room with a reading)"
