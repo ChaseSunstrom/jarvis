@@ -35,7 +35,7 @@ turns:
   - say: "Why did you say that? What did you look at to answer?"
     expect:
       reply_means: >
-        names the sensor reading it looked up last turn (the garage temperature
-        sensor, or a sensor tool) — it does not apologise, does not guess, and
-        does not read the sensor again as its whole answer
-      no_service: {domain: light}
+        accounts for its own answer from the record: names the sensor reading it
+        used and where it came from — the house summary it is given, or a tool it
+        called ("no tool; the reading was in the summary" is a true account) —
+        and does not apologise for a mistake it did not make

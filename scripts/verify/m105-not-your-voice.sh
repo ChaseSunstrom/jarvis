@@ -11,7 +11,7 @@
 set -u
 cd "$(dirname "$0")/../.."
 . scripts/verify/lib.sh
-verify_begin "M105 — the gate says no to a voice that is not yours"
+verify_begin "M105" "the gate says no to a voice that is not yours"
 use_venv
 
 check "the composite scores the three blocks as equals, and one block far out is a veto" python3 -c '

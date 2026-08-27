@@ -679,6 +679,15 @@ class Runner:
                 await self.link.client.command("jarvis/tasks/cancel", task_id=str(task.get("id")))
             except Exception as err:  # noqa: BLE001
                 problems.append(f"task {task.get('id')} could not be cancelled: {err}")
+        # Whatever is still held for a person is declined here — a notice's
+        # offer (M86) for a lock a scenario left unlocked, an action a turn
+        # asked about and nobody answered — so nothing waits into the next
+        # scenario: on the eighteenth house a leftover lock offer met the
+        # garage door's, and "Yes, close it." was "which one, Sir?". Declined,
+        # not approved: the house stays as it was. A request already resolved
+        # answers with an error the observer swallows.
+        for request in list(observer.approvals):
+            await observer.answer(str(request.get("request_id") or ""), False)
         for conversation_id in await self._conversation_ids():
             if conversation_id in baseline.get("conversations", set()):
                 continue

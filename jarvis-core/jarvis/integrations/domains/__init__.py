@@ -345,7 +345,11 @@ def build_specs() -> tuple[list[ServiceSpec], list[ToggleSpec]]:
                 ),
             ),
             _v_position,
-            "Move a cover to a position.",
+            # "Close the living room window" reached this with position 0 on
+            # the seventeenth house (27 Aug 2026): true, and not what a person
+            # would call it. The named services are the ones to reach for.
+            "Move a cover part-way, to a position between open and closed. "
+            "To open or close it fully use open_cover and close_cover.",
         ),
     ]
     # Generic verbs for covers. Callers that dispatch uniformly (`<domain>.turn_on`

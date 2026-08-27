@@ -1069,3 +1069,14 @@ is quiet. Done since:
 - 12:25 UTC — the seventeenth, late gates: m99 9/9 (the probe reads replies by id), m59 17/17 (the watch says "changed once" now); m82 running, then its report. M105's console half: TEST names the refusing block and shows the three (8/8 e2e, 27 unit).
 - 12:26 UTC — the seventeenth's gates done: m82 6/6 → M82 ticked; green m88 m94 m95 m99 m59 m82; red m86 m85 m87 m42 m100 m96 m102 m92, every one read to its cause and fixed on the tree for the eighteenth. Its report run started 12:25.
 - 12:38 UTC — CI's red core leg, named at last by a full 3.12 run here (3576 passed, 1 failed in 23 min): `test_ask_and_answer` pinned that a request raised with no conversation is nobody's, and 6625b61 had made every house-raised request everyone's. Narrowed to the house's QUESTIONS (a notice's offer), never its held actions; pinned three ways; pushed behind the running CI poll. The check run never named it, even with `-rfE` and a tail annotation — the step's `::error::` lines do not reach the check-runs annotations. M105's phone half built (gradle green) and mirrored.
+- 13:19 UTC — the seventeenth's report run (12:25–13:17, 99 scenarios, the 11:45 house): 80/99, 141/158 turns, intent 89.2 %,
+  routing 92.5 %, WER 1.3 % over 49, median 4.50 s, p95 22.79 s — the times are contaminated: a full Python 3.12 suite, a
+  gradle build and a Playwright run shared the box with it (one suite at a time, and I broke it). Nineteen misses. A new
+  root cause among them: the held offer for the front door lock — left unlocked by an earlier scenario, and now a house
+  question every conversation can answer — made a bare "yes" ambiguous ("2 things are waiting on you", house-confirm-by-
+  voice and house-remove-by-voice) and was relayed as the REPLY to "turn on the swimming pool light". The rest: the
+  lock left unlocked between scenarios (the rig's sweep does not put a lock back), a 15-second timer that had finished
+  before "how long is left?" arrived under that load, explain-yourself's second criterion refusing the honest "no tool —
+  the summary", cover.set_cover_position for "close", two house commands routed to a task, a stalled run (240 s), the
+  engine pick-up and M105 (on the tree, not this house), M56, and piper's "Task exception was never retrieved" after a
+  stopped run. The eighteenth started 13:17.

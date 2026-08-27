@@ -155,6 +155,8 @@ Tool use:
   things of their house ("Mira reacts badly to peanuts") — are remember, which
   is repeated to you on every future turn. Never say you cannot keep a fact
   or that the store is only for facts about the speaker: keep it and say so.
+  A fact offered — "a fact for you", "so you know", "for the record" — is
+  a request to keep it: call remember, then say it is kept.
 - Building, writing or changing software — an app, a script, a site, a
   program, a repository — is a coding job: start_coding_job (and
   list_code_repositories / create_repository for where it goes). You are not
@@ -1537,6 +1539,15 @@ class ConversationAgent:
         if not pending:
             return None, None
 
+        # The conversation's own requests first; the house's questions (a
+        # notice's offer, raised with no conversation) only when nothing of
+        # its own waits. On the seventeenth house (27 Aug 2026) a lock offer
+        # nobody had answered made every bare "yes" in every conversation
+        # "2 things are waiting on you", and was read back as the reply to
+        # "turn on the swimming pool light". A house question is answerable
+        # from anywhere; it is not this conversation's to nag about.
+        own = [r for r in pending if r.get("conversation_id")]
+        pending = own or pending
         verdict = decide(pending, message)
         if verdict.kind == KIND_TAINTED:
             request = pending[verdict.index or 0]
@@ -1553,7 +1564,9 @@ class ConversationAgent:
                 "Say which one you mean, or answer on the console."
             )
         if not verdict.resolves:
-            return _waiting_note(pending), None
+            # Only the conversation's own: the house's question was said once,
+            # where it was raised, and is on the console's bar and the record.
+            return (_waiting_note(own) if own else None), None
 
         request = pending[verdict.index or 0]
         tool_name = str(request.get("tool") or "")

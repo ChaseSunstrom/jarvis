@@ -56,3 +56,11 @@ def test_asking_after_a_job_never_starts_it_again():
     run_background_task again. The rule says status, and only that."""
     assert '"Is that finished yet?", "how is it going?" about work already started is' in TOOL_RULES
     assert "never start the work again" in TOOL_RULES
+
+
+def test_a_fact_offered_is_a_request_to_keep_it():
+    """"Mira … reacts badly to peanuts — a fact for you" was answered "I have
+    not written that down, Sir — you did not ask me" (the seventeenth house,
+    27 Aug): an offered fact is a request to keep it."""
+    assert '"a fact for you", "so you know", "for the record"' in TOOL_RULES
+    assert "call remember, then say it is kept" in TOOL_RULES

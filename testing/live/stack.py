@@ -71,6 +71,11 @@ ERROR_ALLOWED = (
     # falls back to the second instance (M68). Logged at ERROR by SearXNG for
     # what is one engine's rate limit, not the stack's fault.
     "engine INIT failed",
+    # Piper, after a run the rig stopped mid-answer (M96): the core drops the
+    # synthesis stream it was reading and piper's handler task ends with an
+    # exception nobody retrieves. Scoped to piper's own asyncio line — the
+    # same words from any other container are still a failure.
+    "wyoming-piper: ERROR:asyncio:Task exception was never retrieved",
 )
 
 #: Lines that continue the record above them rather than starting a new one:
