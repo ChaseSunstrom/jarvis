@@ -992,7 +992,9 @@ def _register_tools(jarvis: "Jarvis", client: OrchestratorClient) -> None:
             "Hand a coding job to the coding agent. It works on a repo in the "
             "workspace and produces a DIFF. The diff is never run, applied or "
             "committed without a separate human approval — say so when you "
-            "report back."
+            "report back. Only for software in a repository: an audit of the "
+            "house, a report, research or any other long job that is not code "
+            "is run_background_task, never this."
         ),
         parameters=schema_object(
             {

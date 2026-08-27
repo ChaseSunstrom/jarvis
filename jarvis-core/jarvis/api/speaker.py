@@ -166,6 +166,12 @@ def status(jarvis: "Jarvis", label: str | None = None) -> dict[str, Any]:
     payload.update(profile.summary() if profile is not None else _empty_person(wanted))
     payload["enrolled"] = gate.enrolled
     payload["person_enrolled"] = profile is not None and profile.enrolled
+    # Whether the house is still inside an enrolment's window (M79) — the
+    # twenty seconds after a sample in which every spoken turn yields. A
+    # client that has just enrolled someone can wait for this to clear before
+    # inviting them to speak; the live rig did not, and its first turn after
+    # enrolling got no answer at all (27 Aug 2026).
+    payload["enrolling"] = enrolling(jarvis)
     return payload
 
 

@@ -2121,7 +2121,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M98 — The phone keeps up | **Ticked** (16/16 on the house: the speaker gate on register, a held Tier-3 action on the consent screen, the typed field, the tier contract's phone variant, and PHONE TASKS' way in — a fake phone was sent a task bundle by the model for a spoken-style request) | `m98-the-phone-keeps-up.sh`; gradle assembleDebug + testDebugUnitTest; `phone_tasks_test.py` 16/16; `test_device_control.py` (+1), `test_skills.py` (+1) |
 | M99 — The console keeps up | **Ticked** (9/9 on the rebuilt house: retry, live Areas/schedule/settings, a room for a companion listed with its registry entry, the unshown fields) | `m99-the-console-keeps-up.sh`; `console-keeps-up.spec.ts` 6/6 + the touched specs 41/41; `test_api_companion.py` (+1) |
 | M100 — Jarvis knows who it is talking to | Planned | `m100-knows-who.sh` |
-| M101 — One shape for every payload | Planned | `m101-one-shape.sh` |
+| M101 — One shape for every payload | Automated + Containerised | `m101-one-shape.sh` 10/10 on 27 Aug 2026 against the 10:21 house; `scripts/verify/mock_parity.py` reports 0 missing keys |
 | M102 — Jarvis learns from its own mistakes | Planned | `m102-learns-from-mistakes.sh` |
 | M103 — The phone shows what the house puts up | **Ticked** (7/7: the surface's panels and the task dock on the voice screen, live over the device channel; a phone-shaped socket saw a panel go up on the house) | `m103-the-phone-shows-it.sh`; `surface_on_the_phone_test.py` 12/12; goldens `voice-surface`, `voice-task-dock` |
 | M104 — Jarvis proposes a routine | Planned | `m104-proposes-a-routine.sh` |

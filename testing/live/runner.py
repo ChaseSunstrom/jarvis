@@ -825,6 +825,25 @@ class Runner:
             after = await http.get(f"{base}/api/voice/speaker", headers=headers, params={"label": label})
             if not (after.json() or {}).get("enrolled"):
                 raise LiveError(f"setup: {label!r} is not enrolled after {samples} sample(s): {after.text[:200]}")
+            # The house counts an enrolment as in progress for twenty seconds
+            # after a sample (M79) and every pipeline turn inside that window
+            # yields — the phrases being read aloud are not commands. A turn
+            # spoken two seconds after the last sample got no answer at all on
+            # 27 Aug 2026 ("an enrolment is in progress; this turn yields").
+            # Wait for the house to say it is listening again; a house that
+            # does not say waits the window out.
+            deadline = time.monotonic() + 30.0
+            while True:
+                now = await http.get(f"{base}/api/voice/speaker", headers=headers, params={"label": label})
+                body = now.json() or {}
+                if "enrolling" not in body:
+                    await asyncio.sleep(21.0)
+                    break
+                if not body.get("enrolling"):
+                    break
+                if time.monotonic() > deadline:
+                    raise LiveError(f"setup: the house still counts {label!r} as enrolling after 30s")
+                await asyncio.sleep(1.0)
 
     async def _speak(self, transport, turn, variant: str, conversation_id: str | None,
                      timeout: float = 0.0):
@@ -918,12 +937,21 @@ class Runner:
         return turn
 
     async def _settle_tasks(self, observer: Any, budget: float) -> None:
-        """Wait up to `budget` seconds for running tasks to finish; say if they did not."""
+        """Wait up to `budget` seconds for EARLIER scenarios' running tasks; say if they did not.
+
+        Only theirs. A task this scenario started is this scenario's business —
+        `task-survives-a-restart` starts a sensor audit precisely so the restart
+        interrupts it, and on 27 Aug 2026 the wait let the audit finish first,
+        so the house had nothing to pick back up and the scenario, which was
+        about that, could not fail or pass on the point.
+        """
         deadline = time.monotonic() + budget
+        mine = float(getattr(self, "_scenario_started_at", 0.0) or 0.0)
         while True:
             running = [
                 t for t in await observer.tasks()
                 if str(t.get("status")) in ("running", "pending", "queued")
+                and float(t.get("created") or 0.0) < mine
             ]
             if not running:
                 return

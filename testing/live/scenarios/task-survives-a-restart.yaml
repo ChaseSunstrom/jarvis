@@ -30,7 +30,10 @@ turns:
         source: jarvis_task_completed
         title_contains: "picked back up"
         within: 300
+      # Three seconds after the restart the job has just been picked back
+      # up, so "running again" is the truthful answer; the completion that
+      # follows is what the notification above asserts on.
       reply_means: >
-        says the work finished (or is finishing) — it may mention that it was
-        picked back up after a restart; it must NOT say the job failed or was
-        interrupted
+        says the work is running again, was picked back up, is finishing, or
+        finished — any of these; it must NOT say the job failed, was
+        interrupted, or that there is no such job

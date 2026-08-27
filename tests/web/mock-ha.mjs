@@ -859,6 +859,7 @@ function speakerStatus(world, label) {
 		mode: 'observe',
 		modes: ['off', 'observe', 'enforce'],
 		active: world.people.length > 0,
+		enrolling: false,
 		on_reject: 'speak',
 		allow_unverifiable: true,
 		adapt: false,

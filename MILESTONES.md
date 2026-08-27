@@ -1543,7 +1543,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     (Piper's voice enrolled as a person through the REST route) and a `person` on the `memory`
     expectation; scenario `memory-per-person`. Gate 10/11 — the live half needs the house rebuilt
     with this tree (the quiet pass's 08:38 rebuild predates it).
-- [ ] **M101 — One shape for every payload** · size M · deps M99, M82 · parallel-ok M100
+- [x] **M101 — One shape for every payload** · size M · deps M99, M82 · parallel-ok M100
   - Scope: the console audit's defects 6, 7, 8, 10, 11 and 12 that M99 did not close. A verify script
     connects to the running house AND to the mock, sends every list command both answer (tasks, memory,
     notifications, companions, areas, devices, entities, states, settings, tools, models, notes, code,
@@ -1557,6 +1557,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     re-measured with the command on their line.
   - Verify: `bash scripts/verify/m101-one-shape.sh`
   - 27 Aug 09:20: planned.
+  - 27 Aug 10:48: ticked — gate 10/10 on the sixteenth's house (the 10:21 image): `scripts/verify/mock_parity.py`
+    finds 0 keys the mock lacks over 22 list commands and get_states (11 before); the Code screen names its worker
+    from the orchestrator's /healthz (OpenCode 1.18.23) or says the orchestrator is off; Readings says no sensor has
+    a room; `+error.svelte` goes home to /house/devices; the web rows of the register re-measured.
   - 27 Aug 09:35: built, not ticked — `scripts/verify/mock_parity.py` starts the mock, sends every list command
     the server answers (22 + get_states) to both and reports each key the mock's rows lack: eleven on the first
     run (device registry `sw_version`/`via_device_id`, tool `created_at`/`updated_at`, repository

@@ -860,6 +860,22 @@ async def test_enrolling_with_a_name_adds_a_second_person(jarvis):
     assert status["label"] == "owner" and status["samples"] == len(_ENROL)
 
 
+async def test_status_says_when_an_enrolment_is_in_progress(jarvis):
+    """A client that has just enrolled someone can wait for the house to listen again.
+
+    The twenty-second window after a sample (M79) makes every spoken turn
+    yield; the live rig spoke two seconds after enrolling and got no answer
+    at all. The window is on the payload so a client need not guess it.
+    """
+    from jarvis.api import speaker as speaker_api
+
+    assert speaker_api.status(jarvis)["enrolling"] is False
+    speaker_api.mark_enrolling(jarvis, window=5.0)
+    assert speaker_api.status(jarvis)["enrolling"] is True
+    speaker_api.mark_enrolling(jarvis, window=0.0)
+    assert speaker_api.status(jarvis)["enrolling"] is False
+
+
 async def test_status_for_one_person_is_case_insensitive_and_honest_about_absence(jarvis):
     from jarvis.api import speaker as speaker_api
 
