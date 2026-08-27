@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, time as dt_time
 from typing import TYPE_CHECKING, Any, Iterable
 
 from ...automation.util import get_clock, next_time_of_day
@@ -80,13 +80,36 @@ class Reflection:
         self.jarvis = jarvis
         self.memory = memory
         self.at = str(at).strip() if at else None
+        #: `at` as a time of day, or None when it is unset or unreadable. Parsed
+        #: here, once: the schedule handed the raw string to `next_time_of_day`
+        #: and every start of the house ended the reflection task with
+        #: "'str' object has no attribute 'hour'" — logged only when the task
+        #: was collected at shutdown, so the nightly reflection never ran and
+        #: nothing said so until the container logs were read.
+        self.time_of_day: dt_time | None = self.parse_time_of_day(self.at)
+        if self.at and self.time_of_day is None:
+            _LOGGER.error(
+                "memory: reflect_at %r is not a time of day (HH:MM); no reflection is scheduled",
+                self.at,
+            )
         self.last: dict[str, Any] | None = None
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
     # --- the schedule ------------------------------------------------------
+    @staticmethod
+    def parse_time_of_day(value: str | None) -> dt_time | None:
+        """`"03:30"` → 03:30; anything else → None. Seconds are accepted, not required."""
+        text = str(value or "").strip()
+        for fmt in ("%H:%M", "%H:%M:%S"):
+            try:
+                return datetime.strptime(text, fmt).time()
+            except ValueError:
+                continue
+        return None
+
     def start(self) -> None:
-        if self._task is not None or not self.at:
+        if self._task is not None or self.time_of_day is None:
             return
         self._task = self.jarvis.async_create_task(self._run())
 
@@ -104,8 +127,9 @@ class Reflection:
 
     async def _run(self) -> None:
         clock = get_clock(self.jarvis)
+        assert self.time_of_day is not None  # start() refuses to schedule without one
         while True:
-            when = next_time_of_day(clock.now(), self.at)
+            when = next_time_of_day(clock.now(), self.time_of_day)
             await clock.sleep(max(1.0, (when - clock.now()).total_seconds()))
             try:
                 await self.reflect()

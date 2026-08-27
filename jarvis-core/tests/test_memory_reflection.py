@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
+import asyncio
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -178,4 +179,49 @@ async def test_attach_registers_the_service_and_the_schedule(tmp_path):
     answer = await jarvis.services.async_call("memory", "reflect", {}, blocking=True, return_response=True)
     assert answer["turns"] == 0
     await reflection.stop()
+    await jarvis.async_stop()
+
+
+
+async def test_the_schedule_survives_its_first_tick(tmp_path):
+    """`reflect_at: "03:30"` must produce a sleeping task, not a dead one.
+
+    The task used to end on its first line — `next_time_of_day` was handed the
+    raw string — and asyncio reported it only as "Task exception was never
+    retrieved" at shutdown, so the house ran for a day with a reflection that
+    had never been scheduled and no line in the log while it was up.
+    """
+    from datetime import time as dt_time
+
+    jarvis = Jarvis(tmp_path)
+    memory = MemoryStore(jarvis)
+    await memory.async_load()
+    jarvis.data["memory"] = memory
+    jarvis.data["llm"] = FakeAgent(archive=FakeArchive())
+    reflection = attach(jarvis, memory, {"reflect_at": "03:30"})
+    assert reflection.time_of_day == dt_time(3, 30)
+    reflection.start()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    task = reflection._task
+    assert task is not None and not task.done(), (
+        f"the schedule ended on its first tick: {task.exception() if task and task.done() else None!r}"
+    )
+    await reflection.stop()
+    await jarvis.async_stop()
+
+
+async def test_an_unreadable_reflect_at_schedules_nothing_and_says_so(tmp_path, caplog):
+    from datetime import time as dt_time
+
+    assert Reflection.parse_time_of_day("3:30pm") is None
+    assert Reflection.parse_time_of_day("03:30:00") == dt_time(3, 30)
+    jarvis = Jarvis(tmp_path)
+    memory = MemoryStore(jarvis)
+    await memory.async_load()
+    reflection = Reflection(jarvis, memory, at="half past three")
+    assert reflection.time_of_day is None
+    reflection.start()
+    assert reflection._task is None
+    assert "not a time of day" in caplog.text
     await jarvis.async_stop()
