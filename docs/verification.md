@@ -817,7 +817,7 @@ transport), `test_gated_services.py`, `test_tool_tiers_contract.py`.
 | A drag from the screen is kept and clamped to the grid | Automated | `test_a_drag_from_the_screen_is_kept_and_clamped` |
 | On the console a shown entity and camera appear beside the instrument (not over it), leave on ×; a drag lands on the grid and the server is told; a clear from elsewhere empties the screen | Automated | `e2e/surface.spec.ts` |
 | A panel is the dashboard's own widget for its kind — tile, still, readings, sky, moments — so it can never show what the house cannot | Automated | the gate reads `SurfacePanel.svelte` for the five components |
-| On the running house, `show` puts a panel up and the surface lists it | Scripted | the gate's last check over the websocket, after the rebuild |
+| On the running house, `show` puts a panel up and the surface lists it | Containerised | the gate's last check over the websocket — 27 Aug 01:16, on the tenth rebuild: a `sky` panel placed and listed, then cleared |
 | "Show me the front door camera" by voice, the panel appearing on the screen in the room | Manual | the operator, after the rebuild |
 | A chart of a sensor's history: `kind: chart` draws the entity's numeric history from the same recorder the history tools read (`jarvis/sensors/history`), in the sensor's unit; no recorder means one point, a level | Automated | `test_a_chart_panel_draws_the_entitys_history_in_its_unit`; `e2e/surface.spec.ts` "a sensor's history draws as a chart" |
 
@@ -889,7 +889,7 @@ line and fourteen more), `test_voice.py` (`speakable` on every path).
 | A tool call opens a new segment: the guess written before it is never spoken after it; the answer after it is spoken sentence by sentence before `intent-end` | Automated | the M74 test: chunks are the three answer sentences, "Let me look that up." never reaches the synthesiser |
 | The tail is the last `tts-chunk`, synthesised before the whole-reply clip; `tts-end` still carries the whole reply with `remainder_url: null` | Automated | `test_the_first_sentence_is_spoken_before_the_reply_is_finished` (updated) |
 | The rig records `first_audio` (the first chunk's arrival) beside `tts` | Automated | `testing/live/transport.py`; the gate's last check reads it off a spoken research turn |
-| On the house, a spoken research answer's first audio comes before its whole clip | Scripted | the gate's last check, after the rebuild and `LIVE_ONLY=research-quick-lookup` |
+| On the house, a spoken research answer of several sentences has its first audio before its whole clip | Scripted | the gate's last check, after the rebuild and `LIVE_ONLY=research-spoken-briefing` — a one-sentence answer (the quick lookup) has nothing to chunk ahead of its clip and records no `first_audio`, which is correct |
 
 ### Research that reads in time (M75)
 

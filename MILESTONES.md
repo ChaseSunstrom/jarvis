@@ -1286,7 +1286,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     apt budget (three minutes killed the package list on this network, the WARN hid it, and the
     image shipped without curl — so OpenCode never installed). The third rebuild is running; the
     gate's last two checks want the binary in the container.
-- [ ] **M83 — Pull things up** · size L · deps M63, M76 · parallel-ok M77
+- [x] **M83 — Pull things up** · size L · deps M63, M76 · parallel-ok M77
   - Scope: "have jarvis able to pull things up and display them on the voice screen, kind of
     like iron man, and able to move things around" — a `show` tool (Tier 1) puts a thing on the
     voice screen's surface: an entity card, a camera, a sensor's chart, a note, a page's text,
@@ -1302,6 +1302,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     surface and layout specs 4/4, gate 14/15: the last check puts a panel up on the running
     house and waits for the rebuild. `kind: chart` draws the sensor's history from the recorder
     (`jarvis/sensors/history`), in its unit.
+  - 27 Aug 01:16: ticked — gate 15/15 on the running house: `show` put the sky up over the
+    websocket and the surface listed it; the surface and layout specs, look and states 4/4 and
+    green; surface suite 5. "Show me the front door camera" by voice in the room is the operator's.
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,
