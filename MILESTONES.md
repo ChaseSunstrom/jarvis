@@ -1769,6 +1769,21 @@ web and of Tasker. Local only. Each row here is planned in that document.
     and pins that no words un-taint a turn; `docs/injection.md` says what is enforced where and what a prompt line is
     for. The gate's live half (the four red-team scenarios) waits for a rebuilt house and a quiet rig.
 ## Final
+- [ ] **M110 — The desktop app starts from a downloaded folder** · size S · deps M50 · parallel-ok M108
+  - Scope: the operator's report of 27 Aug 14:48 — `./jarvis-desktop-app` from `~/Downloads/jarvis-desktop-app-linux`
+    aborts: "The SUID sandbox helper binary was found, but is not configured correctly … chrome-sandbox is owned by
+    root and has mode 4755"; `chmod 4755` changes nothing (the owner is the user), `sudo` is refused by Electron,
+    `sudo --no-sandbox` loses the display and then shows a blank window with `ERR_CONNECTION_REFUSED` for
+    `http://127.0.0.1:8199/`. Three things: the main process checks the helper (root, setuid, executable) before
+    `ready` and, when it cannot be used, sets Chromium's process sandbox switch itself and says so; a console that
+    does not answer draws a page that names the URL and how to point elsewhere, and retries every 5 s; a renderer
+    that dies is named on stderr. The README says what the app does and why no `chmod`/`sudo` is needed.
+  - Verify: `bash scripts/verify/m110-desktop-starts-from-a-folder.sh`
+  - 27 Aug 15:20: planned and built. `sandboxHelperUsable` in `config.ts` (3 vitest cases, the operator's exact
+    folder among them); `e2e/unreachable.spec.ts` under xvfb: the switch is set from node_modules (a user-owned
+    helper), a closed port shows the notice page. Measured on the way: a sandboxed renderer dies loading any non-http
+    page here (`file:`, `data:`, a custom scheme — exit 5), so the notice is its own small window without the
+    renderer sandbox; the console's window keeps it. Tick when the gate passes with the packaged binary rebuilt.
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,

@@ -6,6 +6,7 @@ import {
   isAllowedConsole,
   loadConfig,
   readAgentToken,
+  sandboxHelperUsable,
 } from "../src/main/config";
 import { statusLabel, trayMenu } from "../src/main/tray";
 import { parseFrames } from "../src/main/agent";
@@ -108,5 +109,23 @@ describe("the agent's frames", () => {
   it("reads whole lines and ignores half-written ones", () => {
     const frames = parseFrames('{"type":"status","state":"idle"}\n{"broken"\n{"type":"ask","id":"1"}\n');
     expect(frames.map((f) => f.type)).toEqual(["status", "ask"]);
+  });
+});
+
+describe("whether the setuid sandbox helper can be used", () => {
+  const rootSetuid = () => ({ uid: 0, mode: 0o104755 });
+  it("is usable only when root owns it, setuid, executable — Chromium's own three checks", () => {
+    expect(sandboxHelperUsable("/x/chrome-sandbox", rootSetuid)).toBe(true);
+    expect(sandboxHelperUsable("/x/chrome-sandbox", () => ({ uid: 1000, mode: 0o104755 }))).toBe(false);
+    expect(sandboxHelperUsable("/x/chrome-sandbox", () => ({ uid: 0, mode: 0o100755 }))).toBe(false);
+    expect(sandboxHelperUsable("/x/chrome-sandbox", () => ({ uid: 0, mode: 0o104644 }))).toBe(false);
+  });
+  it("a folder somebody unpacked is the operator's case: owned by them, mode 755 — not usable", () => {
+    // ~/Downloads/jarvis-desktop-app-linux on 27 Aug 2026: chmod 4755 by the
+    // user leaves the owner the user, and Chromium aborts either way.
+    expect(sandboxHelperUsable("/home/chase/Downloads/jarvis-desktop-app-linux/chrome-sandbox", () => ({ uid: 1000, mode: 0o104755 }))).toBe(false);
+  });
+  it("a helper that is not there is not usable, and does not throw", () => {
+    expect(sandboxHelperUsable("/nowhere/chrome-sandbox")).toBe(false);
   });
 });

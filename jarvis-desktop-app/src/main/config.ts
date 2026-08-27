@@ -7,7 +7,7 @@
  * unit tests for, and Electron cannot be imported into a plain Node test.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -95,4 +95,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ShellConfig {
     pushToTalk: (env.JARVIS_PUSH_TO_TALK || DEFAULT_PUSH_TO_TALK).trim() || DEFAULT_PUSH_TO_TALK,
     debug: env.JARVIS_DESKTOP_DEBUG === "1",
   };
+}
+
+/**
+ * Whether Chromium's setuid sandbox helper can be used from `path`.
+ *
+ * A folder somebody downloaded and unpacked cannot carry a setuid root file
+ * (an archive does not keep the owner, and unpacking as a user makes the
+ * user the owner), and on a distribution that also restricts unprivileged
+ * user namespaces (Ubuntu 24.04's AppArmor default) Chromium has no third
+ * sandbox to fall back to — it aborts with "The SUID sandbox helper binary
+ * was found, but is not configured correctly". This is the check Chromium
+ * makes, made first: owned by root, setuid, executable.
+ *
+ * What it does NOT decide: whether the namespace sandbox would have worked.
+ * That is only knowable by starting, and a start that dies is the report
+ * this exists to prevent (27 Aug 2026, `~/Downloads/jarvis-desktop-app-linux`).
+ */
+export function sandboxHelperUsable(
+  path: string,
+  stat: (p: string) => { uid: number; mode: number } = (p) => statSync(p),
+): boolean {
+  try {
+    const info = stat(path);
+    return info.uid === 0 && (info.mode & 0o4000) !== 0 && (info.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
 }

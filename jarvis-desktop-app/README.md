@@ -73,3 +73,24 @@ what the tray says, how frames are parsed — because Electron cannot be importe
 into a plain Node test and mocking it would only assert the mock. What the
 Playwright run covers is that the real thing starts, loads, exposes exactly
 seven functions to the page and no `require`, and holds its global shortcut.
+
+## Starting from a downloaded folder (Linux)
+
+`jarvis-desktop-app-linux` is a plain folder, and a folder cannot carry a
+setuid-root `chrome-sandbox` — an archive keeps no owner, and unpacking as
+yourself makes you the owner. On a distribution that also restricts
+unprivileged user namespaces (Ubuntu 24.04's AppArmor default) Chromium
+would abort with "The SUID sandbox helper binary was found, but is not
+configured correctly". The app checks the helper itself before it starts
+(root, setuid, executable — Chromium's own three) and, when it is not
+usable, turns Chromium's *process* sandbox off for the run and says so on
+stderr. The window's renderer stays sandboxed and context-isolated; the
+console it shows is your own server. No `chmod`, no `sudo` (running as root
+is refused by Electron anyway, and `--no-sandbox` under `sudo` loses the
+display).
+
+If nothing answers at the console URL yet, the app shows **No console
+there yet** with the URL it tried and how to point it elsewhere
+(`JARVIS_CONSOLE_URL=http://<host>:8199`), and keeps trying every five
+seconds — bringing the stack up is enough. A renderer that dies is said on
+stderr with Chromium's reason rather than left as a blank window.

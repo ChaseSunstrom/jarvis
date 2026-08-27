@@ -23,11 +23,11 @@
  */
 
 import { app, BrowserWindow, Menu, Notification, Tray, globalShortcut, ipcMain, nativeImage } from "electron";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { AgentLink, type AskFrame, type StatusFrame } from "./agent";
 import { TOKENS } from "./tokens";
-import { loadConfig, type ShellConfig } from "./config";
+import { loadConfig, sandboxHelperUsable, type ShellConfig } from "./config";
 import { statusLabel, trayMenu, type AgentState, type MenuItemSpec } from "./tray";
 
 let window: BrowserWindow | null = null;
@@ -38,6 +38,22 @@ let state: AgentState = "offline";
 let detail = "";
 
 const config: ShellConfig = loadConfig();
+
+// Linux, from a downloaded folder: the setuid helper beside the binary cannot
+// be root's, and on a host that also restricts user namespaces Chromium
+// aborts rather than start without a sandbox. Decided here, before `ready`,
+// which is the last moment the switch can be given. What is kept: the
+// renderer's own sandbox (`sandbox: true` in the window) and context
+// isolation — this is Chromium's *process* sandbox, and the console is the
+// operator's own server, not the open web.
+export const SANDBOX_HELPER = join(dirname(process.execPath), "chrome-sandbox");
+if (process.platform === "linux" && !sandboxHelperUsable(SANDBOX_HELPER)) {
+  app.commandLine.appendSwitch("no-sandbox");
+  console.warn(
+    `${SANDBOX_HELPER} is not setuid root (a downloaded folder cannot carry that), ` +
+      "so Chromium's process sandbox is off for this run; the window's renderer stays sandboxed",
+  );
+}
 
 /**
  * `#4fe3ff` -> `[0x4f, 0xe3, 0xff]`.
@@ -147,6 +163,11 @@ function createWindow(): void {
     },
   });
   window.once("ready-to-show", () => window?.show());
+  // A renderer that died is said out loud with Chromium's reason: a blank
+  // window with nothing on stderr is the report nobody can act on.
+  window.webContents.on("render-process-gone", (_event, details) => {
+    console.warn(`the window's renderer is gone: ${details.reason} (exit ${details.exitCode})`);
+  });
   window.on("close", (event) => {
     // Closing the window leaves the assistant running, like every other tray
     // app: quitting is a menu item, and a wake word that stopped working
@@ -156,8 +177,65 @@ function createWindow(): void {
       window?.hide();
     }
   });
+  // Nothing listening at the console URL is the first-run case, not a
+  // fault to leave as a blank window: say which URL was tried and how to
+  // point the app elsewhere, and keep trying — the stack may be coming up.
+  window.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
+    if (!isMainFrame || code === -3 /* ERR_ABORTED: a navigation we replaced */) return;
+    console.warn(`no console at ${url}: ${description} (${code}); retrying every ${RETRY_S} s`);
+    showUnreachable(url, description);
+    scheduleRetry();
+  });
+  window.webContents.on("did-finish-load", () => {
+    // The console answered: the notice window, if one is up, has done its job.
+    unreachable?.close();
+    unreachable = null;
+    window?.show();
+  });
   void window.loadURL(config.consoleUrl);
   if (config.debug) window.webContents.openDevTools({ mode: "detach" });
+}
+
+const RETRY_S = 5;
+let retry: NodeJS.Timeout | null = null;
+let unreachable: BrowserWindow | null = null;
+
+/**
+ * The "no console there yet" page, in a window of its own.
+ *
+ * Its own window, and one whose renderer is NOT sandboxed, because the main
+ * window's sandboxed renderer dies loading anything that is not http here
+ * (`file:`, `data:` and a custom scheme all crashed with exit 5 under
+ * Electron 33 once the process sandbox switch was off — measured on 27 Aug
+ * 2026). The page is this app's own static file with no preload, no node
+ * and context isolation on, so the renderer sandbox is the one thing it
+ * does without; the console keeps its sandboxed window untouched.
+ */
+function showUnreachable(url: string, why: string): void {
+  if (unreachable && !unreachable.isDestroyed()) return;
+  unreachable = new BrowserWindow({
+    width: 760,
+    height: 480,
+    show: false,
+    backgroundColor: TOKENS["--jv-bg"],
+    autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false },
+  });
+  unreachable.once("ready-to-show", () => unreachable?.show());
+  unreachable.on("closed", () => {
+    unreachable = null;
+  });
+  void unreachable
+    .loadFile(join(app.getAppPath(), "src", "renderer", "unreachable.html"), { query: { url, why } })
+    .catch((err: unknown) => console.warn(`could not show the unreachable page: ${String(err)}`));
+}
+
+function scheduleRetry(): void {
+  if (retry) return;
+  retry = setTimeout(() => {
+    retry = null;
+    void window?.loadURL(config.consoleUrl);
+  }, RETRY_S * 1000);
 }
 
 function connectAgent(): void {
