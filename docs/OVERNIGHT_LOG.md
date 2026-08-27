@@ -1045,3 +1045,14 @@ is quiet. Done since:
   stop-means-stop (the rig counted its own stop's cancel), resilience-core-restart's second turn, task-survives-a-restart
   (no "picked back up" completion in 300 s), timer-by-voice ×2 ("cancel the tea timer" left it active), what-did-you-tell-me
   (the judge read the record's other real entries as invented), vision-look-fixture (M56). The seventeenth runs next.
+- 12:04 UTC — the seventeenth's house (11:45 image), first gates: m88 9/9 → M88 ticked; m86 red — the demo garage door had
+  NO device_class (`DemoCover`'s second argument is its unique id), so the shipped rule could never match it on any house
+  (fixed: `garage`, `window`; the tables know `garage`/`gate`; a test opens the demo door against the shipped rules);
+  m85 red — the task engine popped a job off the queue as it started it and persisted only the queue, so the one job a
+  restart interrupts was never in the store to pick back up (fixed: running items are persisted; a test goes through the
+  engine's own path); m87 red — the judge, which sees the criterion and the reply but not the utterance, read "the
+  youngest in the house" as invented (the criterion carries the words now). M105 planned and built: the operator's own
+  speaker profile accepted the rig's synthetic Piper voice (4.15 under 4.93 — 38 dimensions of timbre and variability
+  outvoting 8 of pitch at 9.35); blocks are equal votes and one block twice over the threshold is a named veto; 68
+  speaker tests hold. CI's core leg went red again on 79bb9b4 with no FAILED/ERROR row (3.8 min, a full run); the step
+  now annotates pytest's tail; a full 3.12 run of HEAD is queued here.

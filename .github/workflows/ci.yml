@@ -89,6 +89,14 @@ jobs:
           # grep that finds no FAILED line — every green run — returned 1 and
           # took the job down with it (three green suites went red on 69da624).
           grep -E '^(FAILED|ERROR) ' pytest.log | head -n 30 | sed 's/^/::error::/' || true
+          # A red with no FAILED or ERROR row — pytest exiting 1 with no
+          # summary (twice on 27 Aug, 11:24 UTC among them, on a run that
+          # took its usual four minutes) — leaves nothing on the check run
+          # to reproduce from without a token for the job log. The tail is
+          # where pytest says what it died of.
+          if [ "$status" != "0" ] && ! grep -qE '^(FAILED|ERROR) ' pytest.log; then
+            tail -n 25 pytest.log | sed 's/^/::error::tail: /' || true
+          fi
           exit "$status"
 
   legacy-suites:
