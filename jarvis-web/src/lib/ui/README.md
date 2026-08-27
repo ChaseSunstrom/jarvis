@@ -56,6 +56,16 @@ A flat surface with a hairline edge and an optional head (`title`, `meta`,
 One line in a list: label left, value or controls right, hairline under.
 `current` marks the one thing happening now (accent rule, brighter text).
 
+## SettingRow
+
+One settings row, on one grid for every panel on every tab (M107): a fixed
+label column (`label` and its `why`, or a `what` snippet), the value, and a
+fixed acts column (`acts`), with an optional `note` line under all three
+that draws only when `noted`. The columns are fixed, not a share of the
+width, so the value cells on a tab start at one edge and the controls in a
+panel share one width. `live` marks a row with an unsaved change; `testid`
+lands on the row (`data-jv-row`) and its value cell (`data-jv-value`).
+
 ## Pill
 
 A small status word. `tone` — `neutral` · `live` · `ok` · `warn` · `danger` —

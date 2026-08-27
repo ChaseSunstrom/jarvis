@@ -172,8 +172,8 @@
 		   opened task took a 28 % dock to 252 px and the page to 980 on a 900 px
 		   screen — the instrument (360 px), the exchange and the bottom dock leave
 		   the tasks about 220 px at 1440×900. The list scrolls inside what is left. */
-		max-height: min(22vh, 13rem);
-		background: var(--jv-panel);
+		max-height: min(22vh, calc(var(--jv-space-7) * 4.3333));
+		background: var(--jv-surface-sunken);
 		border: 1px solid var(--jv-line-hair);
 		border-radius: var(--jv-radius-md);
 		margin-bottom: var(--jv-space-4);
@@ -252,7 +252,7 @@
 		cursor: pointer;
 	}
 	.brief:hover {
-		background: var(--jv-panel-raised, rgba(255, 255, 255, 0.03));
+		background: var(--jv-surface-sunken);
 	}
 	.chev {
 		flex: 0 0 auto;

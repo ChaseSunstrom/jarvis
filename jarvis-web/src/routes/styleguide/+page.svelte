@@ -26,6 +26,7 @@
 		Panel,
 		Row,
 		Pill,
+		SettingRow,
 		Toolbar,
 		Tabs,
 		Dialog,
@@ -349,6 +350,23 @@
 					</Field>
 					<Toggle bind:checked={demoOn} label="Exposed to Jarvis" hint="Voice can control it" />
 				</div>
+			</article>
+
+			<article class="demo">
+				<h3>SettingRow</h3>
+				<Panel title="Voice" testid="styleguide-setting-row">
+					{#snippet children()}
+						<SettingRow label="Wake word" why="What you say to get its attention." testid="styleguide-row-wake">
+							<Input value="hey jarvis" mono />
+							{#snippet acts()}<Button>SAVE</Button>{/snippet}
+						</SettingRow>
+						<SettingRow label="Threshold" why="How far a voice may stray and still be yours." testid="styleguide-row-threshold" live>
+							<Input value="4.9" mono />
+							{#snippet acts()}<Button>SAVE</Button><Button>TEST</Button>{/snippet}
+							{#snippet note()}<p>Enrolment suggests 5.8.</p>{/snippet}
+						</SettingRow>
+					{/snippet}
+				</Panel>
 			</article>
 
 			<article class="demo">

@@ -73,11 +73,11 @@ class TaskDockView(context: Context) : LinearLayout(context) {
                 }
                 val weight = if (row.bar == TaskBoard.Bar.DETERMINATE) (row.fraction ?: 0.0).coerceIn(0.0, 1.0).toFloat() else 1f
                 val bar = LinearLayout(context).apply { orientation = HORIZONTAL }
-                bar.addView(fill, LayoutParams(0, JarvisUi.dp(context, 2), weight))
-                bar.addView(View(context), LayoutParams(0, JarvisUi.dp(context, 2), 1f - weight))
-                track.addView(bar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, JarvisUi.dp(context, 2)))
-                item.addView(track, LayoutParams(LayoutParams.MATCH_PARENT, JarvisUi.dp(context, 2)).apply {
-                    topMargin = JarvisUi.dp(context, 3)
+                bar.addView(fill, LayoutParams(0, JarvisUi.dp(context, JarvisUi.Space.MICRO), weight))
+                bar.addView(View(context), LayoutParams(0, JarvisUi.dp(context, JarvisUi.Space.MICRO), 1f - weight))
+                track.addView(bar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, JarvisUi.dp(context, JarvisUi.Space.MICRO)))
+                item.addView(track, LayoutParams(LayoutParams.MATCH_PARENT, JarvisUi.dp(context, JarvisUi.Space.MICRO)).apply {
+                    topMargin = JarvisUi.dp(context, JarvisUi.Space.MICRO)
                 })
             }
             list.addView(item, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {

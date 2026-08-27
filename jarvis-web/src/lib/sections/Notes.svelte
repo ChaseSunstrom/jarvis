@@ -499,14 +499,14 @@
 	}
 	.mode {
 		display: flex;
-		gap: 0.4rem;
-		margin-bottom: 0.6rem;
+		gap: var(--jv-space-2);
+		margin-bottom: var(--jv-space-2);
 	}
 	.read {
-		min-height: 12rem;
-		padding: 0.6rem 0.8rem;
-		border: 1px solid var(--jv-line, rgba(127, 127, 127, 0.3));
-		border-radius: 4px;
+		min-height: calc(var(--jv-space-7) * 4);
+		padding: var(--jv-space-2) var(--jv-space-3);
+		border: 1px solid var(--jv-line);
+		border-radius: var(--jv-radius-sm);
 		line-height: 1.5;
 		overflow-wrap: anywhere;
 	}

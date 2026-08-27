@@ -30,11 +30,11 @@ describe('markdown renders completely (M106, M113)', () => {
 	});
 
 	it('nested lists by indentation, a numbered list that starts elsewhere, and task items', () => {
-		const html = renderMarkdown('- top\n  - inner one\n  - inner two\n- next\n\n3. three\n4. four\n\n- [ ] todo\n- [x] done');
+		const html = renderMarkdown('- top\n  - inner one\n  - inner two\n- next\n\n3. three\n4. four\n\n- [ ] buy milk\n- [x] read the meter');
 		expect(html).toContain('<ul><li>top<ul><li>inner one</li><li>inner two</li></ul></li><li>next</li></ul>');
 		expect(html).toContain('<ol start="3"><li>three</li><li>four</li></ol>');
-		expect(html).toContain('<li class="task"><input type="checkbox" disabled> todo</li>');
-		expect(html).toContain('<li class="task"><input type="checkbox" disabled checked> done</li>');
+		expect(html).toContain('<li class="task"><input type="checkbox" disabled> buy milk</li>');
+		expect(html).toContain('<li class="task"><input type="checkbox" disabled checked> read the meter</li>');
 	});
 
 	it('a fenced block keeps its language and its indentation; a tilde fence and an indented block work too', () => {

@@ -260,7 +260,7 @@
 	}
 	.filter {
 		margin-bottom: var(--jv-space-3);
-		max-width: 24rem;
+		max-width: calc(var(--jv-space-7) * 8);
 	}
 	.cell {
 		display: flex;
