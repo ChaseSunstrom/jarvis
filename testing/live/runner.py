@@ -1046,6 +1046,18 @@ class Runner:
                     f"expected {want_note_moment['source']!r}"
                 )
 
+        want_surface = expect.get("surface")
+        if want_surface:
+            panels = await observer.wait_for_surface(
+                entity=str(want_surface.get("entity") or ""),
+                kind=str(want_surface.get("kind") or ""),
+                count=int(want_surface["count"]) if want_surface.get("count") is not None else None,
+                timeout=float(want_surface.get("within") or 20.0),
+            )
+            if panels is None:
+                have = [(p.get("kind"), p.get("entity") or p.get("title")) for p in await observer.surface()]
+                fail(f"the surface never matched {want_surface}; it holds {have}")
+
         want_memory = expect.get("memory")
         if want_memory:
             recalls = str(want_memory.get("recalls") or "")

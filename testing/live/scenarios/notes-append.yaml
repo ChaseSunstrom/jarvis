@@ -1,0 +1,17 @@
+name: notes-append
+capability: notes
+gated-on: M92
+intent: "A note grown over two turns: the second must land in the first, not beside it."
+variants: [text]
+setup:
+  clear: [notes]
+turns:
+  - say: "Note that the boiler was serviced today."
+    expect:
+      note: {body_contains: "boiler"}
+      capability: notes
+  - say: "Add to my boiler note that the pressure was one point four bar."
+    expect:
+      capability: notes
+      note: {body_contains: "one point four"}
+      reply_means: "confirms it added the pressure to the boiler note"

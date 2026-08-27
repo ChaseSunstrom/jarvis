@@ -1,0 +1,22 @@
+name: house-fan-and-switch
+capability: house
+gated-on: M92
+intent: "A fan and a switch — the domains beside lights that a real house is full of."
+variants: [voice, text]
+setup:
+  states:
+    fan.living_room_fan: "off"
+    switch.coffee_machine: "off"
+turns:
+  - say: "Turn on the living room fan."
+    expect:
+      service: {domain: fan, service: turn_on, entity_id: fan.living_room_fan}
+      state: {fan.living_room_fan: "on"}
+      reply_means: "confirms the fan is on"
+      capability: house
+  - say: "And switch on the coffee machine."
+    expect:
+      service: {domain: switch, service: turn_on, entity_id: switch.coffee_machine}
+      state: {switch.coffee_machine: "on"}
+      reply_means: "confirms the coffee machine is on"
+      capability: house

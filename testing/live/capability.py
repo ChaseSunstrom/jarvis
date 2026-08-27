@@ -80,6 +80,11 @@ TOOL_CAPABILITY = {
     "watch_for": "online",
     "list_watches": "online",
     "cancel_watch": "online",
+    # The surface by voice (M83/M92): a panel put up, moved or cleared is its
+    # own act — not "house" (no device moved) and not "answer".
+    "show": "surface",
+    "move_panel": "surface",
+    "clear_screen": "surface",
     "read_page": "online",
     "feed_latest": "online",
 }
@@ -124,7 +129,7 @@ def capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
     # the task. The readers (M56–M59) come after it for that reason.
     if task_kinds or "run_background_task" in tools:
         return "task"
-    for capability in ("sky", "vision", "sensors", "online", "briefing"):
+    for capability in ("sky", "vision", "sensors", "online", "briefing", "surface"):
         if capability in chosen:
             return capability
     # Only calls that moved something in the HOUSE count as house control. Any

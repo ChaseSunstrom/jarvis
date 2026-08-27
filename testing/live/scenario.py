@@ -57,6 +57,7 @@ EXPECT_KEYS = {
     "no_task",           # no task was created by this turn
     "note",              # {title_contains?, body_contains?, citations_at_least?}
     "notification",      # {title_contains?, kind?, source?, within?}
+    "surface",           # {entity?, kind?, count?, within?} — the voice screen's panels (M83/M92)
     "memory",            # {recalls?, forgotten?}
     "approval",          # {tool, decision: approve|deny}
     "ui",                # {testid, contains, within?} or a list of them — the page

@@ -260,6 +260,30 @@ class Observer:
             await asyncio.sleep(0.5)
         return None
 
+    async def surface(self) -> list[dict[str, Any]]:
+        """The voice screen's panels, as the console lists them (M83)."""
+        try:
+            answer = await self.client.command("jarvis/surface/list")
+        except Exception:  # noqa: BLE001 - a build without a surface fails the assertion
+            return []
+        return list((answer or {}).get("panels") or [])
+
+    async def wait_for_surface(self, entity: str = "", kind: str = "", count: int | None = None,
+                               timeout: float = 20.0) -> list[dict[str, Any]] | None:
+        """The panels once they match — an entity's panel present, a kind present,
+        or exactly `count` panels — or None when they never do in time."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            panels = await self.surface()
+            if count is not None and len(panels) == count and not entity and not kind:
+                return panels
+            hit = [p for p in panels
+                   if (not entity or p.get("entity") == entity) and (not kind or p.get("kind") == kind)]
+            if (entity or kind) and hit and (count is None or len(panels) == count):
+                return panels
+            await asyncio.sleep(0.5)
+        return None
+
     async def memories(self, query: str = "") -> list[dict[str, Any]]:
         try:
             answer = await self.client.command(

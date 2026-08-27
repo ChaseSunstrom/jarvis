@@ -1,0 +1,19 @@
+name: surface-by-voice
+capability: surface
+gated-on: M92
+intent: >
+  "Show me the garage temperature" puts a panel on the voice screen (M83) and
+  "clear the screen" takes it down — the surface, by voice, asserted on the
+  surface's own list rather than on the sentence.
+variants: [voice, text]
+turns:
+  - say: "Show me the garage temperature on the screen."
+    expect:
+      capability: surface
+      surface: {entity: sensor.garage_temperature, within: 20}
+      reply_means: "says it has put the garage temperature up on the screen"
+  - say: "Clear the screen."
+    expect:
+      capability: surface
+      surface: {count: 0, within: 20}
+      reply_means: "says the screen is cleared"

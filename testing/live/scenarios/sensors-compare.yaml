@@ -1,0 +1,13 @@
+name: sensors-compare
+capability: sensors
+gated-on: M92
+intent: >
+  "Which room is the coldest?" is a comparison across sensors, which no
+  snapshot in the prompt can stand in for — it is the sensor_compare tool
+  (M57) or a guess. The demo house's garage is the cold one.
+variants: [voice, text]
+turns:
+  - say: "Which room is the coldest right now?"
+    expect:
+      capability: sensors
+      reply_means: "names the garage as the coldest, with its temperature"

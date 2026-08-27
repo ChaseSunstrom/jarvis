@@ -1,0 +1,15 @@
+name: house-cover
+capability: house
+gated-on: M92
+intent: "A window or a garage door, moved by voice and asserted on the house."
+variants: [voice, text]
+setup:
+  states:
+    cover.living_room_window: open
+turns:
+  - say: "Close the living room window."
+    expect:
+      service: {domain: cover, service: close_cover, entity_id: cover.living_room_window}
+      state: {cover.living_room_window: closed}
+      reply_means: "confirms the living room window is closing or closed"
+      capability: house

@@ -900,3 +900,8 @@ is quiet. Done since:
   WebGL-orb row and the Ollama compose comment gone, the speaker row names its own skip, ISSUES gains the
   two asserts-without-evidence probes; gate 6/6 — it reruns the commands and fails when the table drifts
   (it caught its own first drift: the gate it added made 91).
+- 04:56 — M92 built: ten scenarios for the house beyond lights (a thermostat, a window, the speaker, the
+  vacuum, a fan and a switch, the coldest room, the moon, a note appended, "turn on the light" answered by
+  the next turn, the surface by voice), the rig's `surface` expectation and `surface` capability; m37's two
+  config checks now read the M77 block (the M37 one is gone). Rig tests 49; the live half waits for a quiet
+  house.

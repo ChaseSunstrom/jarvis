@@ -8,26 +8,31 @@ use_venv
 
 require_file jarvis-core/jarvis/integrations/n8n/__init__.py
 
-check "the shipped config has it OFF" python3 -c '
+check "the shipped config has it OFF: no server URL, no allow-list, until the operator names one" python3 -c '
 import sys
 sys.path.insert(0, "jarvis-core")
 from pathlib import Path
 from jarvis.config import load_yaml
 cfg = load_yaml(Path("jarvis-core/config/configuration.yaml"), Path("jarvis-core/config"), {})
 block = cfg.get("n8n") or {}
-assert block.get("enabled") is False, "the n8n bridge ships enabled"
+# M77 replaced the M37 block (the loader refuses two `n8n:` keys now): the
+# bridge is OFF when the URL is empty, which is what the shipped env default
+# leaves it. `enabled: false` was the old switch; an empty URL is the new one.
+assert not str(block.get("url") or "").strip(), "the shipped config names an n8n server"
 assert not block.get("workflows"), "the shipped allow-list is not empty"
-print("enabled: false, allow-list empty")
+print("url empty (off), no workflows")
 '
 check "no API key is in the tracked config" python3 -c '
 from pathlib import Path
 text = Path("jarvis-core/config/configuration.yaml").read_text()
-block = text.split("n8n:")[1].split("# ---")[0]
+block = text.split("\nn8n:", 1)[1].split("\n\n", 1)[0]
 for line in block.splitlines():
     stripped = line.strip()
-    if stripped.startswith("api_key:") and "!secret" not in stripped:
+    if stripped.startswith("api_key:") and "!secret" not in stripped and "!env_var" not in stripped:
         raise AssertionError(f"a key is in the tracked config: {stripped}")
-print("the key is a !secret, commented, and not here")
+    if stripped.startswith("api_key:") and "!env_var" in stripped and not stripped.rstrip().endswith(chr(34) + chr(34)):
+        raise AssertionError(f"the env default is not empty: {stripped}")
+print("the key comes from the environment or a secret, never from the tracked file")
 '
 check "a workflow is Tier 3 unless the operator lowers it" \
     grep -q 'tier: int = 3' jarvis-core/jarvis/integrations/n8n/__init__.py
