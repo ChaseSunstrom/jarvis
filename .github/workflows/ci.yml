@@ -88,14 +88,22 @@ jobs:
           # `|| true`: the default shell here is `bash -e`, and with pipefail a
           # grep that finds no FAILED line — every green run — returned 1 and
           # took the job down with it (three green suites went red on 69da624).
-          grep -E '^(FAILED|ERROR) ' pytest.log | head -n 30 | sed 's/^/::error::/' || true
+          # Colour codes stripped first: a FAILED row wrapped in an escape
+          # sequence is not at column 0, and the check run showed nothing for
+          # a red leg three times on 27 Aug while a local run named the test.
+          sed 's/\x1b\[[0-9;]*m//g' pytest.log > pytest.plain || true
+          grep -E '^(FAILED|ERROR) ' pytest.plain | head -n 30 | sed 's/^/::error::/' || true
+          # Always: the last line, as a notice — so the check run says what
+          # pytest said even when nothing above matched, and a green run
+          # proves the annotations reach it at all.
+          echo "::notice::pytest: $(tail -n 1 pytest.plain)"
           # A red with no FAILED or ERROR row — pytest exiting 1 with no
           # summary (twice on 27 Aug, 11:24 UTC among them, on a run that
           # took its usual four minutes) — leaves nothing on the check run
           # to reproduce from without a token for the job log. The tail is
           # where pytest says what it died of.
-          if [ "$status" != "0" ] && ! grep -qE '^(FAILED|ERROR) ' pytest.log; then
-            tail -n 25 pytest.log | sed 's/^/::error::tail: /' || true
+          if [ "$status" != "0" ] && ! grep -qE '^(FAILED|ERROR) ' pytest.plain; then
+            tail -n 25 pytest.plain | sed 's/^/::error::tail: /' || true
           fi
           exit "$status"
 
