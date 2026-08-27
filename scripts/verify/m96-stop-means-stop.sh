@@ -36,16 +36,21 @@ async def main():
         await ws.recv(); await ws.send(json.dumps({"type": "auth", "access_token": token()}))
         assert json.loads(await ws.recv())["type"] == "auth_ok"
         await ws.send(json.dumps({"id": 1, "type": "assist_pipeline/run", "start_stage": "intent", "end_stage": "intent",
-                                  "input": {"text": "Tell me, in as many words as you like, everything you know about the house."},
+                                  "input": {"text": "Count aloud from one to three hundred, one number per line, and do not stop early."},
                                   "conversation_id": "test:m96-stop"}))
         deadline = time.time() + 30
         started = False
         while time.time() < deadline:
             m = json.loads(await asyncio.wait_for(ws.recv(), 30))
-            if m.get("type") == "event" and m["event"]["type"] in ("intent-start", "intent-progress"):
+            # The first streamed token, not intent-start: a fixed second after
+            # the start was long enough for the seventeenth house to finish a
+            # short answer, and the stop found "no run 1 is in progress".
+            if m.get("type") == "event" and m["event"]["type"] == "intent-progress":
                 started = True; break
+            if m.get("type") == "event" and m["event"]["type"] == "run-end":
+                raise AssertionError("the run ended before it streamed a token: " + json.dumps(m["event"]))
         assert started, "the run never started answering"
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.2)
         await ws.send(json.dumps({"id": 2, "type": "assist_pipeline/stop", "run_id": 1}))
         stopped = None; end = None
         deadline = time.time() + 20
