@@ -853,3 +853,8 @@ is quiet. Done since:
   (the Proxmox kernel's `bonding_masters` file — links only now, PASS); M23's BLOCKERS check grepped a
   heading shape the file never had (every open entry now carries a Needed-by line and the check reads them);
   the duplicate M70 heading. The audit reports are kept under docs/research/audits/.
+- 03:58 — the plan from the audit: M84–M93 in MILESTONES (a briefing volunteered, work that survives a
+  restart, Jarvis notices, overnight reflection, a plan on the screen, stack hygiene, the claims register
+  re-measured, no pass on a skip, the house by voice beyond lights, pick up where you left off). M84 built:
+  the briefing block in configuration.yaml, `get_briefing` routed as its own capability, the
+  briefing-on-demand scenario, gate 6/8 — the two live checks wait for the fifteenth rebuild.

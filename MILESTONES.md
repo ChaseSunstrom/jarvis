@@ -1307,6 +1307,80 @@ web and of Tasker. Local only. Each row here is planned in that document.
     ("clear the screen", "put the camera on the left") — and remembers where you left them.
   - Verify: `bash scripts/verify/m83-pull-things-up.sh`
 
+- [ ] **M84 — Jarvis volunteers a briefing** · size S · deps M17, M60 · parallel-ok M85–M93
+  - Scope: the audit of 27 Aug found `integrations/briefing` built, tested (20) and NOT on the
+    house — no `briefing:` block, so no 07:00/22:00 digest and no `get_briefing` tool. Enable it
+    with the documented defaults; "What's my briefing?" is one `get_briefing` call and one short
+    spoken digest, or one sentence saying there is nothing to report; the scheduled one reaches
+    the operator through `companion.notify` (spoken when present, a notification when not). The
+    rig routes `get_briefing` to its own capability.
+  - Verify: `bash scripts/verify/m84-briefing.sh`
+- [ ] **M85 — Work survives a restart** · size M · deps M10, M25 · parallel-ok M84, M86
+  - Scope: four background tasks on the house tonight ended "interrupted when Jarvis restarted".
+    A task with a plan (steps recorded) is resumed from its last completed step after a restart
+    rather than marked errored; one that cannot be resumed (no steps, or its worker gone) is
+    errored as today with the reason; the user is told once ("I picked the sensor audit back
+    up after the restart"). The proactive-moment scenario passes across the memory scenario's
+    restart in the same run.
+  - Verify: `bash scripts/verify/m85-work-survives-a-restart.sh`
+- [ ] **M86 — Jarvis notices** · size M · deps M59, M17, M66 · parallel-ok M85, M87
+  - Scope: a door or lock left open/unlocked after a configured hour, a sensor unchanged for
+    longer than its kind allows, a device that went unavailable — one spoken nudge (or a quiet
+    notification when nobody is present) with the action offered as a held request answerable
+    by a spoken yes ("Lock it?" → "yes"); at most one nudge per thing per night; a Settings row
+    to turn each kind off. Verified with the demo house's lock and a probe sensor on the rig.
+  - Verify: `bash scripts/verify/m86-jarvis-notices.sh`
+- [ ] **M87 — Overnight reflection** · size M · deps M15, M16 · parallel-ok M86, M88
+  - Scope: once a night the day's conversations are read from the archive and consolidated into
+    at most five durable facts about the user and the house (memory entries with a `learned`
+    source) and a "what I learned today" card on the console the user can keep, edit or
+    discard per fact; nothing the user asked to forget is re-learned; "what did you learn
+    about me this week?" reads it back.
+  - Verify: `bash scripts/verify/m87-overnight-reflection.sh`
+- [ ] **M88 — A plan on the screen** · size M · deps M83, M10 · parallel-ok M87, M89
+  - Scope: a background job with steps puts a `plan` panel on the voice screen's surface — the
+    steps, the current one live, elapsed time, a stop — updated from the task's events, removed
+    when the job ends (its result a `note` panel when there is one); Jarvis speaks checkpoints
+    ("half way, Sir") only when the job asks. Verified by the rig's task scenarios and the
+    surface's list.
+  - Verify: `bash scripts/verify/m88-a-plan-on-the-screen.sh`
+- [ ] **M89 — Stack hygiene** · size S · deps M28 · parallel-ok M84–M88
+  - Scope: from the services audit — SearXNG bound to loopback under the 2026.8 granian image;
+    `jarvis-web` runs as `node`; the live `jarvis-sandbox` definition (root compose) pinned by
+    `test_packaging` for `network_mode`, user, `read_only`, `cap_drop`, `pids_limit`, its one
+    mount; the isolation matrix in `docs/security.md` true; RUNBOOK's `volumes.py`, DEVIATIONS
+    §7 and the browser README's test table corrected; the orchestrator's `/healthz` shown on
+    Settings › Tools ("delegation: model unreachable" / "coding worker: OpenCode missing").
+  - Verify: `bash scripts/verify/m89-stack-hygiene.sh`
+- [ ] **M90 — The claims register, re-measured** · size S · deps M23 · parallel-ok M89, M91
+  - Scope: `docs/verification.md`'s suite-size tables regenerated from the commands printed
+    beside them and dated; one number per suite everywhere it is quoted; the four pessimistic
+    rows (the HUD against a real core, MQTT with a real broker, research against the real
+    SearXNG, the orchestrator against the real service) moved to the level the rig proves;
+    the WebGL-orb row and the ollama sentences gone; the skip in `test_speaker.py` named in
+    its row; `ISSUES.md` gains the two "asserts without evidence" probes.
+  - Verify: `bash scripts/verify/m90-claims-register.sh`
+- [ ] **M91 — A gate cannot pass on a skip** · size S · deps M23 · parallel-ok M90, M92
+  - Scope: `scripts/verify/lib.sh` gains `check_pytest`, which fails on `skipped`, `no tests
+    ran` or `error` in pytest's summary, and every gate that runs a harness-backed suite uses
+    it; each gate's live slice writes `.verify/live/results-<gate>.json` beside the shared file
+    so a red smoke names its scenario; `make test-web` no longer swallows Playwright.
+  - Verify: `bash scripts/verify/m91-no-pass-on-a-skip.sh`
+- [ ] **M92 — The house by voice, beyond lights** · size M · deps M27 · parallel-ok M91, M93
+  - Scope: live scenarios for the tools the rig never exercises — climate (`set_temperature`),
+    a cover, a scene, a script, media, `note_append`, `sensor_compare`, `moon_phase`, a feed
+    watch, a spoken `ask_user` question answered by the next turn, `show` and `clear_screen` by
+    voice — each with a demo-house entity to act on and a state assertion, and the routing
+    table extended to match.
+  - Verify: `bash scripts/verify/m92-the-house-by-voice.sh`
+- [ ] **M93 — Pick up where you left off** · size M · deps M17, M25 · parallel-ok M92
+  - Scope: FUTURE #1 and #4 — a `?conversation=<id>` deep link on the voice screen and the id
+    exposed on the page, so the rig's browser transport can hold a thread across turns and a
+    person can reopen one from the history sidebar or the phone; `voice-ui`/`text-ui` variants
+    become part of `--full` for every scenario that has a console counterpart; the thread
+    survives a core restart (ISSUES).
+  - Verify: `bash scripts/verify/m93-pick-up-where-you-left-off.sh`
+
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
     tools, five websocket commands, the console's panels over the page around the instrument —

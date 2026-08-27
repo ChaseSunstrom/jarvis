@@ -57,6 +57,10 @@ TOOL_CAPABILITY = {
     "describe_camera_change": "vision",
     "list_cameras": "vision",
     "next_pass": "sky",
+
+    # M84: the digest Jarvis volunteers; asked for, it is its own act, not an "answer".
+
+    "get_briefing": "briefing",
     "overhead_now": "sky",
     "moon_phase": "sky",
     "planets_tonight": "sky",
@@ -120,7 +124,7 @@ def capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
     # the task. The readers (M56–M59) come after it for that reason.
     if task_kinds or "run_background_task" in tools:
         return "task"
-    for capability in ("sky", "vision", "sensors", "online"):
+    for capability in ("sky", "vision", "sensors", "online", "briefing"):
         if capability in chosen:
             return capability
     # Only calls that moved something in the HOUSE count as house control. Any

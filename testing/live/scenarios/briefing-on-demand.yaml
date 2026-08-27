@@ -1,0 +1,19 @@
+name: briefing-on-demand
+capability: briefing
+gated-on: M84
+intent: >
+  The summary Jarvis volunteers at 07:00 and 22:00 — weather, what is on today,
+  what needs attention, what quietly stopped working — must also come when
+  asked for. "What's my briefing?" is one call to get_briefing and one short
+  spoken digest; if the house has nothing to report, one short sentence saying
+  so. Never a claim of having done anything, never a list of every entity.
+variants: [voice, text]
+turns:
+  - say: "What's my briefing?"
+    expect:
+      capability: briefing
+      reply_means: >
+        gives a short digest of the house — weather, calendar, tasks, anything
+        left open or unlocked, anything offline — or says in one short sentence
+        that there is nothing to report; it does not claim to have changed or
+        done anything, and it does not read out a long list

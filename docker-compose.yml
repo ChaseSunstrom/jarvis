@@ -156,7 +156,13 @@ services:
     # pull first and prints a scary "access denied" warning before falling
     # back to building anyway.
     pull_policy: build
-    build: ./jarvis-orchestrator
+    build:
+      context: ./jarvis-orchestrator
+      # The build reaches Debian and GitHub through the host's own network:
+      # BuildKit's default bridge could not reach deb.debian.org from this
+      # host (BLOCKERS, M82) while the running container — host networking —
+      # reaches both. `network: host` gives the build the same route.
+      network: host
     container_name: jarvis-orchestrator
     profiles: [agents]
     restart: unless-stopped

@@ -1569,6 +1569,19 @@ dashboards:
 # instrument on "show me the front door" — a tile, a still, a room's
 # readings, a note, a page — kept in .storage/surface so a drag survives a
 # reload and every screen shows the same arrangement. Nothing to set.
+# The summary Jarvis volunteers rather than waits to be asked for (M84): what
+# the weather is doing, what is on today, what needs attention, what quietly
+# stopped working. Spoken if you are up and at a device, a quiet notification
+# if not; an empty section is never mentioned, and an empty briefing is not
+# delivered at all. "What's my briefing?" answers any time (`get_briefing`).
+briefing:
+  morning: "07:00"
+  evening: "22:00"
+  include: [weather, calendar, tasks, house, unavailable_entities]
+  max_items: 4
+  max_chars: 700
+  importance: low
+
 surface: {}
 
 # n8n (M77): the house's workflows through n8n's own API. Empty url means
