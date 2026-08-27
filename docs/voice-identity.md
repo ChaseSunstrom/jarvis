@@ -120,7 +120,10 @@ Then read the numbers. `TEST MY VOICE` on the phone, or TEST on the console,
 scores a fresh utterance against everyone enrolled and says **who** it was —
 "Recognised as Ted · 2.31 against 8.83" — and whether enforcement would have
 refused it; a refusal says who it was nearest, so a false reject of the owner
-reads as "nearest: owner" rather than as a stranger. Get somebody else to try
+reads as "nearest: owner" rather than as a stranger — and, since M105, which
+block refused on its own ("nearest: owner; pitch far out"), with the three
+block scores under the verdict ("timbre 3.46 · variability 2.66 · pitch
+9.35") so you can see which part of the voice the gate found far. Get somebody else to try
 it too — the gap between their score and yours is the thing you are setting a
 threshold in the middle of.
 

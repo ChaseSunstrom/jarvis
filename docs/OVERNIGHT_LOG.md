@@ -1067,3 +1067,4 @@ is quiet. Done since:
   here (472), the full run is in progress.
 - 12:19 UTC — M95 ticked: 5/5 on the seventeenth's house (explain-yourself from the trace, what-did-you-tell-me from the record).
 - 12:25 UTC — the seventeenth, late gates: m99 9/9 (the probe reads replies by id), m59 17/17 (the watch says "changed once" now); m82 running, then its report. M105's console half: TEST names the refusing block and shows the three (8/8 e2e, 27 unit).
+- 12:26 UTC — the seventeenth's gates done: m82 6/6 → M82 ticked; green m88 m94 m95 m99 m59 m82; red m86 m85 m87 m42 m100 m96 m102 m92, every one read to its cause and fixed on the tree for the eighteenth. Its report run started 12:25.
