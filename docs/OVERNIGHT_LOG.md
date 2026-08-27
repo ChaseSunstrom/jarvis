@@ -1102,3 +1102,21 @@ is quiet. Done since:
   on the tree), memory-per-person (the nineteenth's M105 probe), sensors-compare ×2 (the judge wants "the coldest" said in
   those words — criterion relaxed), chat-context-retention and interactions-thread-continuity (the model's "it" — variance),
   task-cancel-mid-run (read next), vision (M56). The nineteenth started 14:35.
+- 15:30 UTC — the nineteenth's gates (14:36 house): m105 4/5 (the gate's own check ran outside jarvis-core; its live
+  probe passed — the Piper voice refused as the operator at 5.16, accepted as Rig; the operator's eleven self-scores
+  run 0.4–4.7 under a 4.93 threshold), m86 7/8 (the first turn matched the LOCK offer — the garage offer was never
+  raised — and "Yes, close it." closed the living room window: the spoken-answers table took no tail), m85 4/5 (the
+  restored job sat "queued — picked back up" for eight minutes: nothing started the task pump after `load`; only
+  `submit` ever did), m87 5/6 ("reacts badly to peanuts" acknowledged as "peanut butter"), m100 10/11 (one Piper
+  phrase at 4.88 filed under the operator), m42 13/13, m92 3/4 ("Cleared, Sir." with no tool called passed the
+  claim guard). Each read to a cause and fixed on the tree: the pump starts with the house (3993c4a), a yes with a
+  tail that only re-says the request (2cfb9fc), repeat the fact (929f36f), the per-block veto from the owner's own
+  spread with the probe printing it (664bdbc), the bare-participle claim (7075b94), the rig naming the entity it
+  waits for (fc14db6). Built this hour from the operator's three reports: M107 settings rows on one grid (c426edc,
+  17/17 specs), M108 registries — server half (8a91191, 19 tests on recorded slices) and console half (6e4f268),
+  M110 the desktop app from a downloaded folder (d70f68f; the sandboxed renderer dies on any non-http page once the
+  process sandbox is off — the notice is its own window), M111 tasks on the voice tab as a brief (built; its spec
+  waits for a quiet box), and CI naming a red leg's tests as a PR comment (a634d7a). The nineteenth's report started
+  15:04 with vitest/Playwright/electron runs beside it — contaminated, and recorded as such. The twentieth is queued
+  behind it: the two registry sources into configuration.yaml, web + desktop rebuilt, `make up`, eleven gates, then
+  its report.
