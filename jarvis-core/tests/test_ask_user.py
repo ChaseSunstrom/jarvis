@@ -395,3 +395,22 @@ async def test_an_ordinary_question_reaches_the_phone_unadorned(jarvis):
 
     assert asked and asked[0]["question"] == "Which lamp?"
     assert UNTRUSTED_PREFIX not in asked[0]["question"]
+
+
+async def test_the_same_request_twice_in_a_conversation_is_one_card(jarvis, registry):
+    """27 Aug 2026: the serving layer handed a tool call back as text, the
+    agent recovered it, and the model made the call as well — two identical
+    lock_control holds in one turn, and the spoken yes that followed had two
+    things waiting. A hold still pending for the same tool, the same pinned
+    arguments and the same conversation is returned again, not raised again;
+    different arguments are a different card."""
+    from jarvis.bus import Context
+
+    context = Context(origin="llm")
+    first = await registry.call("lock_control", {"action": "unlock", "entity_id": "lock.front_door"}, context=context)
+    again = await registry.call("lock_control", {"action": "unlock", "entity_id": "lock.front_door"}, context=context)
+    assert first["status"] == "approval_required" and again["status"] == "approval_required"
+    assert again["request_id"] == first["request_id"], "the same request was held twice"
+    assert len([r for r in registry.pending_requests() if r["tool"] == "lock_control"]) == 1
+    other = await registry.call("lock_control", {"action": "lock", "entity_id": "lock.front_door"}, context=context)
+    assert other["request_id"] != first["request_id"]

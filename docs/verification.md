@@ -889,7 +889,7 @@ line and fourteen more), `test_voice.py` (`speakable` on every path).
 | A tool call opens a new segment: the guess written before it is never spoken after it; the answer after it is spoken sentence by sentence before `intent-end` | Automated | the M74 test: chunks are the three answer sentences, "Let me look that up." never reaches the synthesiser |
 | The tail is the last `tts-chunk`, synthesised before the whole-reply clip; `tts-end` still carries the whole reply with `remainder_url: null` | Automated | `test_the_first_sentence_is_spoken_before_the_reply_is_finished` (updated) |
 | The rig records `first_audio` (the first chunk's arrival) beside `tts` | Automated | `testing/live/transport.py`; the gate's last check reads it off a spoken research turn |
-| On the house, a spoken research answer of several sentences has its first audio before its whole clip | Scripted | the gate's last check, after the rebuild and `LIVE_ONLY=research-spoken-briefing` — a one-sentence answer (the quick lookup) has nothing to chunk ahead of its clip and records no `first_audio`, which is correct |
+| On the house, a spoken research answer of several sentences has its first audio before its whole clip | Containerised — 27 Aug 01:47: first audio 19.6 s, whole clip 25.8 s on `research-spoken-briefing` | the gate's last check, after the rebuild and `LIVE_ONLY=research-spoken-briefing` — a one-sentence answer (the quick lookup) has nothing to chunk ahead of its clip and records no `first_audio`, which is correct |
 
 ### Research that reads in time (M75)
 
@@ -962,6 +962,8 @@ console: `e2e/e2e.spec.ts` "a question that runs out of time says it lapsed"; ph
 | The held bar keeps a lapsed card ("This question lapsed after N minutes — ask again and Jarvis will wait", CLEAR), shows the server's clock as m:ss, and counts waiting and lapsed separately | Automated | `e2e/e2e.spec.ts` "a question that runs out of time says it lapsed, and does not vanish"; the mock's `expiredSentence` is the server's, word for word |
 | The operator hears the question once, and can answer it by saying so, on the deployed house | **Unproven** | waits for the live rig (`scripts/verify/live_interaction.sh` has no ask-and-answer scenario yet); the worktree cannot run the rig |
 | Settings › Assistant shows `question_ttl` | Unproven | not added: M67 is in the settings registry at the same time (the M70 precedent); `configuration.md` documents the key |
+| The note that tells the model what a spoken yes did is a user-role note the user never sees — never a system message, which the gateway in front of the model (LiteLLM) refuses anywhere but first (400); the harness's fake model refuses one the same way, so the self-test fails first without this | Automated | `testing/harness/fake_ollama.py` (the rule), `testing/e2e/test_ask_and_answer.py`, `tests/test_ask_and_answer.py` — found on the live house on 27 Aug, where every spoken yes had run its tool and then said "I couldn't reach the language model" |
+
 
 ### The house is editable by voice (M69, built; the live rig has not heard it)
 

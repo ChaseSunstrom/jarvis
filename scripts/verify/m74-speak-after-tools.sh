@@ -23,10 +23,12 @@ r = json.loads(pathlib.Path(".verify/live/results.json").read_text())
 turns = [t for s in r["scenarios"] for t in (s.get("turns") or []) if t.get("variant") == "voice" and "research" in s.get("name", "")]
 assert turns, "no spoken research turn in the last live run — run LIVE_ONLY=research-spoken-briefing"
 lat = [t["latency"] for t in turns if t.get("latency", {}).get("first_audio") is not None]
-assert lat, f"no first_audio recorded (a one-sentence reply has no chunk before its clip; the briefing has several): {[t.get(\"latency\") for t in turns]}"
+seen = [t.get("latency") for t in turns]
+assert lat, f"no first_audio recorded (a one-sentence reply has no chunk before its clip; the briefing has several): {seen}"
 for l in lat:
     assert l["first_audio"] <= l["tts"], l
-    print(f"first audio {l[\"first_audio\"]:.2f}s, whole clip {l[\"tts\"]:.2f}s, total {l[\"total\"]:.2f}s")
+    fa, tt, tot = l["first_audio"], l["tts"], l["total"]
+    print(f"first audio {fa:.2f}s, whole clip {tt:.2f}s, total {tot:.2f}s")
 '
 
 verify_end

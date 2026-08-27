@@ -1344,6 +1344,37 @@ class ToolRegistry:
             _LOGGER.debug("Could not read the taint flag", exc_info=True)
             return False
 
+    def _approval_payload(self, request: PendingRequest, tool: Tool) -> dict[str, Any]:
+        """What the model is handed for a held request, new or already waiting."""
+        waits = _minutes(request.ttl)
+        if tool.answerable:
+            message = (
+                f"The question has been put to the user and waits {waits} for their "
+                "answer — they can answer by saying it, or on the console or their "
+                "phone. Your reply now must BE the question, once, in one sentence; "
+                "do not also say that you are asking. Do not call ask_user again."
+            )
+        else:
+            message = (
+                "This action needs the user's explicit approval and has NOT run. "
+                f"It waits {waits}; they can confirm by saying yes, or on the console "
+                "or their phone. Tell them it is waiting on their confirmation, in "
+                "one sentence. Do not retry it."
+            )
+        return {
+            "status": "approval_required",
+            "request_id": request.id,
+            "tool": tool.name,
+            "arguments": copy.deepcopy(request.arguments),
+            # The same sentence the card shows, so the model's "waiting on
+            # your approval" can say what for — and a `jarvis/tools/call`
+            # from the console sees what the banner will.
+            "summary": request.summary,
+            "expires_at": request.expires_at,
+            "waits_seconds": request.ttl,
+            "message": message,
+        }
+
     def _pinned_arguments(self, tool: Tool, args: dict[str, Any]) -> dict[str, Any]:
         """Freeze a held action onto concrete targets.
 
@@ -1380,6 +1411,24 @@ class ToolRegistry:
         # clocks — see `DEFAULT_QUESTION_TTL` for why the first is longer.
         ttl = float(self.question_ttl if tool.answerable else self.approval_ttl)
         conversation_id, spoken = self._turn_facts(context)
+        # The same request twice in one conversation is one card. On 27 Aug
+        # 2026 the serving layer handed a tool call back as text, the agent
+        # recovered it, and the model made the call as well — two identical
+        # lock_control holds in one turn, so the spoken yes that followed had
+        # two things waiting and locked nothing. A hold that is still pending,
+        # for the same tool with the same pinned arguments from the same
+        # conversation, is returned again rather than raised again.
+        for existing in self._pending.values():
+            if (
+                existing.tool == tool.name
+                and existing.arguments == pinned
+                and existing.conversation_id == conversation_id
+                and existing.expires_at > now
+            ):
+                _LOGGER.info(
+                    "Approval for %s already waiting (%s); not holding it twice", tool.name, existing.id
+                )
+                return self._approval_payload(existing, tool)
         request = PendingRequest(
             id=uuid.uuid4().hex[:12],
             tool=tool.name,
@@ -1409,37 +1458,7 @@ class ToolRegistry:
         payload["description"] = tool.description
         self._fire(EVENT_APPROVAL_REQUIRED, payload, context)
         _LOGGER.info("Approval required for %s (%s)", tool.name, request.id)
-        waits = _minutes(ttl)
-        if tool.answerable:
-            # The reply IS the question. Said here rather than left to the
-            # persona, because a reply that announces the question and then
-            # repeats it is the reply the operator heard twice.
-            message = (
-                f"The question has been put to the user and waits {waits} for their "
-                "answer — they can answer by saying it, or on the console or their "
-                "phone. Your reply now must BE the question, once, in one sentence; "
-                "do not also say that you are asking. Do not call ask_user again."
-            )
-        else:
-            message = (
-                "This action needs the user's explicit approval and has NOT run. "
-                f"It waits {waits}; they can confirm by saying yes, or on the console "
-                "or their phone. Tell them it is waiting on their confirmation, in "
-                "one sentence. Do not retry it."
-            )
-        return {
-            "status": "approval_required",
-            "request_id": request.id,
-            "tool": tool.name,
-            "arguments": copy.deepcopy(request.arguments),
-            # The same sentence the card shows, so the model's "waiting on
-            # your approval" can say what for — and a `jarvis/tools/call`
-            # from the console sees what the banner will.
-            "summary": request.summary,
-            "expires_at": request.expires_at,
-            "waits_seconds": ttl,
-            "message": message,
-        }
+        return self._approval_payload(request, tool)
 
     def _turn_facts(self, context: Any) -> tuple[str | None, bool]:
         """Which conversation this turn is, and whether its reply is spoken.

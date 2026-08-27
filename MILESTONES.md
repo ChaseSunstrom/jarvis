@@ -1174,7 +1174,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m73-spoken-form.sh`
   - 26 Aug 23:14: gate 6/6 — the operator's own line comes out as words; speech-text suite 15,
     voice suite 84. Heard on the house after the next rebuild.
-- [ ] **M74 — Speak after tools, sentence by sentence** · size S · deps M60 · parallel-ok M73
+- [x] **M74 — Speak after tools, sentence by sentence** · size S · deps M60 · parallel-ok M73
   - Scope: "it took forever after it spit out text for piper to do the TTS" — M60's early speech
     switches itself off for the turn once any tool has run, so every research answer is
     synthesised whole after the last word. It resumes for the text after the last tool call (a
@@ -1183,6 +1183,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m74-speak-after-tools.sh`
   - 26 Aug 23:14, built, not ticked: the after-tools test and the M60 cases pass (voice suite 84); the
     gate's last check needs the rebuilt house and a spoken research turn for `first_audio`.
+  - 27 Aug 01:47: ticked — on the twelfth rebuild the spoken briefing (three facts and the warranty's
+    void, after two page reads) had its first audio at 19.6 s against a 25.8 s whole clip: the
+    sentences after the tools played while the model wrote the rest. Gate 7/7 (its last check had
+    two Python 3.11 f-strings of its own to fix first).
 - [x] **M75 — Research that reads in time** · size M · deps M68 · parallel-ok M73
   - Scope: two research runs at 22:3x: every page read ended "jarvis-browser timed out after 20s
     on /fetch" and each search paid the tailnet instance's timeout before the fallback answered.

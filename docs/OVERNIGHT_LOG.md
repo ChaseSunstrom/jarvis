@@ -803,3 +803,13 @@ is quiet. Done since:
   The eleventh rebuild (n8n's taint and its no-tools-when-unconfigured): M75 9/9, M83 15/15;
   smoke 10/12 with the two misses being this fault and a briefing the model gave in one sentence
   (the scenario asks for separate sentences now). The twelfth rebuild carries the fix.
+- 01:40 — CI on 8ee6d7f: all five workflows green (CI, compose smoke, the APK, the desktop build, the
+  emulator end-to-end). The twelfth rebuild (the M66 note fix, core only) is up and running the
+  spoken-yes scenarios and the briefing.
+- 01:53 — the twelfth rebuild (the M66 note fix): every spoken yes runs its tool and the model answers —
+  the removal, the settings change and its undo, the lock; the briefing's first audio at 19.6 s
+  against a 25.8 s clip, M74 ticked (gate 7/7 once its own f-strings were fixed). One more fault
+  of the house found by the confirm scenario's last turn: the serving layer handed a lock_control
+  call back as text, the agent recovered it and the model also called it — the same request held
+  twice, so the yes had two things waiting. An identical hold in a conversation is one card now
+  (hold-path suites 53).
