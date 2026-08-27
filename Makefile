@@ -58,7 +58,7 @@ lint-fix: ## the same, applying what it can fix
 .PHONY: test-web
 test-web: ## build + unit + smoke + e2e for the HUD
 	cd jarvis-web && npm run build && npm test && node ../tests/web/smoke.test.mjs
-	cd jarvis-web && npm run test:e2e || echo "(playwright skipped/failed — see jarvis-web/README.md)"
+	cd jarvis-web && npm run test:e2e
 
 .PHONY: test-android
 test-android: ## the Kotlin logic mirrors (pure python, no SDK)

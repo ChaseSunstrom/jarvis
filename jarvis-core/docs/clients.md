@@ -130,9 +130,19 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/notes/search` | `query` and/or `tag`; full text through SQLite FTS5, with a word-by-word fallback so a query containing punctuation returns notes rather than a syntax error |
 | `jarvis/memory/list` | optional `query`, `tag`, `limit`; every durable note, newest first, or the matches for a query — `{entries: [...], total, query, tag}`. The whole store rather than a page of it: the point of the route is that a person can read what is held about them |
 | `jarvis/memory/reflect` | M87: read the day's conversations once and keep the new durable facts as `learned` — `{status, turns, learned: [...], skipped: [{fact, reason}]}`; a note and a `reflection` card say what was learned; scheduled nightly by `memory: reflect_at`. |
-
+**Held requests, on the bus.** `jarvis_approval_required` carries the request:
+`request_id`, `tool`, `arguments` (pinned to concrete ids when raised), `tier`,
+`created`, `expires_at`, `ttl` (the clock it is on: `llm.question_ttl` for a
+question, `llm.approval_ttl` for an action — count *this* down, so the banner
+and the voice agree), `answerable` (the one argument an answer may write; set
+means it is a QUESTION), `choices`, `tainted` (raised by a turn that had read
+untrusted content), `conversation_id` (which conversation raised it — the next
+thing said there can answer it, see `docs/security.md`) and `spoken` (its reply
+is read aloud, so a phone does not read the question out again).
+`jarvis_approval_resolved` repeats it with `approved`; `jarvis_approval_expired`
+repeats it with `expired: true` when the server notices it lapsed — the server
+purges lazily, so keep your own countdown and treat this as confirmation.
 **Stop means stop (M96).** `{"id": 3, "type": "assist_pipeline/stop", "run_id": 2}` cancels the run started with id 2 on this connection, at the server: the model round and the synthesis end, the run ends with `run-end {"interrupted": true}`, and the trace says so. A run that is not in progress answers `not_found`. The console sends it on barge-in and on tap; the phone will (M98).
-
 **A conversation has a URL (M93).** The console's voice screen opens `?conversation=<id>` — its transcript from the archive, or a new thread under that id when the archive has none — and the address bar follows whichever thread is open; the screen carries `data-conversation-id` for whoever reads the page (the rig's browser transport holds a thread across turns this way, and the phone can open the same link). `mode=chat` rides along.
 | `jarvis/memory/add` | `text`, optional `tags`, `pinned`, `allow_untrusted`. The console is a person typing, so it may store what the model may not |
 | `jarvis/memory/forget` | `entry_id` or `query`, or `all: true` for everything **including the vector sidecar** — a store that reported itself empty while an index still ranked the old text would be the least visible kind of broken promise |
@@ -168,19 +178,7 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/device/register` | says who this socket is, so it can be sent commands and counted as present. It is the door to the whole device channel — `device_command` / `device_result` / `device_event` are *frames*, not commands, and are specified in `docs/cross-device.md` and `android-app/docs/device-channel.md` |
 | `assist_pipeline/pipeline/list` | available voice pipelines + the preferred one |
 | `assist_pipeline/run` | a voice run (below) |
-
-**Held requests, on the bus.** `jarvis_approval_required` carries the request:
-`request_id`, `tool`, `arguments` (pinned to concrete ids when raised), `tier`,
-`created`, `expires_at`, `ttl` (the clock it is on: `llm.question_ttl` for a
-question, `llm.approval_ttl` for an action — count *this* down, so the banner
-and the voice agree), `answerable` (the one argument an answer may write; set
-means it is a QUESTION), `choices`, `tainted` (raised by a turn that had read
-untrusted content), `conversation_id` (which conversation raised it — the next
-thing said there can answer it, see `docs/security.md`) and `spoken` (its reply
-is read aloud, so a phone does not read the question out again).
-`jarvis_approval_resolved` repeats it with `approved`; `jarvis_approval_expired`
-repeats it with `expired: true` when the server notices it lapsed — the server
-purges lazily, so keep your own countdown and treat this as confirmation.
+| `assist_pipeline/stop` | M96: `run_id` — the id a run on this connection was started with; cancels it at the server, and the run ends `run-end {"interrupted": true}`. `not_found` when nothing by that id is in progress. |
 
 Every command above is in `_HANDLERS` in `jarvis/api/websocket.py`, and
 `test_packaging.py::test_every_websocket_command_is_documented` asserts the two

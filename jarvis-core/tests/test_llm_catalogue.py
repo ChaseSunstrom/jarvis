@@ -354,7 +354,7 @@ async def test_a_vision_model_no_server_lists_is_configured_and_not_served(jarvi
     `house` and `house-fast`. The operator read the panel's "cameras are not
     configured" and asked why the vision model was not set; it was set — and
     not served, which is a different sentence with a different fix."""
-    jarvis.config["vision"] = {"model": "house-vision", "url": "http://127.0.0.1:4000/v1", "cameras": []}
+    jarvis.config["vision"] = {"model": "house-vision", "url": "http://model-gateway.test/v1", "cameras": []}
     payload = await common.async_llm_models_payload(jarvis)
     role = payload["roles"]["vision"]
     assert role["configured"] is True and role["value"] == "house-vision"

@@ -1228,6 +1228,12 @@ async def _main(args: argparse.Namespace) -> int:
         "scenarios": [r.as_dict() for r in results],
     }
     write_json(OUT_DIR / "results.json", payload)
+    # And under the gate's own name when a gate ran this slice (M91): every
+    # slice overwrote the one file, so a red smoke inside m07 was unreadable by
+    # the time m17 had run.
+    gate = os.environ.get("VERIFY_GATE", "").strip()
+    if gate:
+        write_json(OUT_DIR / f"results-{gate}.json", payload)
 
     failed = [r for r in results if not r.ok]
     print(

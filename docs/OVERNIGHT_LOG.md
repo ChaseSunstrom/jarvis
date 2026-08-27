@@ -930,3 +930,9 @@ is quiet. Done since:
   socket registers (the channel's `afterRegistered` hook; the host's `refreshSpeakerGate`, the same GET and
   expression as the enrolment screen), so a new phone against an enforcing house is no longer refused every
   turn while Settings says the opposite; the on-device-turn mirror pins it; gradle building.
+- 05:37 — M91's first half: `check_pytest` in lib.sh (fails on failed, error, no tests ran, and on skips
+  beyond what the gate allows; the summary printed), `VERIFY_GATE` exported by verify_begin so a gate's live
+  slice writes results-<gate>.json beside the shared file, `make test-web` no longer swallows Playwright.
+  m54's two reds fixed: the M93/M96 prose had split the commands table the documentation test reads (and
+  `assist_pipeline/stop` had no row), and the catalogue test carried a loopback gateway URL. The gates that
+  run harness-backed suites move to check_pytest once verify-all is done with lib.sh.

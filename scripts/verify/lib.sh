@@ -33,6 +33,8 @@ _V_TITLE=""
 verify_begin() {
     _V_ID="$1"
     _V_TITLE="$2"
+    # M91: a live slice run by this gate writes results-<gate>.json beside the shared file.
+    export VERIFY_GATE="$(printf "%s" "$1" | tr "A-Z" "a-z")"
     printf '\n== %s — %s ==\n' "$_V_ID" "$_V_TITLE"
 }
 
@@ -92,6 +94,40 @@ check_sh() {
     else
         _v_fail "$label" "$out"
     fi
+}
+
+# check_pytest "<label>" '<pytest command>' [allowed_skips]
+#
+# M91: a gate cannot pass on a skip. `check_sh` read only pytest's exit
+# status, so a suite that skipped itself wholesale — the desktop e2e when
+# the harness will not import, one `pytest.skip` inside an "Automated" row —
+# passed as green (the quality audit, 27 Aug 2026). This reads the summary
+# line and fails on `failed`, `error`, `no tests ran`, and on `skipped`
+# beyond the number the gate says it expects (default none). The summary is
+# what is printed, so the count is on the record.
+check_pytest() {
+    local label="$1"
+    local snippet="$2"
+    local allowed="${3:-0}"
+    local out summary skipped
+    out=$(bash -o pipefail -c "$snippet" 2>&1)
+    local status=$?
+    summary=$(printf '%s\n' "$out" | grep -E "^(=+ )?([0-9]+ (passed|failed|error|skipped|deselected|xfailed|xpassed|warning)s?(, )?)+|no tests ran|^ERROR" | tail -1)
+    if [ -z "$summary" ]; then
+        _v_fail "$label" "no pytest summary line in the output:
+$(printf '%s\n' "$out" | tail -5)"
+        return
+    fi
+    if [ $status -ne 0 ] || printf '%s' "$summary" | grep -qE "failed|error|no tests ran|^ERROR"; then
+        _v_fail "$label" "$summary"
+        return
+    fi
+    skipped=$(printf '%s' "$summary" | grep -oE "[0-9]+ skipped" | grep -oE "[0-9]+" || echo 0)
+    if [ "${skipped:-0}" -gt "$allowed" ]; then
+        _v_fail "$label" "$summary — $skipped skipped, $allowed allowed: a skip is not a pass"
+        return
+    fi
+    _v_ok "$label" "$summary"
 }
 
 # check_sh_not "<label>" '<shell snippet>' — passes when the snippet exits non-zero.
