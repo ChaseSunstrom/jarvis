@@ -254,6 +254,9 @@ class Task:
     #: True while more steps may still be appended, so a bar can say
     #: "indeterminate" instead of inventing a denominator.
     open_ended: bool = False
+    #: Picked back up by the engine after a restart killed it mid-flight (M85):
+    #: the completion says so, once, and the log shows where it resumed.
+    resumed: bool = False
     #: Everything that happened, oldest first, capped at [MAX_LOG_ENTRIES].
     log: list[TaskLogEntry] = field(default_factory=list)
     #: Monotonic per task, so a client can tell a dropped frame from a
@@ -304,6 +307,7 @@ class Task:
             "updated": self.updated,
             "source": self.source,
             "open_ended": self.open_ended,
+            "resumed": self.resumed,
             "parent_id": self.parent_id,
             "agent": self.agent,
             # The log is deliberately NOT here: the lifecycle events carry the
@@ -343,6 +347,7 @@ class Task:
             error=_clip(raw.get("error"), MAX_DETAIL_CHARS),
             source=_clip(raw.get("source"), 80),
             open_ended=bool(raw.get("open_ended")),
+            resumed=bool(raw.get("resumed")),
             log=[
                 entry
                 for entry in (TaskLogEntry.from_dict(e) for e in raw.get("log") or [])
@@ -376,11 +381,16 @@ class Task:
         """
         if self.status == STATUS_RUNNING:
             self.status = STATUS_ERROR
-            self.error = self.error or "interrupted when Jarvis restarted"
+            self.error = self.error or RESTART_ERROR
             for step in self.steps:
                 if step.status == STATUS_RUNNING:
                     step.status = STATUS_ERROR
         return self
+
+
+#: What a task left running says after a restart, and what the engine looks
+#: for when it can pick one back up.
+RESTART_ERROR = "interrupted when Jarvis restarted"
 
 
 class TaskRegistry:

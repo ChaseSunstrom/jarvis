@@ -409,6 +409,39 @@ class Stack:
         )
 
 
+#: Files under a snapshotted path that a person edits and a run never does —
+#: left alone by `restore`, whatever the tarball holds. Paths relative to the
+#: snapshotted directory; a trailing slash names a whole directory.
+OPERATOR_FILES: tuple[str, ...] = (
+    "configuration.yaml",
+    "automations.yaml",
+    "scenes.yaml",
+    "scripts.yaml",
+    "secrets.yaml",
+    "packages/",
+    "agents/",
+    "examples/",
+    "models/",
+    "dashboards/",
+)
+
+
+def restore_script(name: str) -> str:
+    """The shell that puts a snapshotted directory back, minus the operator's files.
+
+    Kept as a function so a test can read what the sweep and the extract will
+    and will not touch without running a container.
+    """
+    protect = " ".join(f"-e '^{p}'" for p in OPERATOR_FILES)
+    excludes = " ".join(f"--exclude='./{p.rstrip('/')}'" for p in OPERATOR_FILES)
+    return (
+        f"cd /v && tar tzf /in/{name} | sed 's#^\\./##' | grep -v '/$' | sort > /tmp/keep && "
+        f"find . -type f | sed 's#^\\./##' | grep -v {protect} | sort > /tmp/have && "
+        "comm -13 /tmp/keep /tmp/have | while read -r extra; do rm -f \"$extra\"; done; "
+        f"tar xzf /in/{name} -C /v --overwrite {excludes}"
+    )
+
+
 @dataclass
 class Snapshot:
     """What a destructive scenario is about to destroy, and where it went."""
@@ -483,16 +516,19 @@ class StateGuard:
         # — a config file added mid-run survived the restore, collided with the
         # restored original, and jarvis-core would not boot afterwards.
         #
+        # Except the operator's own files. What a run changes is the house's
+        # state — `.storage/`, the recorder's database, the notes — and that is
+        # what "as it was" means. `configuration.yaml`, the included YAML, the
+        # packages and the agent definitions are edited by a person, and a
+        # run that ends while they are being edited must not put an hour of
+        # their work back the way it found it (a `narrate:` block, 27 Aug
+        # 2026). Those are neither swept nor extracted.
+        #
         # Extract AFTER the sweep, and no `rm -rf /v/*`: unlinking a file a
         # running service holds open is safe on Linux (it keeps its descriptor
         # until the restart that follows), while emptying the directory first
         # would leave a window in which the house does not exist.
-        script = (
-            f"cd /v && tar tzf /in/{name} | sed 's#^\\./##' | grep -v '/$' | sort > /tmp/keep && "
-            "find . -type f | sed 's#^\\./##' | sort > /tmp/have && "
-            "comm -13 /tmp/keep /tmp/have | while read -r extra; do rm -f \"$extra\"; done; "
-            f"tar xzf /in/{name} -C /v --overwrite"
-        )
+        script = restore_script(name)
         _run(
             [
                 "docker", "run", "--rm",

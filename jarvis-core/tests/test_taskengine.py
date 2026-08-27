@@ -276,6 +276,65 @@ async def test_running_work_is_not_resumed_unless_it_said_it_was_idempotent(regi
     assert risky.id not in resumable
 
 
+async def test_a_resumable_job_is_picked_back_up_after_a_restart_and_says_so(registry, engine):
+    """M85. Four background tasks on the house ended "interrupted when Jarvis
+    restarted" on 27 Aug 2026: the registry errored them honestly, and the
+    engine — with no factory registered and nothing idempotent — had nothing to
+    pick up. A job whose worker said it was idempotent, and whose kind the
+    engine can rebuild, goes back to queued, runs, and the task says it was
+    picked back up. One that did not say so stays errored."""
+    from jarvis.tasks import RESTART_ERROR
+
+    safe = await registry.async_add("audit every sensor", kind="background")
+    risky = await registry.async_add("half-done deploy", kind="code")
+    await registry.async_update(safe.id, status="running", add_steps=["list the sensors", "read each one"])
+    await registry.async_update(safe.id, step=0, step_status="done")
+    await registry.async_update(safe.id, step=1, step_status="running")
+    await registry.async_update(risky.id, status="running")
+    engine._stopping = True
+    engine.queue.append(QueuedWork(task_id=safe.id, kind="background", idempotent=True,
+                                   payload={"description": "audit every sensor"}))
+    engine.queue.append(QueuedWork(task_id=risky.id, kind="code", idempotent=False))
+    await registry.async_save()
+    saved = engine.as_dict()
+
+    # The process dies and comes back.
+    second_registry = TaskRegistry(FakeJarvis(), store=registry.store)
+    await second_registry.async_load()
+    restored = {t.id: t for t in second_registry.tasks}
+    assert restored[safe.id].status == STATUS_ERROR and restored[safe.id].error == RESTART_ERROR
+    assert restored[risky.id].status == STATUS_ERROR
+
+    ran: list[str] = []
+    second = TaskEngine(second_registry.jarvis, second_registry, max_concurrent=2)
+    second_registry.jarvis.taskengine = second
+
+    def factory(item: QueuedWork):
+        async def worker(task_id: str) -> None:
+            ran.append(item.payload["description"])
+            await second_registry.async_update(task_id, status=STATUS_DONE, result="all fine")
+        return worker
+
+    second.register_kind("background", factory)
+    second.load(saved)
+
+    picked = second_registry.get(safe.id)
+    assert picked.status == "queued" and picked.error == "" and picked.resumed is True
+    assert picked.detail == "picked back up after a restart"
+    assert [s.status for s in picked.steps] == ["done", "queued"], "the done step is kept, the dead one re-queued"
+    assert second_registry.get(risky.id).status == STATUS_ERROR, "a non-idempotent job stays errored"
+    assert second_registry.get(risky.id).resumed is False
+
+    second.start()
+    try:
+        assert await second.async_drain(timeout=5)
+    finally:
+        await second.async_stop()
+    assert ran == ["audit every sensor"], "the rebuilt worker did not run"
+    assert second_registry.get(safe.id).status == STATUS_DONE
+    assert second_registry.get(safe.id).as_dict()["resumed"] is True
+
+
 async def test_a_queue_entry_for_a_task_that_is_gone_is_dropped(registry, engine):
     engine.load({"queue": [{"task_id": "vanished", "kind": "background"}]})
     assert engine.queue == []

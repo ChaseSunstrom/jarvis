@@ -1,0 +1,33 @@
+name: task-survives-a-restart
+capability: task
+gated-on: M85
+ground: stack
+intent: >
+  "Look into every sensor and tell me when it is done" was answered "under
+  way, Sir" and then Jarvis restarted (an upgrade, a crash, the operator's own
+  `make up`); the job ended "interrupted when Jarvis restarted" and nobody was
+  told. A job the engine can run again is picked back up after the restart,
+  finishes, and the completion says it was picked back up — a real SIGTERM
+  and a real restart between the two turns, as memory-remember-and-recall does.
+variants: [text]
+turns:
+  - say: >
+      Put this in the background rather than answering now: go through every
+      sensor in the house, work out which ones look wrong, and write it up.
+      Tell me when it is done.
+    expect:
+      task: {kind: background, within: 45}
+      reply_means: "says the work is under way and that it will report back"
+  - say: "Is that finished yet?"
+    restart: true
+    wait: 20
+    expect:
+      notification:
+        kind: task
+        source: jarvis_task_completed
+        title_contains: "picked back up"
+        within: 300
+      reply_means: >
+        says the work finished (or is finishing) — it may mention that it was
+        picked back up after a restart; it must NOT say the job failed or was
+        interrupted

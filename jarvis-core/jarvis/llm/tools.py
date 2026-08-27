@@ -1770,6 +1770,21 @@ CREATE_TOOL_EXAMPLE = {
 }
 
 
+def _resumed_description(registry_tasks: Any, task_id: str, description: str) -> str:
+    """The job's words, with what a restart already saw done in front of them."""
+    task = registry_tasks.get(task_id) if registry_tasks is not None and hasattr(registry_tasks, "get") else None
+    if task is None or not getattr(task, "resumed", False):
+        return description
+    done = [s.title for s in getattr(task, "steps", []) if getattr(s, "status", "") == "done" and getattr(s, "title", "")]
+    if not done:
+        return f"{description}\n\n(Picked back up after a restart: nothing was finished before it; start again.)"
+    listed = "; ".join(done[:8])
+    return (
+        f"{description}\n\n(Picked back up after a restart. Already done before it, do not repeat: "
+        f"{listed}. Plan and do only what remains, then write it up as a whole.)"
+    )
+
+
 def register_builtin_tools(
     registry: ToolRegistry, user_context: dict[str, Any] | None = None
 ) -> None:
@@ -2343,7 +2358,7 @@ def register_builtin_tools(
         handler=_get_user_context,
     )
 
-    def _background_worker(description: str, task_id: str):
+    def _background_worker(description_text: str, task_id: str):
         """One turn, driven by the engine instead of by somebody waiting.
 
         "Look into X and tell me later" is a conversation turn nobody is sitting
@@ -2357,6 +2372,11 @@ def register_builtin_tools(
             registry_tasks = getattr(jarvis, "tasks", None)
             if agent is None:
                 raise RuntimeError("there is no conversation agent on this server")
+            # Picked back up after a restart (M85): the model is told which
+            # steps were already recorded done, so it plans the rest rather
+            # than the whole job again, and the user hears "picked back up"
+            # from the completion rather than a silent second run.
+            description = _resumed_description(registry_tasks, task_id, description_text)
             # A request with more than one thing in it is planned, acted on
             # step by step and verified — the steps land on the task, so
             # somebody can see what Jarvis intends before it does it. A single
@@ -2414,6 +2434,16 @@ def register_builtin_tools(
                 )
 
         return run
+
+    # Registered once, so a queue item restored after a restart can be given a
+    # worker again — `register_kind` had no caller, and every restored item
+    # failed "no worker for 'background'" (the agentic audit, 27 Aug 2026).
+    _engine = getattr(jarvis, "taskengine", None)
+    if _engine is not None and hasattr(_engine, "register_kind"):
+        _engine.register_kind(
+            "background",
+            lambda item: _background_worker(str(item.payload.get("description") or ""), item.task_id),
+        )
 
     # --- run_background_task (tier 2) -------------------------------------
     #
@@ -2483,6 +2513,12 @@ def register_builtin_tools(
                 _background_worker(description, task_id),
                 kind="background",
                 retries=1,
+                # Safe to run again from the start: the job is a conversation
+                # turn whose reads repeat harmlessly and whose actions are
+                # gated by their own tools' tiers — a re-run re-asks for
+                # anything that needs asking. So a restart picks it back up
+                # (M85) instead of leaving "interrupted when Jarvis restarted".
+                idempotent=True,
                 payload={"description": description},
             )
         if not started:

@@ -866,3 +866,11 @@ is quiet. Done since:
   record verbs; `get_user_context` on the house clock; the approvals seed and the n8n row read the
   server's shape, the mock answers in it (vitest 770). M94–M97 planned; the six audit reports kept
   under docs/research/audits/.
+- 04:25 — M85 built: the engine puts an idempotent job it still has back to queued after a restart
+  ("picked back up after a restart"), the background worker's factory is registered (register_kind had
+  no caller), background jobs are idempotent by design, a resumed job plans only what is left, and the
+  completion says it was picked back up; gate offline 4/5, the scenario restarts the house between
+  turns. Found on the way: the rig's stack ground snapshots the whole config directory and restores
+  it — with a core restart — at the end of every live run, so a `narrate:` block added during verify-all
+  vanished; the restore now leaves the operator's own files alone (rig tests 49). The narrate block is
+  back: doors, locks, smoke/gas, devices going unavailable — the first half of M86.

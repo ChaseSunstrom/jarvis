@@ -1549,6 +1549,30 @@ briefing:
   max_chars: 700
   importance: low
 
+# Jarvis notices (M86): a way into the house opened, a lock unlocked, a smoke
+# or gas alarm, a device that went unavailable — said on whichever device you
+# are at, a quiet notification when you are not, nothing between 23:00 and
+# 07:00 except the critical ones. Four ceilings keep a flapping sensor from
+# becoming a storm; nothing matched is lost, so "what happened while I was
+# out?" (`recent_events`) can still answer.
+narrate:
+  enabled: true
+  quiet_hours: ["23:00", "07:00"]
+  min_interval: 300
+  max_per_hour: 20
+  max_burst: 5
+  rules:
+    - device_class: [door, garage_door, window, opening]
+      on_state: "on"
+    - domains: [lock]
+      on_state: unlocked
+    - device_class: [smoke, gas, carbon_monoxide]
+      on_state: "on"
+      importance: critical
+      quiet_hours: false
+    - domains: [light, switch, lock, cover, climate, media_player, vacuum, camera]
+      on_state: unavailable
+
 surface: {}
 
 # n8n (M77): the house's workflows through n8n's own API. Empty url means

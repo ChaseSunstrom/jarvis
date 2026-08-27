@@ -50,6 +50,7 @@ from typing import Any, Awaitable, Callable
 from .tasks import (
     STATUS_ERROR,
     STATUS_QUEUED,
+    RESTART_ERROR,
     STATUS_RUNNING,
     TaskCancelled,
     TaskRegistry,
@@ -239,6 +240,29 @@ class TaskEngine:
             if task is None or task.finished:
                 continue
             self.queue.append(item)
+
+        # Work that was RUNNING when the process died is errored by
+        # `Task.restored` — honest, since nothing is driving it. When the queue
+        # still has it and the worker said it was idempotent, the engine can
+        # drive it again, so it goes back to queued and says so: "picked back up
+        # after a restart" (M85). Four tasks on the house ended "interrupted
+        # when Jarvis restarted" on 27 Aug 2026 with nothing to pick them up.
+        for item in self.queue:
+            task = self.registry.get(item.task_id)
+            if (
+                task is not None
+                and item.idempotent
+                and task.status == STATUS_ERROR
+                and task.error == RESTART_ERROR
+            ):
+                task.status = STATUS_QUEUED
+                task.error = ""
+                task.detail = "picked back up after a restart"
+                task.resumed = True
+                for step in task.steps:
+                    if step.status in (STATUS_RUNNING, STATUS_ERROR):
+                        step.status = STATUS_QUEUED
+                _LOGGER.info("task engine: picking %s back up after the restart", task.id)
 
         known = {item.task_id for item in self.queue}
         for task in self.registry.tasks:

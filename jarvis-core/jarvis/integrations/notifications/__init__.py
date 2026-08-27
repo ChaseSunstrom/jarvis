@@ -272,9 +272,13 @@ def _listen(jarvis: "Jarvis", store: NotificationStore) -> None:
             # task completed" as well would put the same thing on the screen
             # twice, once in the user's words and once in ours.
             return
+        # Said once, here, when the engine picked the job back up after a
+        # restart (M85): the person asked for it before the restart and would
+        # otherwise not know why it took so long, or that it ran twice.
+        finished = "Finished (picked back up after a restart)" if task.get("resumed") else "Finished"
         await store.async_add(
             kind="task",
-            title=f"Finished: {task.get('title') or 'a background job'}",
+            title=f"{finished}: {task.get('title') or 'a background job'}",
             body=str(task.get("result") or "")[:MAX_BODY],
             source=EVENT_TASK_COMPLETED,
             link=f"/tasks#{task.get('id') or ''}",
