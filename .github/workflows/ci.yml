@@ -86,6 +86,14 @@ jobs:
           # run 33087733490: "Run tests" red, pytest.plain of zero bytes).
           PYTHONUNBUFFERED: "1"
         run: |
+          # `set +e` FIRST: GitHub runs `run:` scripts under `bash -e`, so the
+          # pytest pipeline exiting 1 ended the script right there — the sed,
+          # the grep, the `::error::` rows and the notice below never ran on
+          # any red leg, which is why five reds showed nothing but "exit code
+          # 1" (27 Aug 2026; run 33088811731 finally said so: 496 lines in
+          # pytest.log, no pytest.plain). Every line after pytest is the
+          # report of its result and must run whatever that result is.
+          set +e
           set -uo pipefail
           # The job log needs a token to read; the check run's annotations do
           # not. A failing test is named on the check run, so a red job can be
@@ -126,6 +134,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -u
+          # The plain log is made here when the test step did not get to it.
+          [ -s pytest.plain ] || { [ -s pytest.log ] && sed 's/\x1b\[[0-9;]*m//g' pytest.log > pytest.plain; } || true
           if [ ! -s pytest.plain ]; then
             # Nothing pytest said: the log is missing (an earlier step
             # failed) or empty (pytest was killed before it flushed — see
