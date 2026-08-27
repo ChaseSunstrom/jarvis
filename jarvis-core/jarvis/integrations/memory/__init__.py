@@ -1496,12 +1496,28 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
             person=speaker_of(jarvis, context),
         )
 
+    def _asks_for_recent(text: str) -> bool:
+        return bool(re.search(r"\b(today|tonight|recent(?:ly)?|lately|new|learn(?:ed|t)?|this (?:morning|evening|week))\b", text, re.I))
+
     async def tool_recall(args: dict[str, Any], context: Any = None) -> Any:
-        results = memory.search(
-            query=str(args.get("query") or ""),
-            tags=args.get("tags"),
-            limit=int(args.get("limit") or DEFAULT_SEARCH_LIMIT),
-        )
+        query = str(args.get("query") or "")
+        limit = int(args.get("limit") or DEFAULT_SEARCH_LIMIT)
+        results = list(memory.search(query=query, tags=args.get("tags"), limit=limit))
+        # "What did you learn about me today?" is not a search for the words
+        # "learn", "me" and "today": on the nineteenth house (27 Aug 2026) it
+        # found the profile and missed the fact kept a minute earlier. A
+        # question about the recent past gets what was kept recently, newest
+        # first, beside whatever the words matched.
+        recent_hours = float(args.get("recent_hours") or 0) or (24.0 if _asks_for_recent(query) else 0.0)
+        if recent_hours > 0:
+            since = time.time() - recent_hours * 3600
+            seen = {e.id for e in results}
+            fresh = sorted(
+                (e for e in memory.all() if e.created >= since and e.id not in seen),
+                key=lambda e: e.created,
+                reverse=True,
+            )
+            results = (fresh + results)[: max(limit, len(fresh))]
         return {
             "status": "ok",
             "count": len(results),
@@ -1611,11 +1627,18 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
         name="recall",
         description=(
             "Look up what you were told to remember. Call this before saying you "
-            "do not know something the user may have told you earlier."
+            "do not know something the user may have told you earlier. A question "
+            "about the recent past ('what did you learn today', 'anything new about "
+            "me lately') returns what was kept in the last day as well, newest first — "
+            "read those back, every one."
         ),
         parameters=schema_object(
             {
                 "query": {"type": "string", "description": "What you are trying to remember."},
+                "recent_hours": {
+                    "type": "number",
+                    "description": "Also return everything kept in the last N hours, newest first (24 for 'today').",
+                },
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "limit": {"type": "integer", "description": "Maximum results (default 5)."},
             }

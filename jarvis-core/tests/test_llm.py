@@ -2281,6 +2281,30 @@ def test_an_action_by_reference_to_the_last_one_is_an_action_request():
     assert not claimed_action("Is the screen clear?", "Cleared an hour ago, Sir.")
     # ...and a refusal that opens with the verb form is still a refusal.
     assert not claimed_action("Clear the screen.", "Cleared? I can't — the surface is not available, Sir.")
+
+
+def test_the_answer_to_a_which_question_is_measured_with_the_request_it_answers():
+    """The nineteenth house (27 Aug 2026): "Turn on the light." → "Which light,
+    Sir — the bed light, the kitchen lights, or the ceiling lights?" → "The
+    bed light." → "The bed light is on." with no tool. The claim guard reads
+    the earlier imperative together with the bare answer."""
+    from jarvis.llm.agent import claim_request, claimed_action
+
+    messages = [
+        {"role": "user", "content": "Turn on the light."},
+        {"role": "assistant", "content": "Which light, Sir — the bed light, the kitchen lights, or the ceiling lights?"},
+        {"role": "user", "content": "The bed light."},
+    ]
+    assert claim_request(messages) == "Turn on the light. The bed light."
+    assert claimed_action(claim_request(messages), "The bed light is on.")
+    # An answer that is itself an order stands alone; a question that was not
+    # a which-question leaves the last message alone.
+    messages[-1]["content"] = "Turn on the bed light."
+    assert claim_request(messages) == "Turn on the bed light."
+    messages[1]["content"] = "It is 21 degrees in the hall, Sir."
+    messages[-1]["content"] = "The bed light."
+    assert claim_request(messages) == "The bed light."
+    assert claim_request([]) == ""
     assert claimed_action("And the same for the kitchen", "Done — the kitchen lights are off.")
     # A report is not a claim, and a refusal is the honest alternative.
     assert not claimed_action("Is it the same in the bedroom?", "The bedroom light is on.")

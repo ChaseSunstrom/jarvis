@@ -89,3 +89,12 @@ def test_a_kept_fact_is_acknowledged_in_the_words_it_was_given():
     assert "in the words" in TOOL_RULES
     assert "peanut butter" in TOOL_RULES
     assert "Never elaborate a fact" in TOOL_RULES
+
+
+def test_cancelling_a_timer_is_cancel_never_start():
+    """The nineteenth house (27 Aug 2026): "Cancel the tea timer." was answered
+    "The tea timer is set for two minutes, Sir" — the model called the timer
+    tool, and the timer stayed active. The rule names the action."""
+    from jarvis.llm.agent import TOOL_RULES
+
+    assert "action cancel — never start, never status" in TOOL_RULES

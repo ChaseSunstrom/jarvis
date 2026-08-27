@@ -2168,3 +2168,25 @@ async def test_the_user_can_still_clear_everything_through_the_service(tmp_path)
 
     assert result["count"] == 1
     assert (await call(jarvis, "memory", "list"))["count"] == 0
+
+
+async def test_what_did_you_learn_today_recalls_what_was_kept_today(tmp_path):
+    """The nineteenth house (27 Aug 2026): "Mira reacts badly to peanuts" was
+    kept, and "What did you learn about me today?" recalled the profile and
+    said "nothing else recorded today" — the words of the question matched
+    nothing in the fact. A question about the recent past returns what was
+    kept recently, newest first, beside whatever the words matched."""
+    from jarvis.core import Context
+
+    jarvis = await setup_memory(tmp_path)
+    registry = jarvis.data["llm_tools"]
+    context = Context(origin="api")
+    kept = await registry.call("remember", {"text": "Mira, the youngest in this house, reacts badly to peanuts"}, context=context)
+    assert kept.get("stored") is not False, kept
+    answer = await registry.call("recall", {"query": "What did you learn about me today?"}, context=context)
+    texts = [m["text"] for m in answer["memories"]]
+    assert any("peanuts" in t for t in texts), texts
+    # The same words, asked as a plain search, need the switch said out loud.
+    plain = await registry.call("recall", {"query": "combination", "recent_hours": 24}, context=context)
+    assert any("peanuts" in m["text"] for m in plain["memories"])
+    await jarvis.async_stop()

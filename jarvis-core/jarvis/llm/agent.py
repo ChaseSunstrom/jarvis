@@ -164,6 +164,10 @@ Tool use:
   it was given. A fact repeated in other words is a different fact:
   "reacts badly to peanuts" acknowledged as "peanut butter" changes what
   was said. Never elaborate a fact; repeat it.
+- "Cancel the tea timer", "stop the pasta timer" is the timer tool with
+  action cancel — never start, never status; say it is cancelled. On the
+  nineteenth house (27 Aug 2026) the cancel came back "The tea timer is set
+  for two minutes, Sir" with the timer still running.
 - Building, writing or changing software — an app, a script, a site, a
   program, a repository — is a coding job: start_coding_job (and
   list_code_repositories / create_repository for where it goes). You are not
@@ -1765,9 +1769,7 @@ class ConversationAgent:
         constrain_next = False
         #: What the user asked, for the check below: a reply that says "done"
         #: to an imperative when nothing was called is a claimed action.
-        request_text = next(
-            (str(m.get("content") or "") for m in reversed(messages) if m.get("role") == "user"), ""
-        )
+        request_text = claim_request(messages)
         #: The calls each round made, as one signature per round: a model that
         #: makes the same calls three rounds running — polling task_status for
         #: a job it just started, re-reading the same page — is not converging
@@ -2512,6 +2514,35 @@ def _waiting_note(pending: list[dict[str, Any]]) -> str:
                 "waits. Do not call it again."
             )
     return "\n".join(lines)
+
+
+_WHICH_QUESTION = re.compile(r"\bwhich\b[^?]*\?\s*$", re.IGNORECASE | re.S)
+
+
+def claim_request(messages: list[dict[str, Any]]) -> str:
+    """The request a reply is measured against by `claimed_action`.
+
+    The last user message — unless it is the bare answer to a which-question
+    the house just asked ("Turn on the light." / "Which light, Sir?" / "The
+    bed light."), in which case it is the earlier request and the answer
+    together: on the nineteenth house (27 Aug 2026) "The bed light." was
+    answered "The bed light is on." with no tool called, and the guard saw no
+    imperative in three words.
+    """
+    users = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+    if not users:
+        return ""
+    last = str(messages[users[-1]].get("content") or "")
+    if len(users) < 2 or _ACTION_REQUEST.search(last):
+        return last
+    between = [
+        str(m.get("content") or "")
+        for m in messages[users[-2] + 1 : users[-1]]
+        if m.get("role") == "assistant" and str(m.get("content") or "").strip()
+    ]
+    if between and _WHICH_QUESTION.search(between[-1].strip()):
+        return f"{messages[users[-2]].get('content') or ''} {last}".strip()
+    return last
 
 
 def claimed_action(request: str, reply: str) -> bool:
