@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -39,15 +40,29 @@ class Store:
 
     def _save_sync(self, data: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps({"version": self.version, "data": data}, indent=2, default=str),
-            encoding="utf-8",
+        # A temp file of its own per write, never a shared `<name>.tmp`: the
+        # lock above serialises saves, but a task cancelled while awaiting the
+        # thread (a timer re-armed at the instant it finished, 27 Aug 2026)
+        # releases the lock with its thread still writing, and the next save
+        # renamed the shared temp file out from under it —
+        # FileNotFoundError at the chmod. mkstemp creates it 0600 already.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(self.path.parent), prefix=f"{self.path.stem}.", suffix=".tmp"
         )
-        # auth.json holds the pairing secret in the clear — it has to be
-        # readable back — so a store must not land group/world readable under
-        # the usual 022 umask. Chmod the temp file rather than the live path:
-        # after the rename there would be an instant in which any local user
-        # could open it, and a credential leaked in that instant stays leaked.
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self.path)
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps({"version": self.version, "data": data}, indent=2, default=str)
+                )
+            # auth.json holds the pairing secret in the clear — it has to be
+            # readable back — so a store must not land group/world readable
+            # under the usual 022 umask. Chmod the temp file rather than the
+            # live path: after the rename there would be an instant in which
+            # any local user could open it, and a credential leaked in that
+            # instant stays leaked.
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise

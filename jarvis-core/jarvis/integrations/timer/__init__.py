@@ -230,7 +230,11 @@ class TimerEntity(Entity):
                 if self._attr_state == STATE_ACTIVE:
                     self.async_write_state()
             if self._attr_state == STATE_ACTIVE:
-                await self.manager.async_finished(self)
+                # Shielded: a snooze or a restart at the very instant the
+                # countdown ends cancels THIS task, and the chime and the save
+                # must still complete — a timer that went off and said nothing
+                # is the one thing a timer must never do.
+                await asyncio.shield(self.manager.async_finished(self))
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - one timer's fault must not end another
