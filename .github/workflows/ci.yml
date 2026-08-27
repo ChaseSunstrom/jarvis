@@ -28,6 +28,11 @@ on:
 # needs more should ask for it by name rather than inherit a write token.
 permissions:
   contents: read
+  # For the step that names a red core leg's failing tests on the pull
+  # request: `::error::` lines never reached the check run's annotations
+  # (27 Aug 2026, five reds in a row showed "exit code 1" and nothing else),
+  # and the job log needs a token to read. A PR comment is readable by anyone.
+  pull-requests: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -106,6 +111,22 @@ jobs:
             tail -n 25 pytest.plain | sed 's/^/::error::tail: /' || true
           fi
           exit "$status"
+      - name: Name the failing tests on the pull request
+        # The one place a red leg's test names are readable without a token.
+        # Skipped quietly when the branch has no open PR (a push to dev).
+        if: failure()
+        working-directory: ${{ matrix.suite.dir }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          rows=$(grep -E '^(FAILED|ERROR) ' pytest.plain | head -n 30 || true)
+          [ -n "$rows" ] || rows=$(tail -n 25 pytest.plain || true)
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -z "$pr" ]; then echo "no open PR for $branch; nothing to comment on"; exit 0; fi
+          body=$(printf 'CI · python · %s is red on %s (%s):\n\n```\n%s\n```\n' "${{ matrix.suite.name }}" "${GITHUB_SHA::7}" "$GITHUB_RUN_ID" "$rows")
+          gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body "$body" || echo "could not comment"
 
   legacy-suites:
     name: python · orchestrator/sandbox/evals
