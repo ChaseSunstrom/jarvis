@@ -3464,7 +3464,7 @@ index 1234567..89abcde 100644
 					ok(msg.id, {
 						entries: catalogEntries
 							.filter(
-								(e) => !msg.query || `${e.id} ${e.description}`.toLowerCase().includes(String(msg.query).toLowerCase())
+								(e) => !msg.query || `${e.id} ${e.description} ${e.author} ${(e.permissions || []).join(' ')}`.toLowerCase().includes(String(msg.query).toLowerCase())
 							)
 							.map((e) => ({
 								...e,

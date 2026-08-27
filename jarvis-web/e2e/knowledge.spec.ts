@@ -52,7 +52,7 @@ test('every note and every remembered fact is a point, and a link is an edge', a
 	// joins the spare-key fact to both, quieter.
 	await expect(graph.locator('line.edge.link')).toHaveCount(1);
 	await expect(graph.locator('line.edge.tag')).not.toHaveCount(0);
-	await expect(page.getByTestId('knowledge-graph')).toContainText('3 notes · 2 remembered');
+	await expect(page.getByTestId('knowledge-graph')).toContainText('4 notes · 2 remembered');
 });
 
 test('picking a point opens that note, and the URL says which', async ({ page }) => {
@@ -154,7 +154,7 @@ test('no two labels print over each other', async ({ page }) => {
 	// the end of "The spare key…". Every pair of label boxes must be disjoint.
 	await gotoKnowledge(page);
 	const labels = page.locator('[data-testid^="graph-node-"] text');
-	await expect(labels).toHaveCount(5);
+	await expect(labels).toHaveCount(6);
 	const boxes = (await labels.evaluateAll((els) =>
 		els.map((el) => {
 			const r = el.getBoundingClientRect();

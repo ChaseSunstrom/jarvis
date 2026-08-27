@@ -243,7 +243,10 @@
 		align-items: baseline;
 		gap: var(--jv-space-3);
 		width: 100%;
-		padding: var(--jv-space-2) var(--jv-space-4);
+		/* One line of the chrome size with a hair above and below: four rows
+		   sat the voice page at exactly 900 px on this box and over it on CI's
+		   fonts (27 Aug 2026). */
+		padding: var(--jv-space-1) var(--jv-space-4);
 		background: none;
 		border: 0;
 		color: inherit;

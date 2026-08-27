@@ -39,6 +39,7 @@ test('SETTINGS has six sections, in order, each a real page', async ({ page }) =
 		'/settings/voice',
 		'/settings/house',
 		'/settings/console',
+		'/settings/system',
 		'/settings/tools'
 	]);
 

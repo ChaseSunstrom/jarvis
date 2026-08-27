@@ -410,7 +410,11 @@ class Catalog:
                 errors.append({"source": source.name, "error": str(err)})
                 continue
             for entry in entries:
-                haystack = f"{entry.id} {entry.description}".lower()
+                # A permission is a word too ("network" finds the skill that
+                # asks for it), and so is the author: the console searched
+                # those on its side, and once the query went to the server
+                # (M108) the server dropped what only they matched.
+                haystack = f"{entry.id} {entry.description} {entry.author} {' '.join(entry.permissions)}".lower()
                 if not needle or needle in haystack:
                     out.append(entry)
         return sorted(out, key=lambda e: (e.source, e.id)), errors

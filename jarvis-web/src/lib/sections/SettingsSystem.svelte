@@ -181,7 +181,7 @@
 				<SettingRow label="Restart Jarvis" why="Stops the process cleanly; the container's restart policy brings it back with what is set here applied." testid="restart-row">
 					<span class="muted">{pendingCount ? 'Changes below apply once it is back.' : 'Nothing is waiting; a restart changes nothing.'}</span>
 					{#snippet acts()}
-						<Button testid="system-restart-button" variant={pendingCount ? 'primary' : undefined} onclick={() => (confirmRestart = true)}>RESTART JARVIS</Button>
+						<Button testid="system-restart-button" title="Stop Jarvis and let the container bring it back with what is set here" variant={pendingCount ? 'primary' : undefined} onclick={() => (confirmRestart = true)}>RESTART JARVIS</Button>
 					{/snippet}
 				</SettingRow>
 			{/snippet}
@@ -190,7 +190,7 @@
 		<Panel title="Environment" meta={`${variables.length} variables`} testid="system-environment">
 			{#snippet children()}
 				<div class="filter">
-					<Input bind:value={filter} placeholder="filter by name or words" testid="env-filter" mono />
+					<Input bind:value={filter} placeholder="filter by name or words" testid="env-filter" mono filter />
 				</div>
 				{#each shown as v (v.name)}
 					<SettingRow why={v.why || v.section} testid="env-{v.name}" live={v.pending}>
@@ -224,12 +224,12 @@
 							{/if}
 						</div>
 						{#snippet acts()}
-							<Button testid="env-set-{v.name}" disabled={busy === v.name || drafts[v.name] === undefined} onclick={() => save(v)}>SET</Button>
+							<Button testid="env-set-{v.name}" title={drafts[v.name] === undefined ? 'Type a value to keep first' : 'Keep this value; it applies at the next restart'} disabled={busy === v.name || drafts[v.name] === undefined} onclick={() => save(v)}>SET</Button>
 							{#if v.set}
-								<Button testid="env-clear-{v.name}" disabled={busy === v.name} onclick={() => clear(v)}>CLEAR</Button>
+								<Button testid="env-clear-{v.name}" title="Forget the value set here; the environment's own applies at the next restart" disabled={busy === v.name} onclick={() => clear(v)}>CLEAR</Button>
 							{/if}
 							{#if v.secret && (v.set || v.live !== null) && revealed[v.name] === undefined}
-								<Button testid="env-reveal-{v.name}" onclick={() => reveal(v)}>REVEAL</Button>
+								<Button testid="env-reveal-{v.name}" title="Show the secret's value here, once" onclick={() => reveal(v)}>REVEAL</Button>
 							{/if}
 						{/snippet}
 					</SettingRow>
@@ -247,8 +247,8 @@
 		that is running is picked back up if its worker said it could be.
 	</p>
 	{#snippet actions()}
-		<Button onclick={() => (confirmRestart = false)}>CANCEL</Button>
-		<Button variant="primary" testid="system-restart-confirm" disabled={restarting} onclick={restart}>RESTART</Button>
+		<Button title="Leave Jarvis running" onclick={() => (confirmRestart = false)}>CANCEL</Button>
+		<Button variant="primary" testid="system-restart-confirm" title="Restart now" disabled={restarting} onclick={restart}>RESTART</Button>
 	{/snippet}
 </Dialog>
 

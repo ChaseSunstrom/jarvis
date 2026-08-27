@@ -45,7 +45,7 @@ in the third, with four widths of control in one panel.
 	let { label = '', why = '', what, children, acts, note, noted = true, testid = undefined, live = false }: Props = $props();
 </script>
 
-<div class="setting" class:live data-testid={testid} data-jv-row>
+<div class="setting" class:live data-testid={testid} data-jv-row={testid ? '' : undefined}>
 	<div class="what">
 		{#if what}{@render what()}{:else}
 			<b>{label}</b>

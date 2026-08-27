@@ -459,7 +459,7 @@ async def read_remote(
         raise RegistryError(f"{source.name} is on this machine; read it with the catalogue")
     needle = str(query or "").strip().lower()
     if needle:
-        entries = [e for e in entries if needle in f"{e.id} {e.description} {e.author}".lower()]
+        entries = [e for e in entries if needle in f"{e.id} {e.description} {e.author} {' '.join(e.permissions)}".lower()]
     return entries, skipped
 
 
