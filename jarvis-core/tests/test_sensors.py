@@ -1878,6 +1878,9 @@ async def test_with_a_toolbox_the_offer_is_a_held_question_that_any_yes_resolves
     waiting = registry.pending_for_conversation("somebody-elses-conversation")
     assert len(waiting) == 1 and waiting[0]["tool"] == OFFER_TOOL and waiting[0]["answerable"]
     assert "Shall I lock it?" in waiting[0]["arguments"]["question"]
+    # what the bar, the phone and a spoken "which one?" show: the question, with Yes/No
+    assert waiting[0]["summary"] == waiting[0]["arguments"]["question"]
+    assert waiting[0]["choices"] == ["Yes", "No"]
     asked = jarvis.data["narrate"].history[-1]
     assert asked.delivered is True and asked.reason == "asked"
     # not the model's to call

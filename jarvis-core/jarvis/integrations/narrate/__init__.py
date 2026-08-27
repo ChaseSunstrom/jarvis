@@ -750,6 +750,7 @@ class NarrationManager:
                         "entity_id": {"type": "string"},
                         "service": {"type": "string"},
                         "question": {"type": "string"},
+                        "choices": {"type": "array", "items": {"type": "string"}},
                     },
                     "required": ["entity_id", "service", "question"],
                 },
@@ -757,12 +758,20 @@ class NarrationManager:
                 tier=TIER_APPROVAL,
                 answerable="answer",
                 hidden=True,
+                # The bar, the phone and a spoken "which one?" all read the
+                # request's summary: the question itself, not a tool name.
+                summarise=lambda args: str(args.get("question") or ""),
             )
         offer = narration.offer or {}
         try:
             result = await registry.call(
                 OFFER_TOOL,
-                {"entity_id": narration.entity_id, "service": str(offer.get("service", "")), "question": question},
+                {
+                    "entity_id": narration.entity_id,
+                    "service": str(offer.get("service", "")),
+                    "question": question,
+                    "choices": ["Yes", "No"],
+                },
                 None,
             )
         except Exception:
