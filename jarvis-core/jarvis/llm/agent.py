@@ -2365,6 +2365,13 @@ _CUE_WINDOW = 60
 
 
 #: An imperative that wants a tool, and a reply that says it happened.
+#: A request that opens as a question wants a report, not an action.
+_QUESTION_OPENER = re.compile(
+    r"^\s*(?:jarvis[,!]?\s+)?(?:is|are|was|were|am|do|does|did|can|could|would|will|should|"
+    r"has|have|had|what|which|where|when|who|whose|how|why)\b",
+    re.IGNORECASE,
+)
+
 _ACTION_REQUEST = re.compile(
     r"\b(turn|switch|set|lock|unlock|open|close|dim|brighten|start|stop|play|pause|"
     r"mute|unmute|arm|disarm|run|trigger|enable|disable|cancel|"
@@ -2499,6 +2506,12 @@ def claimed_action(request: str, reply: str) -> bool:
     """
     request, reply = str(request or ""), str(reply or "")
     if not request.strip() or not reply.strip():
+        return False
+    # A question is a request for a report, whatever verbs it holds: "Is the
+    # screen clear?" answered "It is clear, Sir" claims nothing. The verbs
+    # below are read as imperatives only when the request does not open as
+    # a question.
+    if _QUESTION_OPENER.match(request):
         return False
     if not _ACTION_REQUEST.search(request):
         return False
