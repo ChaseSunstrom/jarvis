@@ -69,3 +69,26 @@ def test_healthz_names_the_model_server_and_never_the_key(tmp_path, monkeypatch)
     assert body["planner_model"] == "house"
     assert body["llm_key_set"] is True
     assert "secret-key" not in str(body)
+
+
+def test_healthz_names_the_binary_or_says_it_is_absent(tmp_path, monkeypatch):
+    """M101: the Code screen's worker line reads this. An image whose OpenCode
+    install failed used to look exactly like one that worked."""
+    monkeypatch.setenv("ORCHESTRATOR_TOKEN", "t")
+    monkeypatch.setenv("APPROVAL_SECRET", "s")
+    monkeypatch.setenv("WORKSPACE", str(tmp_path))
+    import app.main as main
+
+    importlib.reload(main)
+    with TestClient(main.app) as c:
+        body = c.get("/healthz").json()
+    assert body["backend"] == "opencode"
+    assert isinstance(body["opencode_version"], str)
+    # No binary on the PATH: "" and no exception, so the broker still comes up.
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert main.probe_opencode_version() == ""
+    # One that answers: the last line of its output, clipped.
+    fake = tmp_path / "opencode"
+    fake.write_text("#!/bin/sh\necho 1.18.23\n")
+    fake.chmod(0o755)
+    assert main.probe_opencode_version() == "1.18.23"

@@ -30,6 +30,7 @@
 		describeEnvironment,
 		describeRepo,
 		describeSandbox,
+		describeWorker,
 		suggestedName,
 		whyNoChecks,
 		whyNotName,
@@ -38,7 +39,8 @@
 		type CodeEnvironment,
 		type CodeForge,
 		type CodeRepo,
-		type CodeResult
+		type CodeResult,
+		type CodeWorker
 	} from '$lib/code';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { isUnsupported, type Subscription } from '$lib/jarvisClient';
@@ -53,6 +55,8 @@
 	let hint = $state('');
 	let loading = $state(true);
 	let repos = $state<CodeRepo[]>([]);
+	/** What will run a job (M101), from the server's listing. */
+	let worker = $state<CodeWorker | undefined>(undefined);
 	let sandboxed = $state(false);
 	let environments = $state<CodeEnvironment[]>([]);
 	let canCreate = $state(false);
@@ -153,8 +157,10 @@
 		repositories?: CodeRepo[];
 		environments?: CodeEnvironment[];
 		forges?: CodeForge[];
+		worker?: CodeWorker;
 	}): void {
 		repos = listing.repositories ?? [];
+		if (listing.worker) worker = listing.worker;
 		environments = listing.environments ?? [];
 		forges = listing.forges ?? forges;
 	}
@@ -259,6 +265,7 @@
 			}
 			const listing = await connection.client.listCode();
 			repos = listing.repositories ?? [];
+			worker = listing.worker;
 			sandboxed = !!listing.sandboxed;
 			environments = listing.environments ?? [];
 			forges = listing.forges ?? [];
@@ -327,6 +334,11 @@
 	/>
 {:else}
 	<div class="stack">
+		<!-- M82's second clause, M101: what will run a job — or why nothing will —
+		     in one line, read off the orchestrator's /healthz by jarvis-core. -->
+		<p class="hint" data-testid="code-worker" data-reachable={worker?.reachable ? 'true' : 'false'}>
+			{describeWorker(worker)}
+		</p>
 		{#if canCreate}
 			<Panel title="Repositories" meta="{repos.length} in the workspace" testid="code-repos">
 				{#snippet children()}

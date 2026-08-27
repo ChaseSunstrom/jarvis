@@ -292,3 +292,17 @@ test('a repository with no environment says it has no shell', async ({ page }) =
 	await expect(page.getByTestId('code-repo-environment')).toContainText('No shell');
 	await expect(page.getByTestId('code-repo-egress')).toHaveCount(0);
 });
+
+test('the Code screen says what will run a job', async ({ page }) => {
+	// M82's second clause, M101: the worker line reads jarvis-core's `worker`,
+	// which is the orchestrator's /healthz — the binary and its version, the
+	// models — or why nothing will run. A green tick over a failed install is
+	// what this replaces.
+	await page.addInitScript(() => sessionStorage.setItem('jarvis:boot-played', '1'));
+	await page.goto('/work/code');
+	const line = page.getByTestId('code-worker');
+	await expect(line).toBeVisible({ timeout: 15_000 });
+	await expect(line).toHaveAttribute('data-reachable', 'true');
+	await expect(line).toContainText('opencode 1.18.23');
+	await expect(line).toContainText('coder house');
+});

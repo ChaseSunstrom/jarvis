@@ -988,3 +988,12 @@ is quiet. Done since:
 - 09:19 — M100 built (memory per person, consolidated; gate 10/11, live half after the next rebuild). The rig records a matched
   task's children at scenario end (m42's check reads them); m54's speaker-mode why line trimmed to the one-line rule (133 chars).
   CI on 07d9593 green — the python red on 6c816c8 did not recur (no FAILED line then either; a 3.12 local run is 65 % in with none).
+- 09:35 — quiet pass finished 09:25 (8 green / 26 red of the 34); the plan pass began (m84 red on the rig's own milestone-name
+  regex, two digits — M100 has three; fixed). Reds read: m42's check counted backends on the wrong house (now the lead's steps in the
+  rig's record); m54's two why lines over 140; m79's grep behind a nullable client; m82's `docker exec` without the app's HOME
+  (the image sets HOME=/tmp/home now); m59's watch refused the rig's loopback fixture by design (the harness allows the fixture
+  host); m74 read another slice's results (runs its own); m25's rule gave m82/m88/m89/m101 live slices (m86/m94/m96 still
+  have none — a notice, a room and a stop by voice need scenarios the rig cannot yet drive); chat-context-retention (text) and
+  resilience-core-restart's second turn are the model's variance ("it" turned on again; "the bedroom has no ceiling lights,
+  shall I…"); m03/m50/m48/m49/m55 are the pairing tests under load. M101 built. The 3.12 run of jarvis-core: 3537 passed,
+  1 failed — the store race, fixed.

@@ -1047,6 +1047,10 @@ class Runner:
                     "kind": task.get("kind"),
                     "status": task.get("status"),
                     "title": task.get("title"),
+                    # A fan-out's pieces are its steps ("research: …", "reader: …")
+                    # — the lead is one task, and the m42 gate reads the workers
+                    # off these; `children` is for kinds that spawn real tasks.
+                    "steps": [str(s.get("title") or "") for s in (task.get("steps") or []) if isinstance(s, dict)],
                     "children": [
                         {"kind": c.get("kind"), "status": c.get("status"), "title": c.get("title")}
                         for c in children

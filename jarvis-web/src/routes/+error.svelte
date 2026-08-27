@@ -26,7 +26,7 @@
 	/>
 	<div class="ways">
 		<Button onclick={() => location.reload()}>Reload</Button>
-		<Button variant="primary" onclick={() => (location.href = '/devices')}>Back to the console</Button>
+		<Button variant="primary" onclick={() => (location.href = '/house/devices')}>Back to the console</Button>
 	</div>
 </div>
 

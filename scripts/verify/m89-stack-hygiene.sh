@@ -32,4 +32,6 @@ curl -s -m 3 -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8888/healthz | gr
 '
 check "on the stack, the console runs as node" bash -c 'u=$(docker exec jarvis-web id -un 2>/dev/null); echo "  uid: $u"; [ "$u" = "node" ]'
 
+check_sh "the live smoke scenarios still pass" \
+    'LIVE_ONLY=house-light-on,chat-context-retention,lock-needs-a-human bash scripts/verify/live_interaction.sh --implemented-only 2>&1 | tail -4'
 verify_end

@@ -156,7 +156,10 @@ export function makeWorld() {
 			platform: 'demo',
 			identifiers: ['demo:lab'],
 			connections: [],
-			disabled: false
+			disabled: false,
+			// The server's other two fields (mock parity, M101).
+			sw_version: null,
+			via_device_id: null
 		}
 	];
 	// Factories, not literals: `jarvis/test/registry_reset` rebuilds both, and a
@@ -710,7 +713,10 @@ export function makeWorld() {
 			domain: 'lock',
 			parameters: null,
 			editable: false,
-			service: null
+			service: null,
+			// When it was made and last changed (mock parity, M101): null for a built-in.
+			created_at: null,
+			updated_at: null
 		},
 		{
 			name: 'turn_on',
@@ -719,7 +725,10 @@ export function makeWorld() {
 			domain: null,
 			parameters: null,
 			editable: false,
-			service: null
+			service: null,
+			// When it was made and last changed (mock parity, M101): null for a built-in.
+			created_at: null,
+			updated_at: null
 		}
 	];
 
@@ -1435,14 +1444,25 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			checks: ['pytest -q', 'ruff check .'],
 			writable: true,
 			backend: 'opencode',
-			permission_mode: 'ask before writing'
+			permission_mode: 'ask before writing',
+			// The environment fields jarvis-core sends on every repository (mock parity, M101).
+			environment: 'python',
+			environment_detail: 'python:3.12-bookworm, 2 CPUs, 2g',
+			networked: true,
+			managed: false,
+			origin: ''
 		},
 		{
 			name: 'notes',
 			path: '/srv/notes',
 			description: 'a wiki nobody should be editing by machine',
 			checks: [],
-			writable: false
+			writable: false,
+			environment: '',
+			environment_detail: '',
+			networked: false,
+			managed: false,
+			origin: ''
 		}
 	];
 	let codeRepos = freshCodeRepos();
@@ -1499,7 +1519,19 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 		environments: codeEnvironments,
 		forges: codeForges,
 		can_create: true,
-		workspace: codeWorkspace
+		workspace: codeWorkspace,
+		// M101: what will run a job, as jarvis-core reads it off the orchestrator's /healthz.
+		worker: {
+			enabled: true,
+			url: 'http://orchestrator:8000',
+			reachable: true,
+			backend: 'opencode',
+			version: '1.18.23',
+			planner_model: 'house',
+			coder_model: 'house',
+			error: '',
+			checked_at: Date.now() / 1000 - 5
+		}
 	});
 	/** Mirrors `_RESERVED` in jarvis-core's repos.py. */
 	const codeReserved = new Set([
@@ -1663,7 +1695,9 @@ index 1234567..89abcde 100644
 			created: new Date(Date.now() - 86_400_000).toISOString(),
 			updated: new Date(Date.now() - 86_400_000).toISOString(),
 			links: ["heating"],
-			backlinks: ["heating"]
+			backlinks: ["heating"],
+			bytes: 88,
+			path: "notes/boiler-serviced.md"
 		},
 		{
 			// The note the boiler note's [[heating]] resolves to, so the link is

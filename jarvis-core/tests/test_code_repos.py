@@ -548,3 +548,26 @@ def test_the_e2e_mock_answers_code_list_with_the_same_keys_as_the_server():
         f"answers with: only in mock {sorted(mock_keys - server_keys)}, "
         f"only in server {sorted(server_keys - mock_keys)}"
     )
+
+
+def test_the_listing_says_what_will_run_a_job(tmp_path):
+    """M101 (M82's second clause): `worker` on `jarvis/code/list`.
+
+    Without an orchestrator it says so — enabled False, a reason — rather than
+    omitting the key and leaving the console to guess; with one, it is the
+    orchestrator integration's last /healthz reading, copied, not shared.
+    """
+    jarvis = Jarvis(tmp_path)
+    jarvis.data[DOMAIN] = {DATA_CONFIG: CodeConfig()}
+    worker = listing_payload(jarvis)["worker"]
+    assert worker["enabled"] is False and worker["reachable"] is False
+    assert worker["error"] == "orchestrator: not configured" and worker["backend"] == "opencode"
+
+    jarvis.data["orchestrator"] = {"health": {
+        "enabled": True, "url": "http://orchestrator:8000", "reachable": True, "backend": "opencode",
+        "version": "1.18.23", "planner_model": "house", "coder_model": "house", "error": "", "checked_at": 1.0,
+    }}
+    worker = listing_payload(jarvis)["worker"]
+    assert worker["reachable"] is True and worker["version"] == "1.18.23"
+    worker["version"] = "changed"
+    assert jarvis.data["orchestrator"]["health"]["version"] == "1.18.23"

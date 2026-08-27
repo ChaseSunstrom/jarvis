@@ -16,9 +16,13 @@ check "the tail is the last chunk, before the whole-reply clip" grep -q "await s
 check "the remainder is found by text, never by an index into the stream" grep -q "def _unspoken_tail" "$P"
 check "the rig records first_audio from the first tts-chunk" grep -q '"tts-chunk": "first_audio"' testing/live/transport.py
 check_pytest "the voice suite: the after-tools case, the tail chunk, the M60 cases" 'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal -k "early or chunk or spoken or tool"'
-check "on the house, a spoken research turn had its first audio before the whole clip (needs the rebuild and a voice run)" python3 -c '
+# Its own run, so the check does not depend on whatever slice ran last: the
+# quiet pass read a results file with no spoken research turn in it.
+check_sh "on the house, the spoken briefing is asked for by voice" \
+    'LIVE_ONLY=research-spoken-briefing timeout 1200 bash scripts/verify/live_interaction.sh --full 2>&1 | grep -v onnxruntime | tail -4'
+check "on the house, a spoken research turn had its first audio before the whole clip" python3 -c '
 import json, pathlib
-r = json.loads(pathlib.Path(".verify/live/results.json").read_text())
+r = json.loads(pathlib.Path(".verify/live/results-m74.json").read_text())
 turns = [t for s in r["scenarios"] for t in (s.get("turns") or []) if t.get("variant") == "voice" and "research" in s.get("name", "")]
 assert turns, "no spoken research turn in the last live run — run LIVE_ONLY=research-spoken-briefing"
 lat = [t["latency"] for t in turns if t.get("latency", {}).get("first_audio") is not None]

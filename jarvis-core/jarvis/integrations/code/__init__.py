@@ -1253,6 +1253,18 @@ def result_payload(jarvis: "Jarvis", task_id: str) -> dict[str, Any] | None:
     return payload
 
 
+def worker_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """The coding worker as the orchestrator integration last saw it."""
+    store = jarvis.data.get("orchestrator")
+    health = store.get("health") if isinstance(store, dict) else None
+    if isinstance(health, dict):
+        return dict(health)
+    return {
+        "enabled": False, "url": "", "reachable": False, "backend": "opencode", "version": "",
+        "planner_model": "", "coder_model": "", "error": "orchestrator: not configured", "checked_at": 0.0,
+    }
+
+
 def listing_payload(jarvis: "Jarvis") -> dict[str, Any]:
     """What the console's Code page needs to draw itself."""
     cfg = get_config(jarvis) or CodeConfig()
@@ -1270,6 +1282,9 @@ def listing_payload(jarvis: "Jarvis") -> dict[str, Any]:
         # where the files would land if it does.
         "can_create": bool(repos and repos.enabled),
         "workspace": str(cfg.workspace) if cfg.workspace else "",
+        # What will run a job (M101): the orchestrator's last /healthz, or a
+        # worker that is not configured — said, rather than a green tick.
+        "worker": worker_payload(jarvis),
     }
 
 

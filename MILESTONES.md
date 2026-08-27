@@ -1519,6 +1519,32 @@ web and of Tasker. Local only. Each row here is planned in that document.
     (Piper's voice enrolled as a person through the REST route) and a `person` on the `memory`
     expectation; scenario `memory-per-person`. Gate 10/11 — the live half needs the house rebuilt
     with this tree (the quiet pass's 08:38 rebuild predates it).
+- [ ] **M101 — One shape for every payload** · size M · deps M99, M82 · parallel-ok M100
+  - Scope: the console audit's defects 6, 7, 8, 10, 11 and 12 that M99 did not close. A verify script
+    connects to the running house AND to the mock, sends every list command both answer (tasks, memory,
+    notifications, companions, areas, devices, entities, states, settings, tools, models, notes, code,
+    skills, surface, schedule, tokens) and reports every key the server sends that the mock's rows lack —
+    the drift that let the approvals banner and the n8n line pass their tests while wrong. The Code
+    screen says what the worker is (M82's second clause): `jarvis/code/list` gains `worker` (the
+    orchestrator's `/healthz` — backend, model, reachable, binary present) and the console shows it in
+    one line under the repositories, or says the orchestrator is off. Readings says "no sensor has a
+    room yet — assign one on Devices" when every reading is unassigned, instead of one group called
+    elsewhere. `+error.svelte`'s way home is `/house/devices`. `docs/verification.md`'s web rows are
+    re-measured with the command on their line.
+  - Verify: `bash scripts/verify/m101-one-shape.sh`
+  - 27 Aug 09:20: planned.
+  - 27 Aug 09:35: built, not ticked — `scripts/verify/mock_parity.py` starts the mock, sends every list command
+    the server answers (22 + get_states) to both and reports each key the mock's rows lack: eleven on the first
+    run (device registry `sw_version`/`via_device_id`, tool `created_at`/`updated_at`, repository
+    `environment`/`environment_detail`/`managed`/`networked`/`origin`, note `bytes`/`path`), zero after; the
+    M101 gate fails when the server gains a list command the script does not send. `jarvis/code/list` carries
+    `worker` — the orchestrator's `/healthz` (now naming `backend` and `opencode_version`, probed once at
+    start) read every minute by the orchestrator integration — and the Code screen says "Worker: opencode
+    1.18.23 · coder house" or why nothing will run; Readings says "no sensor has a room yet" when every
+    reading is unassigned; `+error.svelte` goes home to `/house/devices`; the web rows re-measured (39 spec
+    files / 244, vitest 43 / 710). Found on the way: `Store.save` shared one temp file across writers, and a
+    task cancelled mid-write (a timer snoozed as it finished) broke the next save — the CI red on 6c816c8;
+    a temp file per write now (8b53d39). Gate: the live half runs after the rebuild.
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
     tools, five websocket commands, the console's panels over the page around the instrument —

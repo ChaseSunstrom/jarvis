@@ -535,6 +535,10 @@ device_control:
 watch:
   interval: 30
   max_watches: 10
+  # The rig's fixture site lives on a loopback alias, which the watch refuses
+  # by design (a page on the LAN is somebody else's); the harness house names
+  # it so watch-page-change can prove the watching, not the refusal.
+  allowed_hosts: [127.0.0.2]
 
 sensors:
   allow_auto_register: true

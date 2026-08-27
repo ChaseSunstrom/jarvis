@@ -69,6 +69,10 @@ async def lifespan(app: FastAPI):
         os.environ["OPENCODE_CONFIG"] = str(config_path)
     except OSError as err:  # a full tmpfs must not stop the broker
         logging.getLogger(__name__).warning("could not write OpenCode's config: %s", err)
+    # Which binary will run a coding job, read once: the console's Code screen
+    # says "opencode 1.18.23" or "not installed" from this (M101), instead of
+    # a green tick over an image whose install had silently failed (M82).
+    app.state.opencode_version = probe_opencode_version()
     app.state.gate = ExecGate(APPROVAL_SECRET)
     app.state.queue = SandboxQueue(WORKSPACE)
     app.state.coder = CodeJobRunner(
@@ -108,17 +112,40 @@ def require_approval_secret(
         raise HTTPException(403, "approval secret missing or wrong")
 
 
+def probe_opencode_version(timeout: float = 5.0) -> str:
+    """`opencode --version`, or "" when the binary is absent or will not answer.
+
+    Never raises: the broker must come up on an image whose install failed,
+    and say so through /healthz rather than refuse to start.
+    """
+    import shutil
+    import subprocess
+
+    binary = shutil.which("opencode")
+    if not binary:
+        return ""
+    try:
+        out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    text = (out.stdout or out.stderr or "").strip().splitlines()
+    return text[-1].strip()[:40] if text else ""
+
+
 @app.get("/healthz")
 def healthz():
     # What it would talk to, so a console can say "delegation: no model"
     # instead of a green tick over a 404 (the services audit, 27 Aug 2026).
-    # The URL and model names only — never the key.
+    # The URL and model names only — never the key. And which binary will run
+    # a job (M101): "" when OpenCode is not in the image.
     return {
         "status": "ok",
         "llm_url": LLM_URL,
         "planner_model": PLANNER_MODEL,
         "coder_model": CODER_MODEL,
         "llm_key_set": bool(LLM_API_KEY),
+        "backend": "opencode",
+        "opencode_version": str(getattr(app.state, "opencode_version", "") or ""),
     }
 
 

@@ -33,6 +33,13 @@ which differs by whether the sensors integration is set up at all.
 	);
 </script>
 
+{#if !empty && groups.length === 1 && groups[0].area === 'elsewhere'}
+	<!-- Every reading is unassigned (M101): one group called "elsewhere" is not a
+	     house with one room, it is a house where no sensor has been given one. -->
+	<p class="why" data-testid="readings-no-rooms">
+		No sensor has a room yet — assign one on Devices and the readings sort themselves by room.
+	</p>
+{/if}
 {#if empty}
 	<p class="why" data-testid="readings-empty">
 		{#if area}

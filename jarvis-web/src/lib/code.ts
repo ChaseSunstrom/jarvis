@@ -121,6 +121,36 @@ export interface CodeListing {
 	/** Whether `code: workspace:` is set, i.e. whether creation is possible. */
 	can_create: boolean;
 	workspace: string;
+	/** The coding worker jarvis-core hands jobs to (M101), or absent on a house without one. */
+	worker?: CodeWorker;
+}
+
+/** What `jarvis/code/list` says about the worker, from the orchestrator's `/healthz`. */
+export interface CodeWorker {
+	/** False when no `orchestrator:` is configured. */
+	enabled: boolean;
+	url: string;
+	/** Whether `/healthz` answered on the last probe. */
+	reachable: boolean;
+	backend: string;
+	/** The binary's version as the orchestrator reports it, or "" when it has none. */
+	version: string;
+	planner_model: string;
+	coder_model: string;
+	/** Why it is not reachable, in one line, or "". */
+	error: string;
+	checked_at: number;
+}
+
+/** One line for the Code screen: what will run a job, or why nothing will. */
+export function describeWorker(worker: CodeWorker | undefined): string {
+	if (!worker || !worker.enabled) return 'No coding worker: `orchestrator:` is not configured, so a job has nowhere to run.';
+	if (!worker.reachable) return `The orchestrator at ${worker.url} is not answering${worker.error ? ` — ${worker.error}` : ''}.`;
+	const binary = worker.version ? `${worker.backend} ${worker.version}` : `${worker.backend} is not installed in the orchestrator`;
+	const models = [worker.coder_model && `coder ${worker.coder_model}`, worker.planner_model && `planner ${worker.planner_model}`]
+		.filter(Boolean)
+		.join(', ');
+	return `Worker: ${binary}${models ? ` · ${models}` : ''}.`;
 }
 
 /**

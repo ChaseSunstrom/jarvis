@@ -45,15 +45,16 @@ check_sh "one request, two backends, one lead" \
 # two-job request goes through delegate_to_agents, the model makes ONE call and
 # the lead task fans out — the research engine and the specialists are its
 # children (`parent_id`), which is where "more than one backend" is visible.
-check "and the run really did reach more than one backend: the lead task fanned out to children of two kinds" python3 -c '
+check "and the run really did reach more than one backend: the lead's pieces name a subsystem and a specialist" python3 -c '
 import json
 from pathlib import Path
 data = json.loads(Path(".verify/live/results-m42.json").read_text())
 matched = [turn.get("task") for s in data["scenarios"] for turn in s["turns"] if turn.get("task")]
 assert matched, "no turn matched a task expectation"
-lead = matched[0]
-kinds = sorted({str(c.get("kind")) for c in lead.get("children") or []})
-assert len(kinds) >= 2, "the lead fanned out to one kind of worker: %s (%d children)" % (kinds, len(lead.get("children") or []))
-print("lead %r: %d children of kinds %s" % (lead.get("title"), len(lead.get("children") or []), kinds))
+lead = matched[-1]
+workers = sorted({str(step).split(":", 1)[0].strip().lower() for step in lead.get("steps") or [] if ":" in str(step)})
+subsystems = [w for w in workers if w in ("research", "code")]
+assert len(workers) >= 2 and subsystems, "the lead went to one kind of worker: %s (steps %s)" % (workers, lead.get("steps"))
+print("lead %r: workers %s" % (lead.get("title"), workers))
 '
 verify_end

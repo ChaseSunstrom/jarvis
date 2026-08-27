@@ -77,4 +77,6 @@ async def main():
 asyncio.run(main())
 '
 
+check_sh "on the house: a background job with steps puts its plan on the surface, unasked" \
+    'LIVE_ONLY=task-background-plan timeout 1200 bash scripts/verify/live_interaction.sh --full 2>&1 | grep -v onnxruntime | tail -4'
 verify_end

@@ -50,6 +50,10 @@ COPY app ./app
 
 RUN useradd -u 10002 -m jarvis
 USER 10002
+# The image's root is read-only and 10002 has no home in it: OpenCode writes
+# under HOME (its config, its cache), so every process — the app, a `docker
+# exec` probe, the M82 gate — agrees on the tmpfs (M101).
+ENV HOME=/tmp/home
 
 EXPOSE 8188
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8188"]

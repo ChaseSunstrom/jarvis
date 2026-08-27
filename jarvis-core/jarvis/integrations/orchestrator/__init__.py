@@ -633,6 +633,33 @@ async def async_execute(
     }
 
 
+#: Seconds between /healthz probes for the Code screen's worker line.
+HEALTH_INTERVAL = 60.0
+
+
+def worker_health(
+    cfg: "OrchestratorConfig",
+    reachable: bool = False,
+    body: dict[str, Any] | None = None,
+    error: str = "not probed yet",
+) -> dict[str, Any]:
+    """The `worker` the Code screen shows: enabled, reachable, the binary, the models."""
+    import time as _time
+
+    body = body or {}
+    return {
+        "enabled": bool(cfg.configured),
+        "url": str(cfg.url or ""),
+        "reachable": bool(reachable),
+        "backend": str(body.get("backend") or "opencode"),
+        "version": str(body.get("opencode_version") or ""),
+        "planner_model": str(body.get("planner_model") or ""),
+        "coder_model": str(body.get("coder_model") or ""),
+        "error": "" if reachable else (str(error or "") if cfg.configured else "orchestrator: not configured"),
+        "checked_at": _time.time() if reachable or error != "not probed yet" else 0.0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # setup
 # ---------------------------------------------------------------------------
@@ -643,9 +670,32 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     client = OrchestratorClient(cfg, http)
     store["config"] = cfg
     store["client_wrapper"] = client
+    # What will run a job, for the Code screen (M101): the orchestrator's
+    # /healthz, read every minute and kept here so the synchronous listing can
+    # say "opencode 1.18.23" or "not answering" without a request per page.
+    store["health"] = worker_health(cfg)
 
     _register_services(jarvis, client)
     _register_tools(jarvis, client)
+    if cfg.configured:
+        async def _poll_health() -> None:
+            while True:
+                try:
+                    answer = await http.get(f"{cfg.url}/healthz", timeout=5.0)
+                    body = answer.json() if answer.status_code == 200 else {}
+                    store["health"] = worker_health(
+                        cfg,
+                        reachable=answer.status_code == 200,
+                        body=body if isinstance(body, dict) else {},
+                        error="" if answer.status_code == 200 else f"/healthz answered {answer.status_code}",
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:  # noqa: BLE001 - the next poll may succeed
+                    store["health"] = worker_health(cfg, reachable=False, error=str(err)[:200])
+                await asyncio.sleep(HEALTH_INTERVAL)
+
+        store["health_task"] = jarvis.async_create_task(_poll_health())
 
     async def _shutdown() -> None:
         if store.get("owns_client") and not http.is_closed:

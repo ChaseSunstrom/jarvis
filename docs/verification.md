@@ -74,7 +74,7 @@ recomputes every row and fails when the table drifts.
 | `evals` (routing table + its mirrors) | 7 | `grep -hoE '^\s*(async )?def test_' evals/test_routing.py \| wc -l` |
 | `evals` (entity resolution; 19 documented skips at collection) | 3 | `… evals/test_resolution.py` |
 | `jarvis-web` (vitest, 43 files) | 710 | `grep -rhoE '^\s*(it\|test)\(' jarvis-web/src --include='*.test.ts' \| wc -l` |
-| `jarvis-web` (Playwright, 37 spec files; five per-screen loops multiply these) | 234 | `grep -rhoE '^\s*test\(' jarvis-web/e2e/*.spec.ts \| wc -l` |
+| `jarvis-web` (Playwright, 39 spec files; five per-screen loops multiply these) | 244 | `grep -rhoE '^\s*test\(' jarvis-web/e2e/*.spec.ts \| wc -l` |
 | `android-app` (JVM, `@Test`) | 227 | `grep -rho '@Test' android-app/app/src/test \| wc -l` |
 | `android-app/tools` (spec files) | 63 | `ls android-app/tools/*_test.py \| wc -l` |
 | `testing/e2e` (the harness) | 81 | `… testing/e2e` |
@@ -2120,6 +2120,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M98 — The phone keeps up | **Ticked** (16/16 on the house: the speaker gate on register, a held Tier-3 action on the consent screen, the typed field, the tier contract's phone variant, and PHONE TASKS' way in — a fake phone was sent a task bundle by the model for a spoken-style request) | `m98-the-phone-keeps-up.sh`; gradle assembleDebug + testDebugUnitTest; `phone_tasks_test.py` 16/16; `test_device_control.py` (+1), `test_skills.py` (+1) |
 | M99 — The console keeps up | **Ticked** (9/9 on the rebuilt house: retry, live Areas/schedule/settings, a room for a companion listed with its registry entry, the unshown fields) | `m99-the-console-keeps-up.sh`; `console-keeps-up.spec.ts` 6/6 + the touched specs 41/41; `test_api_companion.py` (+1) |
 | M100 — Jarvis knows who it is talking to | Planned | `m100-knows-who.sh` |
+| M101 — One shape for every payload | Planned | `m101-one-shape.sh` |
 
 1. **Never promote a row without a command that demonstrates it.** "Probably
    fine" is Unproven.

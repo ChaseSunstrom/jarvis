@@ -89,7 +89,7 @@ check "every gated scenario names a real milestone" python3 -c '
 import re, sys; sys.path.insert(0, ".")
 from pathlib import Path
 from testing.live.scenario import load_all
-known = set(re.findall(r"\*\*(M[0-9]{2}) ", Path("MILESTONES.md").read_text()))
+known = set(re.findall(r"\*\*(M[0-9]{2,3}) ", Path("MILESTONES.md").read_text()))
 bad = [(s.name, s.gated_on) for s in load_all() if s.gated and s.gated_on not in known]
 assert not bad, f"gated on milestones that do not exist: {bad}"
 '
