@@ -442,6 +442,19 @@ class JarvisConversation(
         return true
     }
 
+    /**
+     * A sentence TYPED on the voice screen (M98): the same pipeline a sentence
+     * the phone transcribed takes — entered at the intent stage, answered
+     * aloud — so a refused microphone, a quiet room or a noisy one is not a
+     * dead app. The console's typed form has done this since M60.
+     */
+    fun sendTyped(text: String) {
+        val typed = text.trim()
+        if (typed.isEmpty()) return
+        ui.onTranscript(typed)
+        speakToServer(typed)
+    }
+
     /** Hand the transcript to the assistant and play back what it says. */
     private fun speakToServer(text: String) {
         reachedListening = true  // there was never a listening stage to reach

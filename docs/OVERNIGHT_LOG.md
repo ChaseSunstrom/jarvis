@@ -940,3 +940,7 @@ is quiet. Done since:
   screen (keyguard-aware, tapjacking-proof) with the server's summary and its clock, and the decision goes
   back as `jarvis/approve` on the assist socket; a held question still comes through companion.ask; the
   prompt mirror pins it (20/20); gradle building.
+- 05:43 — M98's third and fourth items: a typed field on the phone's voice screen runs the same intent-stage
+  pipeline a transcribed sentence takes (mirror check), and the tier contract records the phone's ask-once on
+  tier 2 as the phone's own consent for its own device (both mirrors green, server contract suite 10). gradle
+  green. Left under M98: PHONE TASKS' way in, and a room for a companion device on the console (M94's area).

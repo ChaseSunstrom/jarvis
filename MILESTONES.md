@@ -1421,6 +1421,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     TASKS either gets a server command that ships a task definition or goes. Mirrors and
     Robolectric pin each; the M71 gate's device rows re-run.
   - Verify: `bash scripts/verify/m98-the-phone-keeps-up.sh`
+  - 27 Aug 05:43: four of five built — the gate's mode refreshed on register, a held Tier-3 action
+    on the consent screen answered over jarvis/approve, a typed field on the voice screen, the tier
+    contract's phone variant recorded; PHONE TASKS' way in is the remaining item, and a room for a
+    companion device on the console (for M94's area) belongs here too.
 
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1

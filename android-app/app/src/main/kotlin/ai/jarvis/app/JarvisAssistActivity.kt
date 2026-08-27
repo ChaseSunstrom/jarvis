@@ -28,6 +28,7 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.text.InputType
 import android.text.TextUtils
 import android.util.Log
 import android.util.TypedValue
@@ -36,6 +37,8 @@ import android.view.HapticFeedbackConstants
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.ViewTreeObserver
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import ai.jarvis.app.ui.theme.JarvisTokens
@@ -53,6 +56,7 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     private lateinit var captionView: TextView
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
+    private lateinit var typedView: EditText
     private lateinit var toolActivityView: ToolActivityView
     private lateinit var activityStrip: ActivityStrip
     private lateinit var knowledgeGraphView: KnowledgeGraphView
@@ -260,6 +264,32 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         }
         root.addView(transcriptView, fullWidth())
         root.addView(responseView, fullWidth())
+
+        // Type to Jarvis (M98): the console's typed form, on the phone. One
+        // line, sent on the keyboard's action; the same pipeline as speech.
+        typedView = EditText(this).apply {
+            hint = "Type to Jarvis"
+            setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            imeOptions = EditorInfo.IME_ACTION_SEND
+            setTextColor(JarvisUi.TEXT)
+            setHintTextColor(JarvisTokens.Color.TEXT_DIM)
+            contentDescription = "Type to Jarvis"
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.GAP), 0, 0)
+            setOnEditorActionListener { view, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_SEND) {
+                    val typed = view.text.toString()
+                    view.text = null
+                    convo?.sendTyped(typed)
+                    true
+                } else {
+                    false
+                }
+            }
+            // A tap in the field must not be the tap that closes the screen.
+            setOnClickListener { }
+        }
+        root.addView(typedView, fullWidth())
 
         root.setOnClickListener { finish() }
         return root

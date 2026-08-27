@@ -403,6 +403,31 @@ def check_the_gate_mode_is_refreshed_when_the_socket_registers() -> list[str]:
     return failures
 
 
+ASSIST = ANDROID / "app/src/main/kotlin/ai/jarvis/app/JarvisAssistActivity.kt"
+
+
+def check_typing_to_jarvis_runs_the_same_pipeline() -> list[str]:
+    """M98: a refused microphone is not a dead app. The voice screen carries a
+    one-line field sent on the keyboard's action; `sendTyped` puts the text on
+    the transcript and hands it to the same intent-stage pipeline a sentence
+    the phone transcribed takes — never a second path."""
+    failures: list[str] = []
+    assist = ASSIST.read_text(encoding="utf-8")
+    convo = CONVO.read_text(encoding="utf-8")
+    if "EditText(this)" not in assist or "IME_ACTION_SEND" not in assist:
+        failures.append("the voice screen has no typed field sent on the keyboard's action")
+    if "convo?.sendTyped(" not in assist:
+        failures.append("the typed field does not reach the conversation")
+    at = convo.find("fun sendTyped(text: String)")
+    if at == -1:
+        failures.append("JarvisConversation has no sendTyped")
+    else:
+        body = convo[at:at + 600]
+        if "ui.onTranscript(" not in body or "speakToServer(" not in body:
+            failures.append("sendTyped does not take the transcribed-sentence path (onTranscript + speakToServer)")
+    return failures
+
+
 def main() -> int:
     for path in (STT, CONVO, MIC, SETTINGS):
         if not path.is_file():
@@ -415,6 +440,7 @@ def main() -> int:
         + check_the_settings_do_not_conflate_them()
         + check_the_microphone_comes_back_promptly()
         + check_the_gate_mode_is_refreshed_when_the_socket_registers()
+        + check_typing_to_jarvis_runs_the_same_pipeline()
     )
     for failure in failures:
         print(f"FAIL  {failure}", file=sys.stderr)
@@ -424,7 +450,7 @@ def main() -> int:
     print(
         "on-device turn: the level mapping, the orb's progress, the five failure "
         "sentences, the settings' two meanings of \"on this phone\" and the "
-        "microphone hand-back all agree; the gate's mode is refreshed when the socket registers"
+        "microphone hand-back all agree; the gate's mode is refreshed when the socket registers; typing runs the same pipeline"
     )
     return 0
 
