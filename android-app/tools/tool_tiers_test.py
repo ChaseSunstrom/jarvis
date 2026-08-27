@@ -66,6 +66,23 @@ def test_only_the_third_tier_asks() -> None:
     )
 
 
+def test_the_phone_asks_once_on_tier_2_and_the_contract_says_so() -> None:
+    """The contract's tier 2 is "runs immediately, NOT an approval" on the
+    server; the phone's PolicyEngine asks for a NOTIFY action until the person
+    chooses ALLOW_ALWAYS — its own consent for its own device (the Android
+    audit, 27 Aug 2026). Both are true, and the contract now records the
+    phone's variant instead of the mirror pinning a property the Kotlin never
+    had."""
+    entry = CONTRACT["tiers"]["2"]
+    assert "phone" in entry and "ALLOW_ALWAYS" in entry["phone"], "the contract does not record the phone's ask-once rule"
+    assert "phone_asks_once_on_tier_2" in CONTRACT["rules"]
+    engine = ENGINE_KT.read_text(encoding="utf-8")
+    assert "NOTIFY" in engine and "ALLOW_ALWAYS" in engine
+    assert re.search(r"NOTIFY\s*->.*ALLOW_ALWAYS", engine, re.S), (
+        "PolicyEngine no longer asks once on NOTIFY (ALLOW_ALWAYS is what makes it stop asking)"
+    )
+
+
 def test_a_server_may_only_raise() -> None:
     rule = CONTRACT["rules"]["a_server_may_only_raise"]
     assert "never lower" in rule

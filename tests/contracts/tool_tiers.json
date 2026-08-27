@@ -18,20 +18,38 @@
       "name": "direct",
       "means": "Runs immediately. Reversible, cheap, and visible if it was wrong.",
       "asks_first": false,
-      "examples": ["light.turn_on", "climate.get_state", "web_search", "note_read"]
+      "examples": [
+        "light.turn_on",
+        "climate.get_state",
+        "web_search",
+        "note_read"
+      ]
     },
     "2": {
       "name": "background",
       "means": "Runs immediately, and is worth telling the user about — it takes time, costs something, or reaches outside the house. NOT an approval: a tier that asks is tier 3.",
       "asks_first": false,
       "announced": true,
-      "examples": ["deep_research", "delegate_to_agents", "code_task", "mcp_*"]
+      "examples": [
+        "deep_research",
+        "delegate_to_agents",
+        "code_task",
+        "mcp_*"
+      ],
+      "phone": "The phone asks ONCE for a tier-2 action on the PHONE itself (NOTIFY -> ASK until the person chooses ALLOW_ALWAYS) — its own consent for its own device, recorded per action. This is not the server's approval: jarvis-core never holds a tier-2 call, and a tier-2 tool on the server runs immediately and is announced."
     },
     "3": {
       "name": "approval",
       "means": "Held until a human says yes, to that exact call, with the arguments pinned at the moment it was requested. A denial or an expiry runs nothing.",
       "asks_first": true,
-      "examples": ["execute_command", "code_apply", "code.push_branch", "web.browse", "files.write", "lock.unlock"]
+      "examples": [
+        "execute_command",
+        "code_apply",
+        "code.push_branch",
+        "web.browse",
+        "files.write",
+        "lock.unlock"
+      ]
     }
   },
   "rules": {
@@ -43,7 +61,8 @@
       "field": "summary",
       "means": "A held request may carry one sentence, composed by jarvis-core from the PINNED arguments at the moment the request is raised (`Tool.summarise`) — \"Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu\". A surface shows it in place of the tool's name and the raw arguments, and falls back to name-and-arguments when it is empty, which it is for every tool that has none. Never composed on a surface, never from the model's words: the sentence describes what will run. Read by jarvis-core/tests/test_tool_tiers_contract.py and jarvis-web's src/lib/tierContract.test.ts; the phone shows name-and-arguments (it has no field for the sentence yet).",
       "$comment": "M67: a person approving `key: llm.options.temperature · value: 0.2` did not know what it was before, and \"from what\" is the whole decision."
-    }
+    },
+    "phone_asks_once_on_tier_2": "A tier-2 device action reaching the phone is asked about once and the answer remembered; the server-side meaning of tier 2 (runs immediately, announced) is unchanged."
   },
   "default_for_mcp": {
     "value": 2,
