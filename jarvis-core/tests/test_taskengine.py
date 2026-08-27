@@ -276,6 +276,62 @@ async def test_running_work_is_not_resumed_unless_it_said_it_was_idempotent(regi
     assert risky.id not in resumable
 
 
+async def test_work_that_was_running_when_the_process_died_is_in_the_store_to_pick_up(registry, engine):
+    """The shape the test above never had: the engine's OWN queue, with the job
+    started. `_start_ready` popped a started item off the queue, and the store
+    only ever held the queue — so a job running at the moment of a restart
+    was the one job the store did not mention, and `load` had nothing to pick
+    back up. On two houses task-survives-a-restart read "interrupted when
+    Jarvis restarted" and the audit was started again by hand (27 Aug 2026).
+    """
+    from jarvis.tasks import RESTART_ERROR
+
+    task = await registry.async_add("read every light", kind="background")
+    hold = asyncio.Event()
+
+    async def worker(task_id: str) -> None:
+        await hold.wait()
+
+    assert engine.submit(task.id, worker, kind="background", idempotent=True,
+                         payload={"description": "read every light"})
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if task.id in engine.running:
+            break
+    assert task.id in engine.running and not engine.queue, "the job is running, the queue is empty"
+    saved = engine.as_dict()
+    assert [i["task_id"] for i in saved["queue"]] == [task.id], "the running job is in what the store holds"
+    await registry.async_save()
+
+    # The process dies with the job mid-flight, and comes back.
+    engine._stopping = True
+    second_registry = TaskRegistry(FakeJarvis(), store=registry.store)
+    await second_registry.async_load()
+    assert second_registry.get(task.id).error == RESTART_ERROR
+    second = TaskEngine(second_registry.jarvis, second_registry, max_concurrent=2)
+    second_registry.jarvis.taskengine = second
+    ran: list[str] = []
+
+    def factory(item: QueuedWork):
+        async def again(task_id: str) -> None:
+            ran.append(item.payload["description"])
+            await second_registry.async_update(task_id, status=STATUS_DONE, result="done")
+        return again
+
+    second.register_kind("background", factory)
+    second.load(saved)
+    picked = second_registry.get(task.id)
+    assert picked.status == "queued" and picked.resumed is True, picked.as_dict()
+    second.start()
+    try:
+        assert await second.async_drain(timeout=5)
+    finally:
+        await second.async_stop()
+    assert ran == ["read every light"]
+    assert second_registry.get(task.id).status == STATUS_DONE
+    hold.set()
+
+
 async def test_a_resumable_job_is_picked_back_up_after_a_restart_and_says_so(registry, engine):
     """M85. Four background tasks on the house ended "interrupted when Jarvis
     restarted" on 27 Aug 2026: the registry errored them honestly, and the

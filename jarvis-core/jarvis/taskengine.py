@@ -137,6 +137,13 @@ class TaskEngine:
         self.queue: list[QueuedWork] = []
         #: task_id -> the coroutine running it.
         self.running: dict[str, asyncio.Task] = {}
+        #: task_id -> the queue item behind a RUNNING coroutine. Persisted with
+        #: the queue: a job that was running when the process died is exactly
+        #: the one `load` has to be able to pick back up, and it was the one
+        #: item the store never held — `_start_ready` had popped it (the live
+        #: rig's task-survives-a-restart, 27 Aug 2026: "interrupted", never
+        #: resumed, on two houses).
+        self._live: dict[str, QueuedWork] = {}
         #: kind -> how to rebuild a worker for it after a restart.
         self.factories: dict[str, Callable[[QueuedWork], Worker]] = {}
         self._workers: dict[str, Worker] = {}
@@ -219,7 +226,12 @@ class TaskEngine:
 
     # --- persistence ---------------------------------------------------------
     def as_dict(self) -> dict[str, Any]:
-        return {"queue": [item.as_dict() for item in self.queue]}
+        # Waiting first, then running: `load` keeps the order, and a running
+        # job picked back up goes behind the ones that were already waiting.
+        return {
+            "queue": [item.as_dict() for item in self.queue]
+            + [item.as_dict() for item in self._live.values()]
+        }
 
     def load(self, raw: Any) -> None:
         """Restore the queue, and fail anything left waiting for nobody.
@@ -333,6 +345,7 @@ class TaskEngine:
                     )
                 )
                 continue
+            self._live[item.task_id] = item
             self.running[item.task_id] = asyncio.ensure_future(self._drive(item, worker))
             started += 1
         return started
@@ -352,6 +365,7 @@ class TaskEngine:
             await self._failed(item, worker, err)
         finally:
             self.running.pop(item.task_id, None)
+            self._live.pop(item.task_id, None)
             self._wake.set()
 
     async def _failed(self, item: QueuedWork, worker: Worker, err: Exception) -> None:
