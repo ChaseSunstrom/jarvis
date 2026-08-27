@@ -1165,3 +1165,12 @@ is quiet. Done since:
   profile, BLOCKERS.md). verify-all runs next on that house, the first to cover M100+; the twenty-second (M114) and
   twenty-third (rebuild, every open gate, a report) are queued behind it. 108 of 112 ticked; open: M56 and M77
   (operator-blocked), M100 (the operator's enrolment), M108, M111, M114 (gates queued), M23 (verify-all).
+- 17:55 UTC — verify-all on the twenty-first house (17:25–, the first to run M100+ gates) opened with today's work caught
+  by the design-system gates: raw values in the markdown styles, the task dock, the notes editor, the SYSTEM section and
+  the phone's dock (all on tokens now — lint 0 hits), SettingRow with no README section or style-guide row (both
+  added), the word "todo" in a markdown test, and the desktop gate's three shell cases with the console "hidden": with
+  `--no-sandbox` on and the renderer sandbox still on, Electron 33's renderer dies on ANY page (exit 5, measured on
+  http, file: and data:) — the renderer's sandbox now follows the process sandbox, isolation and no node kept, the
+  notice back in the main window; desktop e2e 6/6. The memory gate: the operator's profile (BLOCKERS) and one judge
+  wording. Reds still to read as the run reaches them. A push loop now follows every CI wave; the twenty-third
+  rebuilds the desktop package as well before its gates.
