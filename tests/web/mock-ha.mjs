@@ -1698,7 +1698,7 @@ index 1234567..89abcde 100644
 			id: "cheap-rate-report",
 			slug: "cheap-rate-report",
 			title: "Cheap rate report",
-			body: "# Cheap rate report\n\nThe handbook says the **cheap rate** runs 00:30–07:30.\n\n## Findings\n\n- dishwasher: 2.2 kW\n- washing machine: 2.1 kW\n\nRun `make test` before trusting it. <b>not html</b>",
+			body: "# Cheap rate report\n\nThe handbook says the **cheap rate** runs 00:30–07:30.\n\n## Findings\n\n- dishwasher: 2.2 kW\n- washing machine: 2.1 kW\n\nRun `make test` before trusting it. <b>not html</b>\n\n## By appliance\n\n| Appliance | kW | When |\n|:----------|---:|------|\n| Dishwasher | 2.2 | 00:40 |\n| Washer | 2.1 | 01:10 |\n\n## Plan\n\n- tonight\n  - dishwasher first\n  - then the washer\n- [ ] confirm the tariff\n- [x] read the meter",
 			tags: ["research"],
 			created: new Date(Date.now() - 3_600_000).toISOString(),
 			updated: new Date(Date.now() - 3_600_000).toISOString(),

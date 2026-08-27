@@ -7,6 +7,8 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+- Markdown renders completely (M113): tables, nested and task lists, code with its language, nested quotes, setext headings, hard breaks, strikethrough and autolinks — escaped first, links http(s) only, images as links.
+
 - Notes on the voice screen are a brief (M112): a note or a page is one row at a side — its title and first line — opened to the whole note with ⤢ and folded with ⤡; the house sizes and stacks them that way.
 
 - Tasks on the voice tab are a brief (M111): one line per task under the instrument, expanding on a click to the bar, the steps and an OPEN link; the list scrolls inside itself, the page does not.

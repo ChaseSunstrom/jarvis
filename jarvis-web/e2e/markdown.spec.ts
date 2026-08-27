@@ -15,8 +15,14 @@ test('a markdown note opens rendered — headings, a list, bold — with raw HTM
 	await expect(read).toBeVisible();
 	await expect(read.locator('h1')).toHaveText('Cheap rate report');
 	await expect(read.locator('h2')).toHaveText('Findings');
-	await expect(read.locator('li')).toHaveCount(2);
 	await expect(read.locator('li').first()).toHaveText('dishwasher: 2.2 kW');
+	// M113: a table with alignment, a nested list, task items — all three drawn.
+	await expect(read.locator('table th')).toHaveCount(3);
+	await expect(read.locator('table td').first()).toHaveText('Dishwasher');
+	await expect(read.locator('table td').nth(1)).toHaveAttribute('style', /text-align:\s*right/);
+	await expect(read.locator('ul ul li')).toHaveCount(2);
+	await expect(read.locator('input[type=checkbox]')).toHaveCount(2);
+	await expect(read.locator('input[type=checkbox]:checked')).toHaveCount(1);
 	await expect(read.locator('strong')).toHaveText('cheap rate');
 	await expect(read.locator('code')).toHaveText('make test');
 	// `<b>not html</b>` in the note is text on the page, never an element.

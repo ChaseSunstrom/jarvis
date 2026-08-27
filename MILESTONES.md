@@ -1665,7 +1665,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 27 Aug 11:06: ticked — gate 4/4 on the sixteenth's house (the 10:21 image): `routines.propose ask=false` ran the
     miner over the house's own recorder history and reported its candidates; a seeded draft accepted over the websocket
     became an automation the house listed, and was removed. The morning proposal with its question is the operator's to hear.
-- [ ] **M105 — The gate says no to a voice that is not yours** · size M · deps M71, M79 · parallel-ok M104
+- [x] **M105 — The gate says no to a voice that is not yours** · size M · deps M71, M79 · parallel-ok M104
   - Scope: on 27 Aug the operator's own speaker profile (11 samples, threshold 4.93) ACCEPTED the rig's
     synthetic Piper voice — `en_US-amy-low`, a woman's voice reading "remember that I take my tea with
     honey" — at 4.15, "match", and filed the memory under the operator. The composite is the mean of z²
@@ -1690,6 +1690,14 @@ web and of Tasker. Local only. Each row here is planned in that document.
     pitch far out") and shows the three blocks under the verdict; `enrolment.test.ts` 27, `enrol.spec.ts` 8/8 against the mock,
     whose verify verdict carries the blocks as the server's does.
   - 27 Aug 11:54: planned.
+  - 27 Aug 16:03: ticked — gate 5/5 on the twentieth house (15:55 images): the composite scores the three blocks as
+    equals with a veto per block, the speaker suites 143 passed, and the live probe: the rig's Piper voice enrolled as
+    Rig is accepted as Rig only (refused as the operator on every phrase). The probe's numbers: the operator's own
+    samples spread timbre 3.0 / variability 3.9 / pitch 8.35, so their veto lines sit at 7.39 / 7.81 / 9.85 — the
+    pitch line stays at the old ceiling because one enrolment sample is far off in pitch. What this does NOT settle:
+    a Piper phrase that lands under the operator's configured 4.93 composite (4.88 on the nineteenth) is still
+    accepted; the tighter gate is in the operator's hands — drop the outlier sample (the console shows the
+    self-scores), or set the threshold nearer the suggested one — and the M100 slice on the twentieth says how often.
 - [ ] **M106 — Notes read as they were written** · size M · deps M99, M83 · parallel-ok M105
   - Scope: the operator's report of 27 Aug 14:17 — "can you make MD text in notes and stuff display correctly
     as MD". Jarvis writes markdown everywhere it writes prose (research reports land as notes with headings
@@ -1806,6 +1814,16 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m112-notes-are-a-brief.sh`
   - 27 Aug 15:58: planned and built (`surface/__init__.py`, `SurfacePanel.svelte`, `e2e/notes-brief.spec.ts`); the
     gate runs on the twentieth.
+- [ ] **M113 — Markdown renders completely** · size S · deps M106 · parallel-ok M112
+  - Scope: the operator's report of 27 Aug 15:57 — "tables and stuff isn't rendering correctly as markdown, make sure
+    markdown renders completely". M106's renderer was a deliberate subset (no tables, no nested lists, no task
+    lists, no hard breaks). `markdown.ts` is a block parser now: GFM tables with alignment and escaped pipes, lists
+    nested by indentation with a numbered start, task items, blockquotes nested, fenced (with the language) and
+    indented code, setext headings, hard breaks, strikethrough, autolinks; an image is a link to itself, never a
+    load; the source is escaped before any structure is read, links are http(s) only — M106's safety unchanged.
+  - Verify: `bash scripts/verify/m113-markdown-renders-completely.sh`
+  - 27 Aug 16:05: planned and built; ten vitest cases; the Playwright case (a note with a table, a nested list and a
+    task list) runs on the twenty-first.
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,
