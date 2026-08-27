@@ -1003,3 +1003,4 @@ is quiet. Done since:
   m92 3/4, m93 6/7, m95 4/5 read below). M94 and M96 ticked. The rig gained `stop_after:`/`interrupted`, `do: states`,
   `setup: device:` — scenarios stop-means-stop, in-here-by-voice, notice-garage-door, and m86/m94/m96 have live slices.
 - 09:57 — M102 built (Jarvis learns from its own mistakes): the review integration, the guard and the stop on the trace, the self-review scenario; live half after the rebuild.
+- 10:12 — M103 ticked (7/7). M102 built; M104 (Jarvis proposes a routine) built with its suite — the miner over the recorder, a card and a question, a yes through create_automation.

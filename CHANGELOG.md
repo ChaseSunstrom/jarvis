@@ -9,6 +9,7 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ### In progress — from the audit of 27 Aug 2026 (`docs/AUDIT_2026-08-27.md`)
 - **M91 — a gate cannot pass on a skip.** Every verify gate that runs a pytest suite now reads the suite's summary line: a suite that skipped (beyond what the check allows), ran nothing, or errored fails the gate, where the exit status alone let a fully-skipped suite pass. Each gate's live slice keeps its own results file.
+- **M103 — the phone shows what the house puts up.** The surface's panels — an entity and its state, a room's readings, a note, a page, a job — and the task dock with its bars are on the phone's voice screen, live over the device channel, each panel a line in the phone's words with a × that takes it down the way the console does.
 - **M94 — in here.** The device a request came from reaches the model and the tools: "the lights in here", "show it on this screen", a reminder's chime — all mean the room that asked; a companion device has a room (M99).
 - **M96 — stop means stop.** "Jarvis, stop" stops the model at the server, not only the speaker; the run's end says it was interrupted, on the console and in the trace.
 - **M89 — stack hygiene.** SearXNG listens on loopback only, the console runs as `node`, the live sandbox is pinned by a test, the isolation matrix in `docs/security.md` is true of the tree, and the orchestrator's `/healthz` is read on Settings › Tools.

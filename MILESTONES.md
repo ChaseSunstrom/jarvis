@@ -1588,7 +1588,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     guard catches a claim and the pipeline `jarvis_run_stopped` when a run is stopped — both spans in the
     trace. Suite `test_review.py` 6; the rig's `review: true` turn; scenario `self-review` (a stop the rig
     sends, then "what did you get wrong today?"). The live half waits for a house built from this tree.
-- [ ] **M103 — The phone shows what the house puts up** · size L · deps M83, M88, M98 · parallel-ok M102
+- [x] **M103 — The phone shows what the house puts up** · size L · deps M83, M88, M98 · parallel-ok M102
   - Scope: the Android audit's last parity rows — the surface panels Jarvis puts up (`jarvis_surface_changed`)
     reach no phone, and the task dock under the instrument (M76) is a chip on the phone, not the voice
     screen. On the voice screen, under the activity strip: the panels the house has up, each one line in
@@ -1609,6 +1609,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     KINDS, the frames to the server's names, the subscribe-before-list order and the two views; two new
     goldens (`voice-surface`, `voice-task-dock`); gradle assembleDebug + testDebugUnitTest green. The gate's
     live half (a phone-shaped socket sees the panel go up) runs on the house.
+  - 27 Aug 10:12: ticked — gate 7/7: the two views on the screen fed by the channel, the mirror 12/12, the
+    strip's own mirror untouched, gradle assembleDebug + testDebugUnitTest, the goldens verified, and on the
+    house a phone-shaped socket that registered and subscribed saw the panel another socket placed go up
+    (`jarvis/surface/place`) before it was taken down again.
+
 - [ ] **M104 — Jarvis proposes a routine** · size M · deps M86, M97, M87 · parallel-ok M103
   - Scope: the house does the same things at the same times and nobody writes the routine. A miner over
     the recorder's history (`routines: days:` back, 14 by default) finds an entity put in the same state at
