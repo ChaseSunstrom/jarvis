@@ -2412,6 +2412,19 @@ _ACTION_CLAIMED = re.compile(
     r"(?:i(?:'ll| will) remind|reminder (?:is )?set|(?:i am|i'm) (?:now )?watching))\b",
     re.IGNORECASE,
 )
+#: A reply that OPENS with the deed as a bare participle: "Cleared, Sir.",
+#: "Shown.", "Locked, Sir — sleep well." On the nineteenth house (27 Aug
+#: 2026) "Clear the screen." was answered "Cleared, Sir." with no tool
+#: called and the guard let it through: the forms above want "is cleared"
+#: or "cleared it", and the butler's clipped register uses neither.
+_ACTION_CLAIMED_OPENER = re.compile(
+    r"^(?:(?:certainly|right away|of course|very good|at once|as you wish)[,.!]?\s*)?"
+    r"(?:cleared|shown|dismissed|displayed|hidden|locked|unlocked|opened|closed|started|stopped|"
+    r"paused|resumed|muted|unmuted|cancelled|canceled|scheduled|dimmed|brightened|armed|disarmed|"
+    r"turned (?:on|off)|switched (?:on|off))\b[,.!;—-]?(?:\s|$)",
+    re.IGNORECASE,
+)
+
 #: A capability the model has, denied. "you make me a react app" →
 #: "I'm a butler, not a developer" (26 Aug 2026) while start_coding_job sat
 #: in the registry and another turn was asking which repository to use.
@@ -2524,7 +2537,7 @@ def claimed_action(request: str, reply: str) -> bool:
         return False
     if _ACTION_DECLINED.search(reply):
         return False
-    return bool(_ACTION_CLAIMED.search(reply))
+    return bool(_ACTION_CLAIMED.search(reply) or _ACTION_CLAIMED_OPENER.match(reply.strip()))
 
 
 def narrated_tool_call(text: str, names: Iterable[str]) -> str:

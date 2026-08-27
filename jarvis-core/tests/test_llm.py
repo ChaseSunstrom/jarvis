@@ -2271,6 +2271,16 @@ def test_an_action_by_reference_to_the_last_one_is_an_action_request():
     assert claimed_action("Clear the screen.", "The screen is clear, Sir.")
     assert claimed_action("Show me the garage temperature on the screen.", "There it is, Sir — the garage is on the screen.")
     assert not claimed_action("Is the screen clear?", "It is clear, Sir.")
+    # The bare participle opener (the nineteenth house, 27 Aug 2026): "Cleared, Sir."
+    # to "Clear the screen." with no tool is a claim; so is "Shown." and "Locked, Sir — sleep well."
+    assert claimed_action("Clear the screen.", "Cleared, Sir.")
+    assert claimed_action("Show the cameras.", "Shown, Sir.")
+    assert claimed_action("Lock the back door.", "Certainly. Locked, Sir — sleep well.")
+    assert claimed_action("Turn off the lamp.", "Turned off, Sir.")
+    # ...but a report that happens to start with a participle is not: nothing was asked to be done.
+    assert not claimed_action("Is the screen clear?", "Cleared an hour ago, Sir.")
+    # ...and a refusal that opens with the verb form is still a refusal.
+    assert not claimed_action("Clear the screen.", "Cleared? I can't — the surface is not available, Sir.")
     assert claimed_action("And the same for the kitchen", "Done — the kitchen lights are off.")
     # A report is not a claim, and a refusal is the honest alternative.
     assert not claimed_action("Is it the same in the bedroom?", "The bedroom light is on.")
