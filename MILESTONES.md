@@ -1329,7 +1329,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m84-briefing.sh`
   - 27 Aug 11:01: ticked — gate 8/8 on the sixteenth's house (the 10:21 image); the plan pass's miss was the gate's
     (a two-digit milestone regex in the rig's own check), not the briefing's.
-- [ ] **M85 — Work survives a restart** · size M · deps M10, M25 · parallel-ok M84, M86
+- [x] **M85 — Work survives a restart** · size M · deps M10, M25 · parallel-ok M84, M86
   - Scope: four background tasks on the house tonight ended "interrupted when Jarvis restarted".
     A task with a plan (steps recorded) is resumed from its last completed step after a restart
     rather than marked errored; one that cannot be resumed (no steps, or its worker gone) is
@@ -1337,6 +1337,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     up after the restart"). The proactive-moment scenario passes across the memory scenario's
     restart in the same run.
   - Verify: `bash scripts/verify/m85-work-survives-a-restart.sh`
+  - 27 Aug 17:20: ticked — gate 5/5 on the twenty-first house (17:10 images): the engine persists running work with
+    the queue, a restart marks it and the load re-queues an idempotent job, the pump starts with the house (nothing
+    submitted), and on the house a background job survived a real restart — "on step two of five" after it, then
+    finished and said it was picked back up.
 - [x] **M86 — Jarvis notices** · size M · deps M59, M17, M66 · parallel-ok M85, M87
   - Scope: a door or lock left open/unlocked after a configured hour, a sensor unchanged for
     longer than its kind allows, a device that went unavailable — one spoken nudge (or a quiet
@@ -1351,13 +1355,16 @@ web and of Tasker. Local only. Each row here is planned in that document.
     house-notice scenario the rig cannot yet drive (it needs quiet hours set to now and an observe
     turn) — noted under M25's rule, not claimed here.
 
-- [ ] **M87 — Overnight reflection** · size M · deps M15, M16 · parallel-ok M86, M88
+- [x] **M87 — Overnight reflection** · size M · deps M15, M16 · parallel-ok M86, M88
   - Scope: once a night the day's conversations are read from the archive and consolidated into
     at most five durable facts about the user and the house (memory entries with a `learned`
     source) and a "what I learned today" card on the console the user can keep, edit or
     discard per fact; nothing the user asked to forget is re-learned; "what did you learn
     about me this week?" reads it back.
   - Verify: `bash scripts/verify/m87-overnight-reflection.sh`
+  - 27 Aug 17:20: ticked — gate 6/6 on the twenty-first house (17:10 images): the day's turns reflected into facts
+    kept as "learned" with a note and a card when there is something new, and none when the day's one fact was kept
+    the moment it was said; "What did you learn about me today?" answers from what was kept today, newest first.
 - [x] **M88 — A plan on the screen** · size M · deps M83, M10 · parallel-ok M87, M89
   - Scope: a background job with steps puts a `plan` panel on the voice screen's surface — the
     steps, the current one live, elapsed time, a stop — updated from the task's events, removed
