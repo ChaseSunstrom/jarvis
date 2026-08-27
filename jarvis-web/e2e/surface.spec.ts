@@ -116,11 +116,12 @@ test('a background job with steps puts its plan on the screen, and its result st
 	await expect(plan).toHaveCount(0, { timeout: 15_000 });
 	// The result stays as a note — a one-row brief since M112, its title and
 	// first line; ⤢ opens it to the whole result.
-	const brief = page.locator('[data-testid^="surface-brief-"]');
-	await expect(brief).toBeVisible({ timeout: 10_000 });
-	await expect(page.locator('.surface').getByText('Finished: Audit every sensor')).toBeVisible();
-	await page.locator('[data-testid^="surface-open-"]').first().click({ force: true });
-	const note = page.locator('[data-testid^="surface-text-"]');
+	const panel = page.locator('[data-testid^="surface-panel-"]').filter({ hasText: 'Finished: Audit every sensor' });
+	await expect(panel).toHaveCount(1, { timeout: 10_000 });
+	await expect(panel.locator('[data-testid^="surface-brief-"]')).toBeVisible();
+	await page.waitForTimeout(900);
+	await panel.locator('[data-testid^="surface-open-"]').click();
+	const note = panel.locator('[data-testid^="surface-text-"]');
 	await expect(note).toBeVisible({ timeout: 5_000 });
 	await expect(note).toContainText('all twelve read');
 });

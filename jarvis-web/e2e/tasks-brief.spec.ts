@@ -57,8 +57,11 @@ test('four running tasks at 1440×900: one line each, and the page does not scro
 	expect(await pageScrolls(page), 'the voice page scrolls at 1000 px tall').toBe(false);
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.waitForTimeout(300);
+	// At least the four of this case: on CI the mock is one server shared by
+	// every worker, and another spec's tasks can be in the dock too.
 	const rows = page.locator('[data-testid^="task-dock-row-"]');
-	await expect(rows).toHaveCount(4, { timeout: 5_000 });
+	expect(await rows.count()).toBeGreaterThanOrEqual(4);
+	for (const title of TITLES) await expect(rows.filter({ hasText: title })).toHaveCount(1);
 	for (const row of await rows.all()) {
 		const box = await row.boundingBox();
 		expect(box?.height ?? 0, 'a collapsed task row is more than one line tall').toBeLessThanOrEqual(44);

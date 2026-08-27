@@ -32,8 +32,11 @@ async function threeNotes(page: Page): Promise<string[]> {
 	for (const [i, text] of LONG.entries()) {
 		await tell(page, { type: 'jarvis/test/surface_show', kind: 'note', title: `Note ${i + 1}`, text });
 	}
-	await expect(page.getByTestId('surface')).toHaveAttribute('data-count', '3', { timeout: 10_000 });
-	for (const panel of await page.locator('[data-testid^="surface-panel-"]').all()) {
+	// This case's three, by title — the mock is one server for every spec
+	// file, and a panel an earlier file left behind is not one of ours.
+	for (let i = 0; i < LONG.length; i++) {
+		const panel = page.locator('[data-testid^="surface-panel-"]').filter({ hasText: `Note ${i + 1}` });
+		await expect(panel).toHaveCount(1, { timeout: 10_000 });
 		ids.push((await panel.getAttribute('data-testid'))!.replace('surface-panel-', ''));
 	}
 	return ids;
@@ -46,9 +49,6 @@ test.beforeEach(async ({ page }) => {
 	await expect(page.getByTestId('reactor')).toBeVisible({ timeout: 15_000 });
 });
 
-// `force` on the ⤢ clicks: on CI the panel's enter animation kept the button
-// "not stable" for the whole timeout while the click itself lands fine (it does
-// here, unforced); what the case proves is the state after the click.
 test.afterEach(async ({ page }) => {
 	await tell(page, { type: 'jarvis/surface/clear' }).catch(() => {});
 });
@@ -70,7 +70,11 @@ test('three long notes are three one-row briefs; the page does not scroll', asyn
 test('⤢ opens one note to the whole text as written, and ⤡ folds it back to a line', async ({ page }) => {
 	const ids = await threeNotes(page);
 	const id = ids[0];
-	await page.getByTestId(`surface-open-${id}`).click({ force: true });
+	// Let the panels' enter animation finish before the click: Playwright's
+	// stability wait timed out on CI while it ran.
+	await page.waitForTimeout(900);
+	await page.getByTestId(`surface-open-${id}`).scrollIntoViewIfNeeded();
+	await page.getByTestId(`surface-open-${id}`).click();
 	const text = page.getByTestId(`surface-text-${id}`);
 	await expect(text).toBeVisible({ timeout: 5_000 });
 	await expect(text.locator('h1')).toHaveText('Sensor audit');
@@ -78,7 +82,7 @@ test('⤢ opens one note to the whole text as written, and ⤡ folds it back to 
 	const row = (await page.getByTestId('surface').boundingBox())!.width / 12;
 	const open = (await page.getByTestId(`surface-panel-${id}`).boundingBox())!;
 	expect(open.height).toBeGreaterThan(row * 3);
-	await page.getByTestId(`surface-open-${id}`).click({ force: true });
+	await page.getByTestId(`surface-open-${id}`).click();
 	await expect(page.getByTestId(`surface-brief-${id}`)).toBeVisible({ timeout: 5_000 });
 	const folded = (await page.getByTestId(`surface-panel-${id}`).boundingBox())!;
 	expect(folded.height).toBeLessThanOrEqual(row + 2);

@@ -186,7 +186,7 @@
 	     read while you read it. -->
 	<Panel title="Text size" meta="this browser only" testid="text-size">
 		{#snippet children()}
-			<SettingRow label="Scale" why="multiplies every size in the interface" testid="console-scale">
+			<SettingRow label="Scale" why="multiplies every size in the interface">
 				<!-- A segmented choice: the current size is raised, not lit. The accent
 				     is for what is about to happen, and a preference already in effect
 				     is not that. -->

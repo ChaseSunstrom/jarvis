@@ -212,6 +212,10 @@ test('the panel has its four states: loading, error, offline, and nobody enrolle
 	await page.goto('/settings/voice');
 	await expect(page.getByTestId('speaker-loading')).toBeVisible({ timeout: 15_000 });
 	await expect(page.getByTestId('settings-voice-lede')).toContainText('reading whose voice');
+	// The held read has to have ARRIVED before it can be released: on CI the
+	// loading state showed before the request reached the route twice, and
+	// `release` was still null.
+	await expect.poll(() => typeof release === 'function', { timeout: 15_000 }).toBe(true);
 	// Error: the server's own words, and a Retry.
 	release!();
 	await expect(page.getByTestId('speaker-error-state')).toBeVisible();
