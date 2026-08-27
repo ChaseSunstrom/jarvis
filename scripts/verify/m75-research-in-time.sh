@@ -28,8 +28,9 @@ END=$(date +%s.%N)
 python3 - "$OUT" "$START" "$END" <<'"'"'PY'"'"'
 import json, sys
 payload = json.loads(sys.argv[1]); took = float(sys.argv[3]) - float(sys.argv[2])
-print(f"fetched={payload.get(\"fetched\", \"browser\")} status={payload.get(\"status\")} text={len(payload.get(\"text\", \"\"))} chars in {took:.1f}s")
-assert payload.get("status") == 200 and len(payload.get("text", "")) > 500, payload.get("text", "")[:200]
+fetched = payload.get("fetched", "browser"); status = payload.get("status"); chars = len(payload.get("text", ""))
+print(f"fetched={fetched} status={status} text={chars} chars in {took:.1f}s")
+assert status == 200 and chars > 500, payload.get("text", "")[:200]
 assert took < 10, f"{took:.1f}s"
 PY'
 

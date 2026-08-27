@@ -902,7 +902,7 @@ jarvis-browser: `tests/test_api.py` (the three text-first cases).
 | After the configured SearXNG could not search, the fallback is asked first for ten minutes, the note says so, and one answer from the configured instance restores the order | Automated | the web test above |
 | jarvis-browser reads a page as text over plain HTTP first, re-checking every redirect hop; a page with no text without JavaScript falls back to the browser; a redirect to the LAN is refused on the shortcut | Automated | the three browser tests |
 | Research reads a bounded few pages at once (`research: parallel_reads:`, 3), keeping the citation order | Automated | `test_research.py` (unchanged counts through a semaphore) |
-| The running jarvis-browser reads a real news page as text in under ten seconds | Scripted | the gate's last check, after the rebuild |
+| The running jarvis-browser reads a real news page as text in under ten seconds | Containerised | the gate's last check — 27 Aug 01:17, on the tenth rebuild: news.bitcoin.com as text, 38,814 characters, `fetched=plain`, 6.0 s (every read timed out at 20 s the evening before) |
 
 ### Jarvis in the middle, the tasks below (M76)
 

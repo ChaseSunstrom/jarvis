@@ -1181,7 +1181,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m74-speak-after-tools.sh`
   - 26 Aug 23:14, built, not ticked: the after-tools test and the M60 cases pass (voice suite 84); the
     gate's last check needs the rebuilt house and a spoken research turn for `first_audio`.
-- [ ] **M75 — Research that reads in time** · size M · deps M68 · parallel-ok M73
+- [x] **M75 — Research that reads in time** · size M · deps M68 · parallel-ok M73
   - Scope: two research runs at 22:3x: every page read ended "jarvis-browser timed out after 20s
     on /fetch" and each search paid the tailnet instance's timeout before the fallback answered.
     The search client asks the fallback first for ten minutes after the configured instance
@@ -1192,6 +1192,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 26 Aug 23:14, built, not ticked: web suite 121 (fallback first after a failure), browser suite
     349 (text first, JavaScript pages fall back, a LAN redirect refused on the shortcut), research
     suite 32; the gate's last check reads a real news page through the rebuilt jarvis-browser.
+  - 27 Aug 01:17: ticked — on the tenth rebuild the running jarvis-browser reads news.bitcoin.com as
+    text (`fetched=plain`, 38,814 characters) in 6.0 s where every read timed out at 20 s the
+    evening before; the gate's other eight checks green (its last one had a Python 3.11 f-string
+    of its own to fix). The report run's research scenarios all answered through the fallback.
 - [x] **M76 — Jarvis in the middle, the tasks below** · size S · deps M49 · parallel-ok M73
   - Scope: "can we have the tasks popups show below jarvis on the voice page? … move jarvis to be
     in the middle of the page instead of kind of near the top" — the reactor centred in the
