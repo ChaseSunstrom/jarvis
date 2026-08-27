@@ -39,6 +39,8 @@
 		pinned?: boolean;
 		redacted?: string[];
 		conversation_id?: string;
+		/** Epoch seconds after which jarvis-core forgets it; null or absent for "kept". */
+		expires?: number | null;
 	}
 
 	let conn = $state<Connection | null>(null);
@@ -285,6 +287,10 @@
 							<span>{when(entry.created)}</span>
 							{#each entry.tags as tag (tag)}<Pill>{tag}</Pill>{/each}
 							{#if entry.pinned}<Pill tone="live">pinned</Pill>{/if}
+							{#if entry.expires}
+								<!-- The server said when it will forget this; nothing showed it (M99). -->
+								<Pill testid="memory-expires-{entry.id}">expires {when(entry.expires)}</Pill>
+							{/if}
 							{#if entry.redacted?.length}
 								<Pill tone="warn">redacted: {entry.redacted.join(', ')}</Pill>
 							{/if}

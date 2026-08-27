@@ -86,6 +86,23 @@
 		const connection = conn;
 		if (!connection) return;
 		void refresh(connection);
+		// Live (M99): a firing moves `next_at`, `last_result` and `missed`,
+		// and the panel used to show the old ones until a reload.
+		let sub: { unsubscribe: () => Promise<void> } | null = null;
+		let gone = false;
+		void connection.client
+			.subscribeEvents(() => void refresh(connection), 'jarvis_schedule_fired')
+			.then((s) => {
+				if (gone) void s.unsubscribe();
+				else sub = s;
+			})
+			.catch(() => {
+				// An older server without the event still lists on demand.
+			});
+		return () => {
+			gone = true;
+			void sub?.unsubscribe();
+		};
 	});
 
 	async function add(): Promise<void> {

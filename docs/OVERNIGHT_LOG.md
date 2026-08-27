@@ -973,3 +973,5 @@ is quiet. Done since:
   the console on the 26th (recorded then); not changed.
 - 08:10 — M91 ticked (3/3): 76 gates converted to `check_pytest` by atomic replace while the quiet pass ran; no suite with a skip mark skips on this box (speaker+ssrf 103, harness selftest 43).
 - 08:22 — M97's timers built (`integrations/timer`, 10 tests, scenario, gate probe); waits for the sixteenth rebuild. CI on 2661073: the android mirrors job is red — being read.
+- 08:44 — M99 built (retry, live Areas/schedule/settings, a room for a phone, the unshown fields; spec 6/6); waits for the rebuild.
+- 08:51 — M99 ticked (9/9): the quiet pass rebuilt the stack at 08:38 (core + console) from this tree, so the live half ran on it; the house now also runs the timer integration and the reflection fix ("overnight reflection at 03:30" in its log — the first time).

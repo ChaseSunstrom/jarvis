@@ -442,6 +442,11 @@
 							{fmtTime(automation.attributes?.last_triggered)}
 						</span>
 						<span class="state" class:on data-testid="state-{automation.entity_id}">{automation.state}</span>
+						{#if row?.reach}
+							<!-- The server's one sentence on what the actions reach ("can
+							     lock"): sent since M25 and shown nowhere until M99. -->
+							<span class="eid" data-testid="reach-{automation.entity_id}">{row.reach}</span>
+						{/if}
 						{#if row?.needs_approval}
 							<!-- Worth knowing before you press RUN NOW, and it explains the
 							     approval prompt when it appears. -->

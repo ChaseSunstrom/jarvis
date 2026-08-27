@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ago } from '$lib/tasks';
 	/**
 	 * Put a phone on the house without typing a token into it.
 	 *
@@ -672,6 +673,13 @@
 					<div class="what">
 						<b>{row.name}</b><code>{row.id}</code>
 					</div>
+					<span class="eid" data-testid="token-times-{row.id}">
+						{row.created_at ? `made ${ago(row.created_at)}` : ''}{row.created_at && row.last_used_at ? ' · ' : ''}{row.last_used_at
+							? `last used ${ago(row.last_used_at)}`
+							: row.created_at
+								? ' · never used'
+								: ''}
+					</span>
 					<span class="state" class:on={row.connected} data-testid="token-state-{row.id}">{row.connected ? 'connected now' : 'not connected'}</span>
 					<div class="acts">
 						<Button

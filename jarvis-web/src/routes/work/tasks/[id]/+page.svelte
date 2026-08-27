@@ -196,6 +196,20 @@
 		}
 	}
 
+	let retrying = $state(false);
+	async function retry() {
+		if (!conn || !task) return;
+		retrying = true;
+		try {
+			const result = await conn.client.retryTask(taskId);
+			said = result?.queued ? 'Back on the queue.' : 'It was not retried.';
+		} catch (error) {
+			said = error instanceof Error ? error.message : String(error);
+		} finally {
+			retrying = false;
+		}
+	}
+
 	async function cancel() {
 		if (!conn || !task) return;
 		cancelling = true;
@@ -540,6 +554,16 @@
 
 				<div class="actions">
 					{#if said}<p class="said" role="status" data-testid="task-said">{said}</p>{/if}
+					<Button
+						onclick={retry}
+						disabled={retrying || !it.finished || (it.status !== 'error' && it.status !== 'cancelled')}
+						title={!it.finished
+							? 'It is still running'
+							: it.status !== 'error' && it.status !== 'cancelled'
+								? 'Only a task that failed or was cancelled is retried'
+								: 'Put it back on the queue'}
+						testid="task-retry">Retry</Button
+					>
 					<Button
 						onclick={cancel}
 						disabled={cancelling || it.finished}

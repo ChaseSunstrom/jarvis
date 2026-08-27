@@ -734,7 +734,11 @@ export function makeWorld() {
 			connected: true,
 			app_version: '1.0.32',
 			action_count: 48,
-			actions: []
+			actions: [],
+			// M99: filed in the device registry, so the room picker applies.
+			registry_id: 'dev-companion-pixel-8',
+			area_id: null,
+			area: ''
 		},
 		{
 			device_id: 'workshop-desktop',
@@ -744,9 +748,28 @@ export function makeWorld() {
 			connected: false,
 			app_version: '0.9.0',
 			action_count: 12,
-			actions: []
+			actions: [],
+			registry_id: 'dev-companion-workshop-desktop',
+			area_id: null,
+			area: ''
 		}
 	];
+	// Their registry entries, as jarvis-core files them (`companion:<id>`).
+	for (const companion of companions) {
+		devices.push({
+			id: companion.registry_id,
+			name: companion.name,
+			manufacturer: companion.platform,
+			model: null,
+			sw_version: companion.app_version,
+			identifiers: [`companion:${companion.device_id}`],
+			connections: [],
+			area_id: null,
+			platform: 'companion',
+			via_device_id: null,
+			disabled: false
+		});
+	}
 
 	const world = {
 		areas, devices, entities, states, automations, settings, tools, models, modelsPayload,
@@ -775,8 +798,8 @@ export function makeWorld() {
 		// One connected and one not: "connected now" is the fact the panel
 		// exists to show before somebody revokes the wrong row.
 		tokens: [
-			{ id: 'tok-console', name: 'console', connected: true, created_at: 1700000000 },
-			{ id: 'tok-oldphone', name: 'Old Pixel', connected: false, created_at: 1700000100 }
+			{ id: 'tok-console', name: 'console', connected: true, created_at: 1700000000, last_used_at: Date.now() / 1000 - 60 },
+			{ id: 'tok-oldphone', name: 'Old Pixel', connected: false, created_at: 1700000100, last_used_at: null }
 		]
 	};
 	return world;
@@ -1410,7 +1433,9 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			// environment — but this stands in for "declared by the operator
 			// with a sandbox wrapper", which the sandboxed reset exercises.
 			checks: ['pytest -q', 'ruff check .'],
-			writable: true
+			writable: true,
+			backend: 'opencode',
+			permission_mode: 'ask before writing'
 		},
 		{
 			name: 'notes',
@@ -1677,7 +1702,8 @@ index 1234567..89abcde 100644
 			tags: ["house"],
 			created: Date.now() / 1000 - 86_400,
 			source: "user",
-			pinned: true
+			pinned: true,
+			expires: null
 		},
 		{
 			id: "mem2",
@@ -2939,6 +2965,22 @@ index 1234567..89abcde 100644
 					break;
 				}
 
+				/** Fire a job now, as the scheduler does: the row moves and the bus says so (M99). */
+				case 'jarvis/test/schedule_fire': {
+					const job = scheduled.get(String(msg.job_id || ''));
+					if (!job) {
+						fail(msg.id, 'not_found', `no job ${msg.job_id}`);
+						break;
+					}
+					job.last_at = Date.now() / 1000;
+					job.last_result = String(msg.result || 'told you: Good morning.');
+					job.next_at = Date.now() / 1000 + 86_400;
+					job.missed = 0;
+					broadcast('jarvis_schedule_fired', { job: { ...job }, late: false });
+					ok(msg.id, { job: { ...job } });
+					break;
+				}
+
 				/** Make a job look like it missed a firing while Jarvis was off. */
 				case 'jarvis/test/schedule_missed': {
 					const job = scheduled.get(String(msg.job_id || ''));
@@ -3841,6 +3883,44 @@ index 1234567..89abcde 100644
 					break;
 				}
 
+				// M99: the button somebody presses after fixing what broke. jarvis-core
+				// refuses a task that has not finished, and one whose kind nothing
+				// can rebuild; here every kind is rebuildable and the retry runs its
+				// steps again, quickly, so a spec can watch the card come back.
+				case 'jarvis/tasks/retry': {
+					const task = taskStore.get(String(msg.task_id ?? ''));
+					if (!task) {
+						fail(msg.id, 'not_found', `no task ${msg.task_id}`);
+						break;
+					}
+					if (!TASK_TERMINAL.includes(task.status)) {
+						fail(msg.id, 'invalid_format', 'that task has not finished');
+						break;
+					}
+					for (const step of task.steps) {
+						step.status = 'queued';
+						step.detail = '';
+					}
+					updateTask(task.id, { status: 'queued', error: '', result: '', detail: 'retried from a client' });
+					ok(msg.id, { task: taskDict(taskStore.get(task.id)), queued: true });
+					let at = 0;
+					const again = () => {
+						const live = taskStore.get(task.id);
+						if (!live || TASK_TERMINAL.includes(live.status)) return;
+						if (at > 0) live.steps[at - 1].status = 'done';
+						if (at >= live.steps.length) {
+							updateTask(task.id, { status: 'done', result: 'done on the second attempt' });
+							return;
+						}
+						live.steps[at].status = 'running';
+						updateTask(task.id, { status: 'running' });
+						at += 1;
+						setTimeout(again, 150);
+					};
+					setTimeout(again, 150);
+					break;
+				}
+
 				case 'jarvis/tasks/delete': {
 					if (!removeTask(String(msg.task_id ?? ''))) {
 						fail(msg.id, 'not_found', `no task ${msg.task_id}`);
@@ -4593,6 +4673,15 @@ index 1234567..89abcde 100644
 					const previous = row.value;
 					row.value = next;
 					row.source = 'overlay';
+					// jarvis-core fires this on every write (M67); a mock that stayed
+					// quiet let a Settings page pass while never following the house.
+					broadcast('jarvis_setting_changed', {
+						key: row.key,
+						label: row.label,
+						previous,
+						value: row.value,
+						applied: row.apply === 'live'
+					});
 					ok(msg.id, {
 						key: row.key,
 						label: row.label,
@@ -4881,6 +4970,14 @@ index 1234567..89abcde 100644
 					for (const field of ['name', 'area_id', 'disabled', 'manufacturer', 'model']) {
 						if (msg[field] !== undefined && msg[field] !== null) device[field] = msg[field];
 					}
+					// A companion's room rides on its list row too (M99).
+					for (const companion of world.companions) {
+						if (companion.registry_id === device.id) {
+							companion.area_id = device.area_id ?? null;
+							companion.area = world.areas.find((a) => a.id === device.area_id)?.name ?? '';
+						}
+					}
+					broadcast('device_registry_updated', { action: 'update', device_id: device.id });
 					ok(msg.id, device);
 					break;
 				}

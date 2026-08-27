@@ -2118,6 +2118,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M96 — Stop means stop | **Built** (3/4) | `m96-stop-means-stop.sh`; `test_api.py` (+1) |
 | M97 — Routines read back, what's new | **Built** (6/7; timers as entities not yet) | `m97-timers-routines-whats-new.sh`; `test_automation_api.py` (+2), `test_create_tool_handler.py` (+1), `test_notifications.py` (+1) |
 | M98 — The phone keeps up | **Ticked** (16/16 on the house: the speaker gate on register, a held Tier-3 action on the consent screen, the typed field, the tier contract's phone variant, and PHONE TASKS' way in — a fake phone was sent a task bundle by the model for a spoken-style request) | `m98-the-phone-keeps-up.sh`; gradle assembleDebug + testDebugUnitTest; `phone_tasks_test.py` 16/16; `test_device_control.py` (+1), `test_skills.py` (+1) |
+| M99 — The console keeps up | **Ticked** (9/9 on the rebuilt house: retry, live Areas/schedule/settings, a room for a companion listed with its registry entry, the unshown fields) | `m99-the-console-keeps-up.sh`; `console-keeps-up.spec.ts` 6/6 + the touched specs 41/41; `test_api_companion.py` (+1) |
 
 1. **Never promote a row without a command that demonstrates it.** "Probably
    fine" is Unproven.

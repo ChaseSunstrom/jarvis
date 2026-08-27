@@ -31,6 +31,12 @@ export interface CodeRepo {
 	environment_detail?: string;
 	/** Whether that environment can reach the internet. */
 	networked?: boolean;
+	/** Which coding backend runs the jobs ("opencode", "claude"), from jarvis-core. */
+	backend?: string;
+	/** How far that backend may act without asking, in its own words. */
+	permission_mode?: string;
+	/** Where the repository came from, when jarvis-core cloned it. */
+	origin?: string;
 }
 
 export interface CodeCheck {

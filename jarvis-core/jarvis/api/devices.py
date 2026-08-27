@@ -339,6 +339,21 @@ class DeviceLink:
         self.registered_at = time.time()
         self._sender: Sender = sender
         self._pending: dict[str, asyncio.Future] = {}
+        #: The device registry entry this companion is filed under (M99), so
+        #: the Devices page's room picker applies to a phone the way it does to
+        #: a bridge. Set by the register handler; None on a house whose
+        #: registry is not up yet.
+        self.registry_id: str | None = None
+        #: How to read the room: installed by the hub, which knows the house.
+        self.area_facts: Any = None
+
+    @property
+    def area(self) -> str:
+        """The room this companion is filed in, or "" — read live from the
+        registry so an assignment made on the Devices page reaches the very
+        next turn's `device_facts` without a re-register."""
+        facts = self.area_facts() if callable(self.area_facts) else {}
+        return str((facts or {}).get("area") or "")
 
     # --- outbound ---------------------------------------------------------
     def push(self, payload: dict[str, Any]) -> bool:
@@ -497,6 +512,10 @@ class DeviceLink:
             "app_version": self.app_version,
             "action_count": len(self.actions),
         }
+        facts = self.area_facts() if callable(self.area_facts) else {}
+        payload["registry_id"] = self.registry_id
+        payload["area_id"] = (facts or {}).get("area_id")
+        payload["area"] = str((facts or {}).get("area") or "")
         if include_actions:
             payload["actions"] = [a.as_dict() for a in self.actions.values()]
         return payload
@@ -576,6 +595,25 @@ class ConnectedDevices:
             len(manifest),
         )
         return link
+
+    def area_facts_for(self, device_id: str) -> dict[str, Any]:
+        """`{registry_id, area_id, area}` for a companion, from the device registry.
+
+        A phone is filed under `companion:<id>`; its room is whatever the
+        Devices page (or `config/device_registry/update`) assigned, read at
+        the moment of asking. Empty when the registry or the entry is absent.
+        """
+        registry = getattr(self.jarvis, "devices", None)
+        areas = getattr(self.jarvis, "areas", None)
+        entry = registry.get_by_identifier(f"companion:{device_id}") if registry is not None else None
+        if entry is None:
+            return {}
+        area_id = getattr(entry, "area_id", None)
+        area = ""
+        if area_id and areas is not None:
+            found = getattr(areas, "areas", {}).get(area_id)
+            area = str(getattr(found, "name", "") or "")
+        return {"registry_id": entry.id, "area_id": area_id, "area": area}
 
     def disconnect(self, device_id: str, owner: Any = None) -> bool:
         """Drop a device's connection. A stale socket cannot evict a newer one."""

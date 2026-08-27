@@ -520,6 +520,19 @@
 						<p class="hint" data-testid="code-repo-note">
 							{#if repo.description}{repo.description} — {/if}{describeRepo(repo, sandboxed)}
 						</p>
+						{#if repo.backend || repo.permission_mode || repo.origin}
+							<!-- Sent by jarvis-core since M41 and shown nowhere until M99: which
+							     worker, how free a hand it has, and where the code came from. -->
+							<p class="hint" data-testid="code-repo-backend">
+								{[
+									repo.backend ? `worker: ${repo.backend}` : '',
+									repo.permission_mode ? `permissions: ${repo.permission_mode}` : '',
+									repo.origin ? `from ${repo.origin}` : ''
+								]
+									.filter(Boolean)
+									.join(' · ')}
+							</p>
+						{/if}
 						{#if checksWithheld}
 							<p class="notice" data-testid="code-repo-no-checks">{checksWithheld}</p>
 						{/if}

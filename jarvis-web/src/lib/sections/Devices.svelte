@@ -254,6 +254,19 @@
 	 * forty capabilities and have no way to confirm it had ever connected.
 	 */
 	let companions = $state<CompanionDevice[]>([]);
+
+	/** Put a companion in a room, through its registry entry (M99). */
+	async function moveCompanion(device: CompanionDevice, areaId: string): Promise<void> {
+		if (!conn || !device.registry_id) return;
+		try {
+			await conn.client.updateDevice(device.registry_id, { area_id: areaId || null });
+			companions = (await conn.client.listCompanions()) ?? companions;
+			const room = areas.find((a) => a.id === areaId)?.name;
+			toasts.success(room ? `${device.name} is in the ${room}` : `${device.name} has no room`);
+		} catch (e) {
+			toasts.error(`Could not move ${device.name}`, describeError(e));
+		}
+	}
 	let companionsSupported = $state(true);
 
 	async function loadCompanions(connection: Connection): Promise<void> {
@@ -452,6 +465,25 @@
 						<span class="count" data-testid="companion-actions-{device.device_id}">
 							{device.action_count ?? device.actions?.length ?? 0} action(s)
 						</span>
+						{#if device.registry_id}
+							<!-- A room for a phone (M99): the same picker a bridge gets, through
+							     the registry entry jarvis-core files the companion under. It is
+							     what `device_of` reads, so "the light" from the kitchen phone can
+							     mean the kitchen. -->
+							<label class="room">
+								<span class="label">Room</span>
+								<select
+									class="in"
+									data-testid="companion-area-{device.device_id}"
+									value={device.area_id ?? ''}
+									onchange={(e) => void moveCompanion(device, (e.currentTarget as HTMLSelectElement).value)}
+								>
+									{#each options as option (option.id)}
+										<option value={option.id}>{option.name}</option>
+									{/each}
+								</select>
+							</label>
+						{/if}
 						<Pill tone={device.connected ? 'live' : 'neutral'} testid="companion-state-{device.device_id}">
 							{device.connected ? 'online' : 'offline'}
 						</Pill>

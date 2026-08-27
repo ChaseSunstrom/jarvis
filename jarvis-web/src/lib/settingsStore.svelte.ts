@@ -13,7 +13,7 @@
 // Nothing here knows about a connection: the section passes the client in when
 // it has one, and the store is inert until then.
 
-import type { JarvisClient, SettingRow, SettingResult } from './jarvisClient';
+import type { Subscription, JarvisClient, SettingRow, SettingResult } from './jarvisClient';
 import { coerceSetting } from './settingsDraft';
 import { describeError } from './connection';
 import { toasts } from './toast';
@@ -86,10 +86,36 @@ export class SettingsStore {
 		this.drafts = next;
 	}
 
+	/** The live subscription (M99), one per client. */
+	private following: { client: JarvisClient; sub: Promise<Subscription> } | null = null;
+
+	/**
+	 * Follow `jarvis_setting_changed` (M99): a voice `change_setting`, the
+	 * phone, another tab — each moves a row here without a reload. A draft
+	 * the person is typing is kept; only the server's value moves.
+	 */
+	follow(client: JarvisClient): void {
+		if (this.following?.client === client) return;
+		void this.following?.sub.then((s) => s.unsubscribe()).catch(() => undefined);
+		this.following = {
+			client,
+			sub: client.subscribeEvents((event) => {
+				const data = (event.data ?? {}) as { key?: string; value?: unknown };
+				if (!data.key) return;
+				this.rows = this.rows.map((row) => (row.key === data.key ? { ...row, value: data.value } : row));
+			}, 'jarvis_setting_changed')
+		};
+		this.following.sub.catch(() => {
+			// An older server without the event: the rows still load on demand.
+			this.following = null;
+		});
+	}
+
 	/** Load from `client`, and remember it for the saves that follow. */
 	async load(client: JarvisClient | null): Promise<void> {
 		this.client = client;
 		if (!client) return;
+		this.follow(client);
 		try {
 			this.adopt((await client.listSettings())?.settings ?? []);
 		} catch (e) {

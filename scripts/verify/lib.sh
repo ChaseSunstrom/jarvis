@@ -117,8 +117,12 @@ check_pytest() {
     local snippet="$2"
     local allowed="${3:-0}"
     local out summary skipped
-    out=$(bash -o pipefail -c "$snippet" 2>&1)
-    local status=$?
+    local status=0
+    # `|| status=$?`, not a bare assignment: every gate runs under `set -e`,
+    # and `out=$(failing command)` ends the script there — the M99 gate died
+    # after its fourth check with no FAIL line when pytest was not yet on the
+    # PATH. A suite that fails must be reported, not abort the gate.
+    out=$(bash -o pipefail -c "$snippet" 2>&1) || status=$?
     summary=$(printf '%s\n' "$out" | grep -E "^(=+ )?([0-9]+ (passed|failed|error|skipped|deselected|xfailed|xpassed|warning)s?(, )?)+|no tests ran|^ERROR" | tail -1)
     if [ -z "$summary" ]; then
         _v_fail "$label" "no pytest summary line in the output:

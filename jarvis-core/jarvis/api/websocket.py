@@ -1178,6 +1178,21 @@ class WebSocketHandler:
             owner=self,
         )
         self.device_id = device_id
+        # Filed in the device registry too (M99), under `companion:<id>`, so the
+        # Devices page's room picker applies to a phone as it does to a bridge
+        # and `device_of` can say which room a spoken request came from. The
+        # registry keeps whatever room was assigned across re-registers.
+        link.area_facts = lambda: hub.area_facts_for(device_id)
+        registry = getattr(self.jarvis, "devices", None)
+        if registry is not None:
+            try:
+                entry = await registry.async_get_or_create(
+                    [f"companion:{device_id}"], name, "companion",
+                    manufacturer=platform, sw_version=str(device.get("app_version") or "") or None,
+                )
+                link.registry_id = entry.id
+            except Exception:  # pragma: no cover - a registry fault must not refuse the phone
+                _LOGGER.exception("Could not file %s in the device registry", device_id)
         get_presence(self.jarvis).register(device_id, name, platform, link.capabilities)
 
         # There is somewhere to deliver to now, so hand the companion manager a

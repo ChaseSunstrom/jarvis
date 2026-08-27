@@ -91,6 +91,10 @@ export interface CompanionDevice {
 	app_version?: string | null;
 	action_count?: number;
 	actions?: { name: string; description?: string; tier?: number }[];
+	/** The device registry entry the companion is filed under (M99); its room lives there. */
+	registry_id?: string | null;
+	area_id?: string | null;
+	area?: string;
 }
 
 /** A tier-3 action held until a human says yes. */
@@ -1281,6 +1285,15 @@ export class JarvisClient {
 	 */
 	cancelTask(taskId: string): Promise<{ task?: unknown; cancelled: boolean; note?: string; reason?: string }> {
 		return this.command({ type: 'jarvis/tasks/cancel', task_id: taskId });
+	}
+
+	/**
+	 * Put a finished task back on the queue (M99). The server refuses one that
+	 * has not finished, and one whose kind nothing on that server can rebuild —
+	 * both as errors with a sentence, which the caller should show.
+	 */
+	retryTask(taskId: string): Promise<{ task?: unknown; queued: boolean }> {
+		return this.command({ type: 'jarvis/tasks/retry', task_id: taskId });
 	}
 
 	/** Forget one task. Does not stop it — see `cancelTask`. */

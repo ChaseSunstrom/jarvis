@@ -140,6 +140,22 @@
 		}
 	}
 
+	async function retry(task: TaskRow): Promise<void> {
+		if (!conn) return;
+		await withBusy(task.id, async () => {
+			try {
+				const result = await conn!.client.retryTask(task.id);
+				if (result.queued) toasts.success(`"${task.title}" is back on the queue`);
+				else toasts.info(`"${task.title}" was not retried`);
+			} catch (e) {
+				// The server's sentence is the useful part: "nothing on this
+				// server knows how to run 'research' work again" is a fact
+				// about the house, not a fault of the button.
+				toasts.error(`Could not retry "${task.title}"`, describeError(e));
+			}
+		});
+	}
+
 	async function cancel(task: TaskRow): Promise<void> {
 		if (!conn) return;
 		await withBusy(task.id, async () => {
@@ -335,7 +351,7 @@
 				{#each live as task, i (task.id)}
 					<div style={staggerStyle(i)} data-jv-row data-testid="task-{task.id}">
 						<!-- Cancel is what a running task offers; Forget is for one that ended (M55). -->
-						<TaskCard {task} busy={isBusy(task.id)} onCancel={cancel} />
+						<TaskCard {task} busy={isBusy(task.id)} onCancel={cancel} onRetry={retry} />
 					</div>
 				{/each}
 			</div>
@@ -348,7 +364,7 @@
 			<div class="stack jv-stagger" data-testid="tasks-finished">
 				{#each over as task, i (task.id)}
 					<div style={staggerStyle(i)} data-jv-row data-testid="task-{task.id}">
-						<TaskCard {task} busy={isBusy(task.id)} onForget={forget} />
+						<TaskCard {task} busy={isBusy(task.id)} onForget={forget} onRetry={retry} />
 					</div>
 				{/each}
 			</div>

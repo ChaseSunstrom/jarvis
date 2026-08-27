@@ -83,6 +83,32 @@ not answer is named at the foot with why.
 		if (conn) void load();
 	});
 
+	// Live (M99): a voice `change_setting` on a model role moved the row and
+	// left this pill on the old model until a reload — the section listened
+	// for nothing. One subscription per connection, dropped with it.
+	$effect(() => {
+		const connection = conn;
+		if (!connection) return;
+		let sub: { unsubscribe: () => Promise<void> } | null = null;
+		let gone = false;
+		void connection.client
+			.subscribeEvents((event) => {
+				const key = String((event.data as { key?: string } | undefined)?.key ?? '');
+				if (key.startsWith('llm.') || key.startsWith('vision.') || key.startsWith('voice.')) void load();
+			}, 'jarvis_setting_changed')
+			.then((s) => {
+				if (gone) void s.unsubscribe();
+				else sub = s;
+			})
+			.catch(() => {
+				// An older server without the event still lists on demand.
+			});
+		return () => {
+			gone = true;
+			void sub?.unsubscribe();
+		};
+	});
+
 	const models = $derived(payload?.models ?? []);
 
 	/** `family · size · quant`, the parts the server (or the id) gave. */

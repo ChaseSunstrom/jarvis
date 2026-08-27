@@ -1451,6 +1451,37 @@ web and of Tasker. Local only. Each row here is planned in that document.
     `test_skills.py` (+1: the shipped skill loads and narrows to the device tools).
     Not in this milestone: a console room for a companion device (M94's area) — a follow-up.
 
+- [x] **M99 — The console keeps up** · size M · deps M94, M83 · parallel-ok M97
+  - Scope: from the console audit's eight defects — RETRY from the console (`retryTask` over
+    `jarvis/tasks/retry`, on a failed card and the task page; ten of twenty-four tasks on the house
+    were `error`, six "interrupted when Jarvis restarted"); Areas live on the three registry events
+    and ScheduledJobs on `jarvis_schedule_fired` (both moved only on reload); Settings follow the
+    house (`jarvis_setting_changed` is fired and nobody listened — a voice `change_setting` left the
+    open section stale); a room for a companion device (the phone registers into the device registry,
+    the Devices page's room picker applies to it, `device_of` and the presence route carry it — M94's
+    area, M98's follow-up); and the fields the server sends that nothing shows (token created/last
+    used, an automation's `reach`, a code repo's backend/permission mode, a memory's `expires`, "no
+    sensor has a room" on Readings). The mock learns every payload key it lacked, so the console tests
+    cannot pass on a shape the server does not send.
+  - Verify: `bash scripts/verify/m99-the-console-keeps-up.sh`
+  - 27 Aug 08:27: planned.
+  - 27 Aug 08:44: built, not ticked — RETRY on a failed card and the task page over `retryTask`
+    (`jarvis/tasks/retry`); Areas on the three registry events, ScheduledJobs on `jarvis_schedule_fired`,
+    the settings store and the Models pill on `jarvis_setting_changed`; a companion is filed in the device
+    registry under `companion:<id>` at register, its room rides on `config/companion/list`
+    (`registry_id`, `area_id`, `area`) and on `DeviceLink.area` for `device_of`, and the Devices page's
+    companion rows have the room picker; token created/last-used, an automation's `reach`, a repo's
+    backend/permission mode and a memory's `expires` are shown. The mock serves retry, the companions'
+    registry entries, the missing keys, a `schedule_fire` hook, and now broadcasts `jarvis_setting_changed`
+    on a set (it never had — a Settings page could pass while never following the house).
+    `console-keeps-up.spec.ts` 6/6; the touched specs 41/41; svelte-check clean; vitest 770;
+    `test_api_companion.py` (+1). The gate's live half (a companion on the house listed with its room) waits
+    for the sixteenth rebuild.
+  - 27 Aug 08:51: ticked — gate 9/9. The stack was rebuilt at 08:38 by a gate in the quiet pass (core and
+    console images both), so the live half ran on a house carrying this tree: a companion registered over the
+    websocket was listed with `registry_id`/`area_id`/`area` and had its `companion:<id>` registry entry.
+    Found and fixed on the way: `check_pytest` under `set -e` ended a gate at a failing suite with no FAIL
+    line (`out=$(…)` is fatal under errexit) — `|| status=$?` now, atomically replaced.
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
     tools, five websocket commands, the console's panels over the page around the instrument —

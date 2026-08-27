@@ -344,6 +344,15 @@ export function canCancel(task: TaskRow): boolean {
 	return !isFinished(task);
 }
 
+/**
+ * A task that ended badly can be put back on the queue (M99). Only those:
+ * retrying a finished success would run it twice, and the server refuses a
+ * running one anyway.
+ */
+export function canRetry(task: TaskRow): boolean {
+	return isFinished(task) && (task.status === 'error' || task.status === 'cancelled');
+}
+
 // --- the dock -----------------------------------------------------------------
 //
 // The strip docked over every page. It shows live work, and it keeps a task for

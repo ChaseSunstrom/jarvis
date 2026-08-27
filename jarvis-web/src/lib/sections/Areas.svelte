@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
+	import type { Subscription } from '$lib/jarvisClient';
 	import { toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
 	import { Button, EmptyState, Input, Panel, ScreenState, SkeletonRows } from '$lib/ui';
@@ -140,6 +141,20 @@
 				return;
 			}
 			conn = connection;
+			// Live (M99): a room made by voice, an entity assigned on Devices, a
+			// removal after a spoken yes — each fires one of these, and this
+			// page used to show none of them until a reload.
+			for (const type of ['area_registry_updated', 'entity_registry_updated', 'device_registry_updated']) {
+				try {
+					subs.push(
+						await connection.client.subscribeEvents(() => {
+							void refresh();
+						}, type)
+					);
+				} catch {
+					// An older server without the event still lists on demand.
+				}
+			}
 			await refresh();
 		} catch (e) {
 			err = describeError(e);
@@ -149,11 +164,15 @@
 		}
 	}
 
+	let subs: Subscription[] = [];
+
 	onMount(() => {
 		disposed = false;
 		void connect();
 		return () => {
 			disposed = true;
+			for (const sub of subs) void sub.unsubscribe();
+			subs = [];
 			conn?.close();
 			conn = null;
 		};

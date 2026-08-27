@@ -18,6 +18,7 @@
 	import {
 		ago,
 		canCancel,
+		canRetry,
 		currentStep,
 		describeTask,
 		elapsed,
@@ -31,12 +32,14 @@
 		task,
 		busy = false,
 		onCancel,
+		onRetry,
 		onForget
 	}: {
 		task: TaskRow;
 		/** An action on this task is in flight, so its buttons are inert. */
 		busy?: boolean;
 		onCancel?: (task: TaskRow) => void;
+		onRetry?: (task: TaskRow) => void;
 		onForget?: (task: TaskRow) => void;
 	} = $props();
 
@@ -104,6 +107,13 @@
 			{#if canCancel(task) && onCancel}
 				<Button testid="task-cancel-{task.id}" disabled={busy} onclick={() => onCancel?.(task)}>
 					Cancel
+				</Button>
+			{/if}
+			{#if canRetry(task) && onRetry}
+				<!-- The button somebody presses after fixing what broke: a model
+				     server that was down, "interrupted when Jarvis restarted". -->
+				<Button testid="task-retry-{task.id}" disabled={busy} onclick={() => onRetry?.(task)}>
+					Retry
 				</Button>
 			{/if}
 			{#if onForget}
