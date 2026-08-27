@@ -233,4 +233,7 @@ CI's environment and only the log says what.
 claim that CI is green, and any tick that leans on it. What it needs: `gh
 auth login` on this host (or a token with `actions:read` in `GH_TOKEN`); then
 `gh run view <run id> --log-failed` reads the step. Until then a red core leg
-cannot be diagnosed from here, only reproduced by guesswork.
+cannot be diagnosed from here, only reproduced — a full 3.12 run of HEAD at
+12:33 found this one (`test_ask_and_answer`, a rule 6625b61 had widened; fixed
+in the commit after), twenty-three minutes a run, and the check run still
+said nothing: the step's `::error::` lines never reached it either.
