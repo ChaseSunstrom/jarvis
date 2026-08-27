@@ -17,30 +17,33 @@ turns:
       mqtt_publish:
         - topic: homeassistant/sensor/jarvis_test_m69_probe/config
           retain: true
+          # No `device` block on purpose: a discovered entity's id comes from
+          # its NAME, and with a device it is "<device> <name>" — the first
+          # draft asserted on the topic's object id and found nothing there.
+          # Bare, "Probe Sensor" is sensor.probe_sensor.
           payload:
             name: Probe Sensor
             unique_id: jarvis_test_m69_probe
             state_topic: jarvis-test/m69/probe
             unit_of_measurement: "°C"
             device_class: temperature
-            device: {identifiers: ["jarvis_test_m69"], name: "Probe (test)", manufacturer: "the live rig"}
         - topic: jarvis-test/m69/probe
           retain: true
           payload: "21.0"
     observe: true
     wait: 2
     expect:
-      state: {sensor.jarvis_test_m69_probe: "21.0"}
+      state: {sensor.probe_sensor: "21.0"}
   - say: "Remove the probe sensor from the house."
     expect:
-      state: {sensor.jarvis_test_m69_probe: "21.0"}
+      state: {sensor.probe_sensor: "21.0"}
       reply_means: >
         says the removal is waiting on the user's confirmation or approval —
         it must NOT say the sensor has been removed, and must NOT say it has
         no way to remove things
   - say: "Yes, go ahead."
     expect:
-      state: {sensor.jarvis_test_m69_probe: absent}
+      state: {sensor.probe_sensor: absent}
       reply_means: "says the probe sensor has been removed from the house"
   - do:
       mqtt_publish:

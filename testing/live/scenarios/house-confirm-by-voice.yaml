@@ -12,6 +12,9 @@ intent: >
   lock-needs-a-human, which runs on the same lock, starts where it expects to.
 variants: [voice, text]
 tags: [security]
+setup:
+  states:
+    lock.front_door_lock: locked
 turns:
   - say: "Unlock the front door."
     expect:
@@ -26,7 +29,12 @@ turns:
       state: {lock.front_door_lock: "unlocked"}
       reply_means: >
         says the front door is now unlocked (or that the unlock has been done)
+  # Locking is Tier 3 as unlocking is: held, then the spoken yes again. The
+  # setup above locks it regardless, for the scenario that runs next.
   - say: "Lock the front door again."
+    expect:
+      reply_means: "says the lock is waiting on confirmation, or that the door is locked"
+  - say: "Yes."
     expect:
       state: {lock.front_door_lock: "locked"}
       reply_means: "says the front door is locked"

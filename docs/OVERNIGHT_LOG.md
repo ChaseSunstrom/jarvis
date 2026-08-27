@@ -770,3 +770,9 @@ is quiet. Done since:
   so OpenCode is not in it and M82's last checks stay red; recorded in BLOCKERS.md, with the
   watcher's fix meaning the card says so within a poll. The tenth rebuild's chain is on the
   core suite (one failure seen so far, named when the run ends).
+- 00:23 — the whole core suite on the merged branch: 3464 passed, 3 failed in 44 minutes on the busy
+  box. Two were the run outpacing the commits (the surface's websocket rows and n8n's table rows
+  landed while it ran; both pass now); one was real — n8n fenced another server's words without
+  marking the turn untrusted, the control test_device_control keeps for every integration that
+  fences; fixed (e6142bb). Gradle assembled and ran the phone's unit tests on the branch; the
+  tenth rebuild is up.

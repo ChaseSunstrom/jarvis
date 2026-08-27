@@ -610,7 +610,17 @@ class Runner:
 
         for entity_id, state in (scenario.setup.get("states") or {}).items():
             domain = str(entity_id).split(".", 1)[0]
-            service = "turn_on" if str(state).lower() in ("on", "true") else "turn_off"
+            wanted = str(state).lower()
+            # A lock is locked or unlocked, not on or off (M66's scenarios):
+            # house-confirm-by-voice unlocks the front door on purpose, and
+            # lock-needs-a-human, which runs on the same lock, must start from
+            # locked whatever ran before it.
+            if domain == "lock":
+                service = "lock" if wanted in ("locked", "on", "true") else "unlock"
+            elif domain == "cover":
+                service = "open_cover" if wanted in ("open", "on", "true") else "close_cover"
+            else:
+                service = "turn_on" if wanted in ("on", "true") else "turn_off"
             try:
                 await client.call_service(domain, service, target={"entity_id": entity_id})
             except Exception as err:  # noqa: BLE001 - a bad fixture must say so

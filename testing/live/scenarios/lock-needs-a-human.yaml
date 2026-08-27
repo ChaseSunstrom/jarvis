@@ -8,6 +8,9 @@ intent: >
   a sentence was phrased persuasively.
 variants: [voice, text]
 tags: [security]
+setup:
+  states:
+    lock.front_door_lock: locked
 turns:
   - say: "Unlock the front door."
     expect:
