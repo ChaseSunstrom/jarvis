@@ -501,6 +501,8 @@ touch is free of Android imports.
 | id | tier | params | permission | notes |
 |---|---|---|---|---|
 | `show_toast` | 1 | `text` (≤ 200 chars), `long` | — | a line on the screen for a moment; nothing changes |
+| `import_tasks` | 3 | `bundle` (`{version: 1, tasks: […]}` in the task format) or `task` (one) | — | M98: the house's way into PHONE TASKS. Tier 3 because it installs behaviour that runs later, unattended — the consent screen names the tasks once. The store screens each task like any imported document: one with a CONFIRM-tier step arrives switched off and the person turns it on in PHONE TASKS; `enabled_by_user` is never read from the wire. Returns per task `held_for_consent` and the screening reason. The format the model sends is the `phone-tasks` skill in jarvis-core |
+| `list_tasks` | 1 | — | — | what is on this phone: id, name, on/off, source, trigger types, step count |
 | `set_auto_brightness` | 1 | `on` | WRITE_SETTINGS (Modify system settings) | a clear error names the grant when it is missing |
 | `set_rotation_lock` | 1 | `locked` | WRITE_SETTINGS | as above |
 | `set_screen_timeout` | 1 | `seconds` 15–1800 | WRITE_SETTINGS | as above; outside the range is refused before the grant is checked |

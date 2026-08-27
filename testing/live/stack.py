@@ -427,6 +427,10 @@ OPERATOR_FILES: tuple[str, ...] = (
     "packages/",
     "agents/",
     "examples/",
+    # Skills are the operator's documents too: the phone-tasks skill lost a
+    # line to a restore on 27 Aug 2026, an hour after it was written, and the
+    # mirror that pins it went red on CI before anyone saw the file.
+    "skills/",
     "models/",
     "dashboards/",
 )
