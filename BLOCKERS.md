@@ -216,3 +216,20 @@ a poll (M82) instead of sitting at "queued". Check from the host:
 
 The local coding job (`start_coding_job`, the sandbox) does not need the
 orchestrator and is unaffected.
+
+## CI's job logs need a token this host does not have
+
+Three times on 27 Aug 2026 (6c816c8, c44b168, 79bb9b4 → 9d6be59) the
+`python · jarvis-core` leg of the `CI` workflow went red with nothing on the
+check run but "Process completed with exit code 1" — a full four-minute run,
+no `FAILED` or `ERROR` row even with `-rfE`, and nothing from the step that
+now annotates pytest's tail. The public API refuses the job log ("Must have
+admin rights to Repository", 403) and so does `gh`, which is installed but
+not logged in. The same tree passes here in full under Python 3.12 (3563
+tests at 10:21; the changed files, 472, at 12:10), so whatever it is, it is
+CI's environment and only the log says what.
+
+What it needs: `gh auth login` on this host (or a token with `actions:read`
+in `GH_TOKEN`); then `gh run view <run id> --log-failed` reads the step. Until
+then a red core leg cannot be diagnosed from here, only reproduced by
+guesswork.
