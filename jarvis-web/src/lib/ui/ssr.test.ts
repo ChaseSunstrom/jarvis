@@ -22,6 +22,7 @@ const props: Record<string, Record<string, unknown>> = {
 	Panel: { title: 'Plan', children: undefined },
 	Row: { label: 'first token', value: '640 ms' },
 	Pill: { children: undefined },
+	SettingRow: { label: 'Wake word', why: 'The word that wakes it', children: undefined },
 	Toolbar: { children: undefined },
 	Tabs: { tabs: [{ id: 'all', label: 'All' }] },
 	Dialog: { open: true, title: 'Forget this?', children: undefined },
