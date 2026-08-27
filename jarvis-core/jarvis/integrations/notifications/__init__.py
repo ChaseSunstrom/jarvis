@@ -83,7 +83,9 @@ MAX_BODY = 1000
 #: `camera` is an NVR's event — "a person at the front door" from Frigate
 #: (`vision.frigate`) — recorded so a household can see what the cameras
 #: noticed while nobody was asking.
-KINDS = ("task", "reminder", "briefing", "approval", "note", "camera")
+# `reflection` (M87): what Jarvis learned overnight. `notice` (M86): a change it
+# noticed. `capability` (M97): a tool it made itself, a skill or server it gained.
+KINDS = ("task", "reminder", "briefing", "approval", "note", "camera", "reflection", "notice", "capability")
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -434,6 +436,47 @@ def _register_tools(jarvis: "Jarvis", store: NotificationStore) -> None:
             "note": "These are the messages Jarvis recorded for the user — say them back as such, briefly; do not invent others.",
         }
 
+    async def tool_whats_new(args: dict[str, Any], context: Any = None) -> Any:
+        days = max(1.0, min(float(args.get("days") or 7), 90))
+        since = time.time() - days * 86400
+        moments = [
+            {"title": r.get("title"), "body": str(r.get("body") or "")[:300],
+             "days_ago": round(max(0.0, time.time() - float(r.get("at") or time.time())) / 86400, 1)}
+            for r in store.listing(limit=200)
+            if r.get("kind") == "capability" and float(r.get("at") or 0.0) >= since
+        ]
+        authored = []
+        try:
+            from ...llm.authored_tools import get_authored_tools
+
+            for entry in get_authored_tools(jarvis).entries():
+                authored.append({"name": entry.get("name"), "description": str(entry.get("description") or "")[:160],
+                                 "tier": entry.get("tier"), "created": entry.get("created_at") or entry.get("created")})
+        except Exception:  # noqa: BLE001 - a house without authored tools lists none
+            _LOGGER.debug("Could not list the authored tools", exc_info=True)
+        return {
+            "status": "ok",
+            "days": days,
+            "new": moments,
+            "authored_tools": authored,
+            "note": "Answer from this record only: name what was added, or say plainly that nothing new was added in that time.",
+        }
+
+    registry.register(
+        name="whats_new",
+        description=(
+            "What Jarvis can do now that it could not before: the tools it made itself, the "
+            "skills and servers it gained, from its own record. Use it for \"what's new?\", "
+            "\"what can you do now?\". Never invent a capability this does not list."
+        ),
+        parameters=schema_object(
+            {"days": {"type": "number", "description": "How far back (default 7 days, at most 90)."}}
+        ),
+        handler=tool_whats_new,
+        domain=DOMAIN,
+        read_only=True,
+    )
+
     registry.register(
         name="recent_moments",
         description=(
@@ -452,3 +495,18 @@ def _register_tools(jarvis: "Jarvis", store: NotificationStore) -> None:
         domain=DOMAIN,
         read_only=True,
     )
+
+
+async def note_capability(jarvis: "Jarvis", title: str, body: str = "") -> None:
+    """Record that Jarvis gained something it can do (M97): a tool it wrote
+    itself, a skill or an MCP server it was given. One card, once; `whats_new`
+    reads these back, and the Tools screen marks the tool as authored. Never
+    raises — a record must not fail the thing it records."""
+    store = jarvis.data.get(DATA_STORE)
+    add = getattr(store, "async_add", None)
+    if not callable(add):
+        return
+    try:
+        await add(kind="capability", title=title[:120], body=body[:600], source="jarvis_capability_added", link="/settings/tools")
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("notifications: could not record the new capability %r", title)

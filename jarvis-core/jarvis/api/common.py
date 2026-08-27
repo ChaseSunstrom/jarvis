@@ -878,15 +878,34 @@ async def async_create_tool(
     from ..llm.authored_tools import AuthoredToolError, get_authored_tools
 
     _tool_registry(jarvis)  # refuse early rather than storing an unusable tool
+    spec = _tool_spec(payload)
+    if not allow_local_targets and not spec.get("tier"):
+        # A tool the MODEL wrote for itself (M97): approved once at creation
+        # (create_tool is Tier 3) and then background work, never Tier 1 by
+        # silence — "one approval, then Tier 1 forever" was the audit's
+        # finding. The operator lowers it on the Tools screen if they mean to.
+        spec["tier"] = 2
     try:
         entry = await get_authored_tools(jarvis).async_create(
-            _tool_spec(payload),
+            spec,
             _taken_names(jarvis),
             allow_local_targets=allow_local_targets,
         )
     except AuthoredToolError as err:
         raise ApiError("invalid_format", str(err), 400) from err
     _register_authored(jarvis, {k: v for k, v in entry.items() if k not in ("created_at", "updated_at")})
+    # Said once, on the record (M97): the Tools screen marks it authored and
+    # `whats_new` reads it back.
+    try:
+        from ..integrations.notifications import note_capability
+
+        who = "Jarvis wrote itself" if not allow_local_targets else "added on the console"
+        await note_capability(
+            jarvis, f"New tool: {entry.get('name')}",
+            f"{str(entry.get('description') or '')[:200]} ({who}; tier {entry.get('tier')})",
+        )
+    except Exception:  # noqa: BLE001 - the tool exists either way
+        _LOGGER.debug("Could not record the new tool", exc_info=True)
     return {"tool": entry}
 
 

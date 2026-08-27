@@ -1409,6 +1409,8 @@ web and of Tasker. Local only. Each row here is planned in that document.
     screen, and "what's new?" answers from that record. Scenarios `timer-by-voice`,
     `routine-by-voice`, `tool-authored-and-listed`.
   - Verify: `bash scripts/verify/m97-timers-routines-whats-new.sh`
+  - 27 Aug 05:27: the routines and what's-new halves are built (read back, listed, tier 2 by default,
+    capability cards, `whats_new`); timers as entities are the remaining half.
 - [ ] **M98 — The phone keeps up** · size M · deps M71, M66, M83 · parallel-ok M97
   - Scope: from the Android audit — the speaker gate's mode reaches the phone on every socket
     connect and on `jarvis_setting_changed` (today a phone against an enforcing house refuses

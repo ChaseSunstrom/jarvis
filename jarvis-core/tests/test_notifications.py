@@ -304,3 +304,24 @@ async def test_recent_moments_reads_the_inbox_within_a_window(tmp_path):
     assert [m["title"] for m in everything["moments"]] == ["Finished: Bitcoin", "The audit ran"] or len(everything["moments"]) == 2
     assert "recent_moments" in registry.names()
     await jarvis.async_stop()
+
+
+async def test_whats_new_reads_the_capability_record(tmp_path):
+    """M97: a tool Jarvis wrote, a skill or a server it gained is one card,
+    once, and "what's new?" is answered from those cards — never invented."""
+    from jarvis.integrations.notifications import note_capability
+    from jarvis.llm.tools import Exposure, ToolRegistry
+
+    jarvis = Jarvis(tmp_path)
+    registry = ToolRegistry(jarvis, exposure=Exposure.from_config(None))
+    jarvis.data["llm_tools"] = registry
+    await notifications_integration.async_setup(jarvis, {})
+    empty = await registry.call("whats_new", {}, None)
+    assert empty["status"] == "ok" and empty["new"] == [] and "nothing new" in empty["note"]
+    await note_capability(jarvis, "New tool: boiler_pressure", "Reads the boiler's pressure (Jarvis wrote itself; tier 2)")
+    await note_capability(jarvis, "New MCP server: calendar", "connected; its tools run at tier 2")
+    listed = await registry.call("whats_new", {"days": 7}, None)
+    assert [m["title"] for m in listed["new"]] == ["New MCP server: calendar", "New tool: boiler_pressure"] or len(listed["new"]) == 2
+    assert all(m["days_ago"] < 1 for m in listed["new"])
+    assert "whats_new" in registry.names()
+    await jarvis.async_stop()

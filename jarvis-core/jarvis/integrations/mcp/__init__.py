@@ -572,6 +572,15 @@ async def async_add_server(manager: MCPManager, data: dict[str, Any]) -> dict[st
     manager.servers[spec.name] = spec
     await manager.async_save()
     connected = await manager.async_connect(spec)
+    try:
+        from ..notifications import note_capability
+
+        jarvis_ = getattr(manager, "jarvis", None)
+        if jarvis_ is not None:
+            await note_capability(jarvis_, f"New MCP server: {spec.name}",
+                                  f"{'connected' if connected else 'added, not yet reachable'}; its tools run at tier {spec.tier}")
+    except Exception:  # noqa: BLE001 - the server is added either way
+        _LOGGER.debug("Could not record the new server", exc_info=True)
     return {
         "status": "ok",
         "name": spec.name,

@@ -743,7 +743,7 @@ ToolHandler = Callable[[dict[str, Any], Any], Awaitable[Any] | Any]
 #: in — but reading is not an ACTION, and this list only decides whether the
 #: turn may proceed without a human once something hostile has been read.
 READ_ONLY_TOOLS = frozenset({
-    "explain_last_turn", "recent_moments",
+    "explain_last_turn", "recent_moments", "list_automations", "whats_new",
     # the house, observed
     "get_state", "list_entities", "list_devices", "get_user_context", "recent_events",
     "list_my_devices", "list_cameras", "look_at_camera", "describe_camera_change",
@@ -3422,7 +3422,60 @@ def register_builtin_tools(
             result = await async_create_automation(jarvis, {"automation": config})
         except ApiError as exc:
             return {"status": "error", "error": exc.message}
-        return {"status": "ok", "automation": result.get("automation", result)}
+        # Read back (M97): the one thing that lets a person catch a wrong
+        # trigger before it runs. The model is told to say it, not to claim
+        # the routine has done anything yet.
+        from ..automation.authored import describe
+
+        automation = result.get("automation", result)
+        readback = describe(automation if isinstance(automation, dict) else config)
+        return {
+            "status": "ok",
+            "automation": automation,
+            "readback": readback,
+            "note": f"Tell the user the routine as recorded — {readback!r} — so they can correct it; it has not run yet.",
+        }
+
+    async def _list_automations(args: dict[str, Any], context: Any) -> Any:
+        """The routines, authored and installed, each with its readback (M97)."""
+        from ..automation.authored import describe, get_authored
+
+        authored = []
+        try:
+            for entry in get_authored(jarvis).entries():
+                authored.append({
+                    "id": entry.get("id"), "alias": entry.get("alias"),
+                    "readback": describe(entry), "enabled": entry.get("enabled", True),
+                })
+        except Exception:  # noqa: BLE001 - a house without authored routines lists none
+            _LOGGER.debug("Could not list the authored automations", exc_info=True)
+        installed = []
+        for state in jarvis.states.all("automation"):
+            installed.append({
+                "entity_id": state.entity_id,
+                "name": (state.attributes or {}).get("friendly_name") or state.entity_id,
+                "state": state.state,
+                "last_triggered": (state.attributes or {}).get("last_triggered"),
+            })
+        return {
+            "status": "ok",
+            "authored": authored,
+            "installed": installed,
+            "count": len(authored) + len(installed),
+            "note": "Name them by alias with their readback; an empty list means the user has no routines.",
+        }
+
+    registry.register(
+        name="list_automations",
+        description=(
+            "The user's routines (automations): the ones authored here, each read back as a "
+            "sentence, and the ones installed in the house. Use it for \"what routines do I "
+            "have?\", \"what happens at seven?\", or before changing one."
+        ),
+        parameters=schema_object({}),
+        handler=_list_automations,
+        read_only=True,
+    )
 
     registry.register(
         name="create_automation",

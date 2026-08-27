@@ -215,6 +215,13 @@ def _register_services(
             return {"error": str(err)}
         registry.index()
         apply_decisions(jarvis, registry, state)
+        try:
+            from ..notifications import note_capability
+
+            await note_capability(jarvis, f"Installed: {data.get('id') or entry.ref}",
+                                  f"from {data.get('source') or 'the catalogue'}")
+        except Exception:  # noqa: BLE001 - installed either way
+            _LOGGER.debug("Could not record the install", exc_info=True)
         return result
 
     async def service_get(call: Any) -> Any:

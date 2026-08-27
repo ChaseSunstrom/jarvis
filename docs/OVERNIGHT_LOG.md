@@ -921,3 +921,8 @@ is quiet. Done since:
   after the speaker ("the request came from the device 'X' in the kitchen: 'here' and 'this screen' mean that
   device"), is remembered per turn, and tell_user goes there unless a device is named; agent +1, voice +1,
   device-control +1. The live check registers a throwaway device and asks which device it is on.
+- 05:27 — M97 built (routines and what's new; timers as entities follow): create_automation reads the
+  routine back ("weekdays at 07:00: turn on light.kitchen_lights") and tells the model to say it; list_automations
+  names the authored and installed ones; a tool the model writes itself defaults to tier 2 and is a capability
+  card, as is a new MCP server or an installed extension; whats_new answers from those cards. Automation API +2,
+  create_tool +1, notifications +1; two scenarios; the gate's live half waits.

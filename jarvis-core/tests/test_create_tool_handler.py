@@ -247,3 +247,30 @@ async def test_the_old_flat_shape_is_refused_before_it_reaches_a_human(jarvis):
         "a manifest that cannot validate was still put in front of a human"
     )
     assert "bin_day" not in registry.names()
+
+
+# ---------------------------------------------------------------------------
+# M97: a tool the model writes itself runs at tier 2 unless told otherwise, and is on the record
+# ---------------------------------------------------------------------------
+async def test_a_model_authored_tool_defaults_to_tier_2_and_is_recorded(jarvis):
+    """"One approval, then Tier 1 forever" was the audit's finding: the model
+    read `tier` from its own manifest, default 1. Absent, it is 2 now — approved
+    once at creation, background work after — and the creation is a capability
+    card `whats_new` reads back. A tier the manifest names is kept."""
+    from jarvis.integrations import notifications as notifications_integration
+
+    await notifications_integration.async_setup(jarvis, {})
+    quiet = {k: v for k, v in AS_ADVERTISED.items() if k != "tier"}
+    quiet["name"] = "bin_day_quiet"
+    def _tool_of(result):
+        payload = result.get("result", result) if isinstance(result, dict) else result
+        assert isinstance(payload, dict) and isinstance(payload.get("tool"), dict), result
+        return payload["tool"]
+
+    tool = _tool_of(await _create_as_a_human_would(jarvis, quiet))
+    assert tool["tier"] == 2, tool
+    explicit_tool = _tool_of(await _create_as_a_human_would(jarvis, AS_ADVERTISED))
+    assert explicit_tool["tier"] == 1
+    cards = [row for row in jarvis.data["notifications"].listing() if row["kind"] == "capability"]
+    assert {c["title"] for c in cards} == {"New tool: bin_day_quiet", "New tool: bin_day"}
+    assert any("Jarvis wrote itself" in c["body"] for c in cards)
