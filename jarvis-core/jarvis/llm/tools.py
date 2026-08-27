@@ -2225,7 +2225,12 @@ def register_builtin_tools(
 
     registry.register(
         name="media_control",
-        description="Control a speaker or TV: play, pause, stop, next, previous, volume, play_media.",
+        description=(
+            "Control a speaker or TV: play, pause, stop, next, previous, volume, play_media. "
+            "'Play something' with nothing named is `play` on that player — it resumes or "
+            "starts what the player has; ask what to play only when the words ask for a "
+            "choice."
+        ),
         parameters=schema_object(
             {
                 **{k: v for k, v in target_properties.items() if k != "domain"},

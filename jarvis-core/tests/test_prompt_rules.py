@@ -64,3 +64,10 @@ def test_a_fact_offered_is_a_request_to_keep_it():
     27 Aug): an offered fact is a request to keep it."""
     assert '"a fact for you", "so you know", "for the record"' in TOOL_RULES
     assert "call remember, then say it is kept" in TOOL_RULES
+
+
+def test_two_jobs_at_once_are_a_lead_never_the_pieces_by_hand():
+    """"find out what the handbook says, and separately have the coder run the
+    tests" on the eighteenth house (27 Aug): the model fetched the page itself
+    and started the coding job directly — no lead, nothing to follow."""
+    assert "never the pieces done\n   by hand in the turn" in DEFAULT_PERSONA
