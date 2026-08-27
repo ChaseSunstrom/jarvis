@@ -1582,13 +1582,17 @@ class ToolRegistry:
         return [r.as_dict() for r in self._pending.values()]
 
     def pending_for_conversation(self, conversation_id: str | None) -> list[dict[str, Any]]:
-        """What is waiting on THIS conversation, oldest first — and on the house.
+        """What is waiting on THIS conversation, oldest first — and the house's questions.
 
-        Requests stamped with the conversation when raised, plus the ones the
-        house raised with no conversation at all: a notice's offer (M86,
+        Requests stamped with the conversation when raised, plus the QUESTIONS
+        the house raised with no conversation at all: a notice's offer (M86,
         "the garage door has opened — shall I close it?") belongs to whoever
-        answers it, and "yes" said to any surface is that answer. A request
-        raised by ANOTHER conversation stays that conversation's.
+        answers it, and "yes" said to any surface is that answer. Only
+        questions (`answerable`): an ACTION held with no conversation — a
+        script's, an automation's — is still nobody's to approve by voice, so
+        a "yes" meant for the garage cannot unlock a door a script asked
+        about. A request raised by ANOTHER conversation stays that
+        conversation's.
         """
         if not conversation_id:
             return []
@@ -1596,7 +1600,8 @@ class ToolRegistry:
         return [
             r.as_dict()
             for r in self._pending.values()
-            if r.conversation_id == str(conversation_id) or not r.conversation_id
+            if r.conversation_id == str(conversation_id)
+            or (not r.conversation_id and r.answerable)
         ]
 
     def purge_expired(self, now: float | None = None) -> int:

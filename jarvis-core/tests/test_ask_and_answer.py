@@ -37,7 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from jarvis.api.devices import mark_untrusted, remember_turn  # noqa: E402
 from jarvis.bus import Context  # noqa: E402
 from jarvis.core import Jarvis  # noqa: E402
-from jarvis.llm.tools import (  # noqa: E402
+from jarvis.llm.tools import (
+    TIER_APPROVAL,  # noqa: E402
     DEFAULT_APPROVAL_TTL,
     DEFAULT_QUESTION_TTL,
     EVENT_APPROVAL_EXPIRED,
@@ -224,12 +225,29 @@ async def test_a_request_is_stamped_with_its_conversation_and_whether_it_is_spok
     assert by_id[nobodys["request_id"]]["conversation_id"] is None
     assert by_id[nobodys["request_id"]]["spoken"] is False
 
-    # Listing by conversation returns only what was stamped with it.
-    assert [r["request_id"] for r in registry.pending_for_conversation("conv-voice")] == [
-        voiced["request_id"]
-    ]
+    # Listing by conversation: what was stamped with it, plus the QUESTIONS the
+    # house raised with no conversation — a notice's offer belongs to whoever
+    # answers it (M86). The typed conversation's question stays its own.
+    listed = [r["request_id"] for r in registry.pending_for_conversation("conv-voice")]
+    assert listed == [voiced["request_id"], nobodys["request_id"]]
     assert registry.pending_for_conversation(None) == []
-    assert registry.pending_for_conversation("conv-nobody") == []
+    # An ACTION held with no conversation is still nobody's to approve by voice.
+    registry.register(
+        name="house_action",
+        description="a scripted action that needs a human",
+        handler=lambda args, ctx: {"status": "ok"},
+        tier=TIER_APPROVAL,
+    )
+    held = await registry.call("house_action", {}, None)
+    assert held["status"] == "approval_required"
+    assert held["request_id"] not in [
+        r["request_id"] for r in registry.pending_for_conversation("conv-voice")
+    ]
+    # A conversation with nothing of its own still sees the house's question:
+    # whoever answers it answers it.
+    assert [r["request_id"] for r in registry.pending_for_conversation("conv-nobody")] == [
+        nobodys["request_id"]
+    ]
 
 
 async def test_the_phone_is_told_a_spoken_question_is_already_spoken(jarvis):
