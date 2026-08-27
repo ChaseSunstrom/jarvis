@@ -33,7 +33,11 @@ turns:
         kind: task
         source: jarvis_task_completed
         title_contains: "picked back up"
-        within: 300
+        # Eight minutes: on the eighteenth house the job was picked back up
+        # three seconds after the restart and said so, and listing every
+        # light and switch through the model took longer than five under the
+        # box's load. The pick-up is the promise; the clock is the box's.
+        within: 480
       # Three seconds after the restart the job has just been picked back
       # up, so "running again" is the truthful answer; the completion that
       # follows is what the notification above asserts on.
