@@ -7,6 +7,8 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+- Tasks on the voice tab are a brief (M111): one line per task under the instrument, expanding on a click to the bar, the steps and an OPEN link; the list scrolls inside itself, the page does not.
+
 - The desktop app starts from a downloaded folder (M110): the setuid sandbox helper is checked before ready and Chromium's process sandbox switched off for the run when it cannot be used (said on stderr); a console that does not answer draws "No console there yet" with the URL and retries; a dead renderer is named.
 - Browse and install from the registries (M108, server half): Anthropic's skills folder and the MCP registry as catalogue sources, read through an allowlist of three hosts; skills fetched from raw.githubusercontent.com pinned to the commit browsed; MCP servers install as http servers at the default tier; stdio-only servers are skipped and counted.
 

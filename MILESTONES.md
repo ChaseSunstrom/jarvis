@@ -1784,6 +1784,18 @@ web and of Tasker. Local only. Each row here is planned in that document.
     helper), a closed port shows the notice page. Measured on the way: a sandboxed renderer dies loading any non-http
     page here (`file:`, `data:`, a custom scheme — exit 5), so the notice is its own small window without the
     renderer sandbox; the console's window keeps it. Tick when the gate passes with the packaged binary rebuilt.
+- [ ] **M111 — Tasks on the voice tab are a brief** · size S · deps M76 · parallel-ok M108
+  - Scope: the operator's report of 27 Aug 15:19 — "fix the tasks taking up the entire screen on the voice tab and
+    causing a scroll; it should just be a simple brief with the task like it was before, on the sides or below the
+    reactor, that I can then expand". The dock under the instrument drew three lines per task (title, bar,
+    sentence) and grew with every task. Now each task is one line — title, step count, status — that expands on a
+    click to the bar, the sentence, the steps and an OPEN link; the list scrolls inside itself past a few rows
+    (`max-height: min(32vh, 18rem)`), so the page never scrolls because of it. A Playwright spec starts four tasks
+    and asserts the page does not scroll at 1440×900 and 1280×720, that a collapsed row is one line, and that a
+    click expands and folds it.
+  - Verify: `bash scripts/verify/m111-tasks-are-a-brief.sh`
+  - 27 Aug 15:30: planned and built (`TaskDock.svelte`); the spec runs when the box is quiet — the nineteenth's
+    report and the twentieth's rebuild own it until then.
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,
