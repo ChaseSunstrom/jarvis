@@ -11,11 +11,16 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 - **M84 — Jarvis volunteers a briefing.** The briefing block is on the house; "what's my briefing?" is
   one `get_briefing` call. Ticked when the rig hears it after the rebuild.
 - **M85 — work survives a restart**, **M86 — Jarvis notices**, **M87 — overnight reflection**,
-  **M88 — a plan on the screen**, **M89 — stack hygiene**, **M90 — the claims register re-measured**,
+  **M88 — a plan on the screen**, **M89 — stack hygiene**,
   **M91 — a gate cannot pass on a skip**, **M92 — the house by voice beyond lights**,
   **M93 — pick up where you left off**, **M94 — in here**, **M95 — Jarvis reads its own record**,
   **M96 — stop means stop**, **M97 — timers, routines read back, what's new**,
   **M98 — the phone keeps up**: planned, unticked.
+
+### Added
+- **M90 — the claims register, re-measured.** `docs/verification.md`'s suite sizes are regenerated from
+  the commands printed beside them and a gate fails when they drift; four rows say what the rig proves;
+  no row names a component that no longer exists.
 
 ### Fixed (the audit's first pass, unticked)
 - `read_page` (Tier 1) could read loopback and LAN addresses through the watch integration's plain

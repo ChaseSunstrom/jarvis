@@ -894,3 +894,9 @@ is quiet. Done since:
   surface spec 4/4, svelte-check clean). Also: SearXNG bounded (m28's rule), an upstream engine's refusal at
   init allowlisted in the container-log check (it failed three gates' smoke slices), architecture.md no
   longer says Ollama, and the second 07:30 alarm M78's fault left on the house was removed.
+- 04:54 — M90 ticked: the claims register's suite-size tables regenerated from the commands beside them
+  (core 2967 test functions in 110 files, desktop 536, browser 219, vitest 710, Playwright 234, JVM 227,
+  91 gates), the per-file table re-measured, the four pessimistic rows moved to what the rig proves, the
+  WebGL-orb row and the Ollama compose comment gone, the speaker row names its own skip, ISSUES gains the
+  two asserts-without-evidence probes; gate 6/6 — it reruns the commands and fails when the table drifts
+  (it caught its own first drift: the gate it added made 91).

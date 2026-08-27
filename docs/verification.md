@@ -9,8 +9,10 @@ Read it as a claims register. Every row says what is proven, what proves it, and
 what command reproduces the proof. Anything that nothing checks is listed as
 **Unproven** and named — not softened, not omitted.
 
-Counts and results below were measured on **2026-08-12**. Re-measure before
-trusting them; the commands are given so you can.
+The suite-size tables were measured on **2026-08-27** by the commands printed
+beside them, and `scripts/verify/m90-claims-register.sh` fails when they drift;
+the milestone sections below each carry their own date. Re-measure before
+trusting any number; the commands are given so you can.
 
 ---
 
@@ -43,7 +45,7 @@ done
 # The routing table and the two places that mirror it
 ( cd evals && python3 -m pytest test_routing.py -q )
 
-# The Android logic mirrors (the Kotlin itself cannot be built here — see below)
+# The Android logic mirrors (gradle builds the Kotlin here too — see the Android section)
 ( cd android-app/tools && for f in *.py; do python3 "$f" || echo "FAILED: $f"; done )
 
 # Web: unit tests, then the browser suite
@@ -53,46 +55,170 @@ done
 ./scripts/e2e-smoke.sh
 ```
 
-### Suite sizes, measured 2026-08-12
+### Suite sizes, measured 2026-08-27
 
-| Suite | Tests | Result | Runtime |
-|---|---:|---|---:|
-| `jarvis-core` | 1758 | all pass | ~180 s |
-| `jarvis-desktop` | 803 | all pass | ~16 s |
-| `jarvis-browser` | 328 | all pass | ~2 s |
-| `jarvis-orchestrator` + `jarvis-sandbox` | 23 | all pass | ~2 s |
-| `evals` (routing table + its mirrors) | 17 | all pass | <1 s |
-| `evals` (entity resolution) | 22 + 19 skipped | all pass | <1 s |
-| `jarvis-web` (vitest, 24 files) | 365 | all pass | ~6 s |
-| `jarvis-web` (`svelte-check`) | 415 files | 0 errors | ~5 s |
-| `jarvis-web` (Playwright, chromium) | 59 | all pass | ~80 s |
-| `android-app/tools` (spec files) | all pass | all pass | ~3 s |
+Test *functions*, counted by the command beside each row; a parametrised file
+collects more when it runs, so these are floors. Results and runtimes are in
+the gate logs under `.verify/` (`make verify-all`) and in
+`docs/LIVE_TEST_REPORT.md`, not here — a number copied into prose goes stale
+the day after it is written, which is how this table came to disagree with
+itself by four different counts for one suite. `bash scripts/verify/m90-claims-register.sh`
+recomputes every row and fails when the table drifts.
 
-Within `jarvis-core`, by file:
-
-| File | Tests | Covers |
+| Suite | Test functions | Command |
 |---|---:|---|
-| `test_sensors.py` | 195 | the sensor layer and its inference |
-| `test_features.py` | 119 | the shipped feature set, end to end |
-| `test_web_integration.py` | 112 | `web.search`/`fetch`/`crawl`/`browse`, fencing, and the turn-taint that backs it |
-| `test_vision.py` | 106 | camera frames as fenced, untrusted input |
-| `test_api.py` | 94 | REST + websocket wire contract, auth, binary audio frames |
-| `test_packaging.py` | 88 | the shipped `config/` is coherent; compose/YAML agreement |
+| `jarvis-core` (110 files) | 2967 | `grep -rhoE '^\s*(async )?def test_' jarvis-core/tests \| wc -l` |
+| `jarvis-desktop` | 536 | `… jarvis-desktop/tests` |
+| `jarvis-browser` | 219 | `… jarvis-browser/tests` |
+| `jarvis-orchestrator` + `jarvis-sandbox` | 20 + 6 | `… jarvis-orchestrator/tests`, `… jarvis-sandbox/tests` |
+| `evals` (routing table + its mirrors) | 7 | `grep -hoE '^\s*(async )?def test_' evals/test_routing.py \| wc -l` |
+| `evals` (entity resolution; 19 documented skips at collection) | 3 | `… evals/test_resolution.py` |
+| `jarvis-web` (vitest, 43 files) | 710 | `grep -rhoE '^\s*(it\|test)\(' jarvis-web/src --include='*.test.ts' \| wc -l` |
+| `jarvis-web` (Playwright, 37 spec files; five per-screen loops multiply these) | 234 | `grep -rhoE '^\s*test\(' jarvis-web/e2e/*.spec.ts \| wc -l` |
+| `android-app` (JVM, `@Test`) | 227 | `grep -rho '@Test' android-app/app/src/test \| wc -l` |
+| `android-app/tools` (spec files) | 63 | `ls android-app/tools/*_test.py \| wc -l` |
+| `testing/e2e` (the harness) | 81 | `… testing/e2e` |
+| `testing/live` (the rig's own tests; scenarios) | 49; 50 scenarios | `… testing/live/tests`; `ls testing/live/scenarios/*.yaml \| wc -l` |
+| `scripts/verify` (gates) | 91 | `ls scripts/verify/m[0-9][0-9]-*.sh \| wc -l` |
+
+Within `jarvis-core`, by file (test functions, 2026-08-27; the command is the one above with the file name):
+
+| File | Test functions | Covers |
+|---|---:|---|
+| `test_sensors.py` | 95 | the sensor layer and its inference |
+| `test_features.py` | 115 | the shipped feature set, end to end |
+| `test_web_integration.py` | 92 | `web.search`/`fetch`/`crawl`/`browse`, fencing, and the turn-taint that backs it |
+| `test_vision.py` | 94 | camera frames as fenced, untrusted input |
+| `test_api.py` | 90 | REST + websocket wire contract, auth, binary audio frames |
+| `test_packaging.py` | 91 | the shipped `config/` is coherent; compose/YAML agreement |
 | `test_automation.py` | 75 | triggers, conditions, actions, run modes |
-| `test_voice.py` | 68 | pipeline runner, Wyoming protocol framing, pipeline store |
-| `test_mqtt.py` | 53 | discovery, entity mapping, value templates |
-| `test_llm.py` | 60 | agent, tool registry, the approval gate |
+| `test_voice.py` | 85 | pipeline runner, Wyoming protocol framing, pipeline store |
+| `test_mqtt.py` | 59 | discovery, entity mapping, value templates |
+| `test_llm.py` | 81 | agent, tool registry, the approval gate |
 | `test_domains.py` | 47 | every domain service verb |
-| `test_speaker.py` | 70 | the voiceprint: DSP against the DFT definition, and whether it separates anyone |
-| `test_speaker_gate.py` | 63 | what the system does with that answer — what a refused turn reaches, who is speaking, what the API hands out (M71) |
-| `test_orchestrator.py` | 49 | delegation, coding jobs, the double-gated shell path |
+| `test_speaker.py` | 54 | the voiceprint: DSP against the DFT definition, and whether it separates anyone |
+| `test_speaker_gate.py` | 64 | what the system does with that answer — what a refused turn reaches, who is speaking, what the API hands out (M71) |
+| `test_orchestrator.py` | 46 | delegation, coding jobs, the double-gated shell path |
 | `test_recorder.py` | 44 | SQLite recorder, history, logbook, sun, person |
-| `test_device_control.py` | 38 | cross-device command dispatch and tiering |
-| `test_local_integrations.py` | 37 | template, rest, command_line, hue, wled, demo |
+| `test_device_control.py` | 40 | cross-device command dispatch and tiering |
+| `test_local_integrations.py` | 40 | template, rest, command_line, hue, wled, demo |
 | `test_api_companion.py` | 28 | the device channel over the websocket |
 | `test_companion.py` | 26 | presence ranking, routing, escalation |
-| `test_core.py` | 28 | bus, state machine, services, registries |
-| **`test_e2e.py`** | **12** | **the whole platform booted from a config file** |
+| `test_core.py` | 44 | bus, state machine, services, registries |
+| `**`test_e2e.py`**` | jarvis-core/tests/__pycache__:0
+jarvis-core/tests/fixtures:0
+jarvis-core/tests/synth_voice.py:0
+jarvis-core/tests/test_agent_loop.py:15
+jarvis-core/tests/test_agents.py:16
+jarvis-core/tests/test_api.py:90
+jarvis-core/tests/test_api_companion.py:28
+jarvis-core/tests/test_ask_and_answer.py:21
+jarvis-core/tests/test_ask_user.py:18
+jarvis-core/tests/test_authored.py:8
+jarvis-core/tests/test_automation.py:75
+jarvis-core/tests/test_automation_api.py:18
+jarvis-core/tests/test_automation_check.py:12
+jarvis-core/tests/test_automation_failures.py:8
+jarvis-core/tests/test_channels.py:18
+jarvis-core/tests/test_claude_backend.py:13
+jarvis-core/tests/test_code_agent.py:62
+jarvis-core/tests/test_code_approvals.py:10
+jarvis-core/tests/test_code_edits.py:24
+jarvis-core/tests/test_code_forges.py:27
+jarvis-core/tests/test_code_git_escape.py:25
+jarvis-core/tests/test_code_repos.py:33
+jarvis-core/tests/test_code_sandbox.py:62
+jarvis-core/tests/test_code_workspace.py:35
+jarvis-core/tests/test_companion.py:26
+jarvis-core/tests/test_core.py:44
+jarvis-core/tests/test_create_tool_handler.py:8
+jarvis-core/tests/test_dashboard_widgets.py:14
+jarvis-core/tests/test_dashboards.py:32
+jarvis-core/tests/test_delegation_backends.py:8
+jarvis-core/tests/test_demo_mode.py:3
+jarvis-core/tests/test_device_control.py:40
+jarvis-core/tests/test_device_control_sequence.py:11
+jarvis-core/tests/test_domains.py:47
+jarvis-core/tests/test_e2e.py:12
+jarvis-core/tests/test_entity_remove.py:19
+jarvis-core/tests/test_entity_rename.py:12
+jarvis-core/tests/test_extensions.py:51
+jarvis-core/tests/test_features.py:115
+jarvis-core/tests/test_files.py:39
+jarvis-core/tests/test_files_paths.py:18
+jarvis-core/tests/test_first_run_credentials.py:11
+jarvis-core/tests/test_gated_services.py:9
+jarvis-core/tests/test_history.py:29
+jarvis-core/tests/test_hooks.py:20
+jarvis-core/tests/test_integrations_plugins.py:18
+jarvis-core/tests/test_llm.py:81
+jarvis-core/tests/test_llm_catalogue.py:28
+jarvis-core/tests/test_llm_integration.py:2
+jarvis-core/tests/test_llm_local_only.py:6
+jarvis-core/tests/test_llm_pool.py:9
+jarvis-core/tests/test_llm_tools.py:6
+jarvis-core/tests/test_local_integrations.py:40
+jarvis-core/tests/test_mcp.py:51
+jarvis-core/tests/test_memory.py:14
+jarvis-core/tests/test_memory_reflection.py:6
+jarvis-core/tests/test_memory_vectors.py:24
+jarvis-core/tests/test_metrics.py:14
+jarvis-core/tests/test_metrics_influx.py:13
+jarvis-core/tests/test_model_mirror.py:8
+jarvis-core/tests/test_mqtt.py:59
+jarvis-core/tests/test_mqtt_sensors.py:24
+jarvis-core/tests/test_n8n.py:6
+jarvis-core/tests/test_narrated_tool_calls.py:24
+jarvis-core/tests/test_notes.py:17
+jarvis-core/tests/test_notes_voice.py:6
+jarvis-core/tests/test_notifications.py:15
+jarvis-core/tests/test_observability.py:14
+jarvis-core/tests/test_openai_compat.py:45
+jarvis-core/tests/test_openai_tts.py:8
+jarvis-core/tests/test_orchestrator.py:46
+jarvis-core/tests/test_packaging.py:91
+jarvis-core/tests/test_pairing.py:26
+jarvis-core/tests/test_privacy_gateway.py:15
+jarvis-core/tests/test_prompt_budget.py:4
+jarvis-core/tests/test_reach.py:19
+jarvis-core/tests/test_recorder.py:44
+jarvis-core/tests/test_rerank.py:9
+jarvis-core/tests/test_research.py:32
+jarvis-core/tests/test_research_plan.py:43
+jarvis-core/tests/test_schedule.py:34
+jarvis-core/tests/test_schedule_plan.py:26
+jarvis-core/tests/test_security.py:28
+jarvis-core/tests/test_sensors.py:95
+jarvis-core/tests/test_settings.py:15
+jarvis-core/tests/test_settings_api.py:19
+jarvis-core/tests/test_settings_tool.py:19
+jarvis-core/tests/test_skills.py:17
+jarvis-core/tests/test_sky.py:25
+jarvis-core/tests/test_speaker.py:54
+jarvis-core/tests/test_speaker_gate.py:64
+jarvis-core/tests/test_speech_text.py:3
+jarvis-core/tests/test_spoken_answers.py:6
+jarvis-core/tests/test_ssrf.py:10
+jarvis-core/tests/test_surface.py:7
+jarvis-core/tests/test_task_events.py:11
+jarvis-core/tests/test_task_events_contract.py:5
+jarvis-core/tests/test_task_plan_batching.py:4
+jarvis-core/tests/test_taskengine.py:17
+jarvis-core/tests/test_tasks.py:27
+jarvis-core/tests/test_thinking.py:17
+jarvis-core/tests/test_tool_api.py:27
+jarvis-core/tests/test_tool_arguments.py:12
+jarvis-core/tests/test_tool_call_recovery.py:31
+jarvis-core/tests/test_tool_composition.py:8
+jarvis-core/tests/test_tool_names.py:4
+jarvis-core/tests/test_tool_tiers_contract.py:8
+jarvis-core/tests/test_turn_events.py:25
+jarvis-core/tests/test_vision.py:94
+jarvis-core/tests/test_vision_openai.py:10
+jarvis-core/tests/test_voice.py:85
+jarvis-core/tests/test_watch.py:15
+jarvis-core/tests/test_web_integration.py:92
+0 | **the whole platform booted from a config file** |
 
 ---
 
@@ -277,7 +403,7 @@ they are the only places that particular bug can come back.
 | Voice pipeline runner and its event contract | Automated | `test_voice.py`, `test_e2e.py` |
 | Wyoming protocol framing | Automated *against a local fake server* | `test_voice.py` |
 | The **real** whisper/piper/openWakeWord containers start and listen | Containerised | `compose-smoke.yml` — an open socket on 10300 is proof faster-whisper accepted `WHISPER_MODEL`, since it resolves the name before it binds |
-| Wyoming against **real** whisper/piper/openWakeWord, with audio | Scripted (reachability + one real synthesis) | `./scripts/e2e-smoke.sh` — the CI job never speaks or transcribes |
+| Wyoming against **real** whisper/piper/openWakeWord, with audio | **Live** (the rig) and Scripted | every live scenario is a real Piper synthesis of the user, a real Whisper transcription and a real model turn against the running stack (`bash scripts/verify/live_interaction.sh --full`, WER on every spoken turn); `./scripts/e2e-smoke.sh` is the install check. The CI job never speaks or transcribes. |
 | Ollama client: streaming, tool-call parsing | Automated *against `httpx.MockTransport`* | `test_llm.py`, `test_e2e.py` |
 | A **real** model turn | Scripted | `./scripts/e2e-smoke.sh` |
 | Tool tiering and the approval gate | Automated | `test_llm.py`, `test_e2e.py` |
@@ -289,10 +415,10 @@ they are the only places that particular bug can come back.
 | Agent output, diffs and command stdout are fenced | Automated | `test_orchestrator.py` |
 | A command too long for the service is refused, never trimmed to fit | Automated | `test_orchestrator.py` |
 | A released command is audited before the result comes back, so a failed call cannot hide it | Automated | `test_orchestrator.py` |
-| The orchestrator against a **real** running service | **Unproven** | Needs the container up; see *Closing the gaps* |
+| The orchestrator against a **real** running service | **Scripted** | M82's gate (`scripts/verify/m82-coding-worker.sh`) probes `POST /code_task` on the running container and reads its answer; the container is up and healthy on the house. The coding path itself waits on OpenCode reaching the image (BLOCKERS) — that half is Unproven. |
 | MQTT discovery and entity mapping | Automated *with `FakeMqttClient`* | `test_mqtt.py` |
 | The shipped broker starts and accepts a client | Containerised | `compose-smoke.yml --profile mqtt`; mosquitto's healthcheck is a real `mosquitto_pub` against itself |
-| MQTT against a real broker with **real devices** | **Unproven** | Nothing publishes a discovery message or drives a device. see *Closing the gaps* |
+| MQTT against a real broker with **real devices** | **Live** (the broker) / **Manual** (a device) | `sensors-discovered` publishes a Zigbee2MQTT-shaped discovery config to the running mosquitto and asserts the entity and its reading (the rig, M57). A physical device on that broker still needs a person. |
 | Hue and WLED | Automated *against `httpx.MockTransport`* | `test_local_integrations.py` |
 | Hue / WLED against **real hardware** | **Unproven** | see *Closing the gaps* |
 | Cross-device presence, routing, escalation | Automated | `test_companion.py`, `test_api_companion.py`, `test_e2e.py` |
@@ -542,7 +668,7 @@ person-shaped probe asks; what the suite found, written up.
 | A `deep_research` call that names no question researches what the user said this turn, and says so; with nothing said either it refuses and tells the model not to call it "queued" | Automated | `test_a_call_with_no_question_researches_what_the_user_said` — the 26 Aug deep-report miss on the ninth rebuild |
 | "…and save it as a note" in the user's own words keeps the report as a note even when the model drops the `remember` flag; a sentence that asks for none keeps the default (nothing stored) | Automated | `test_a_note_asked_for_in_the_users_words_is_kept_even_when_the_flag_is_dropped`, `test_the_users_words_decide_whether_a_note_is_asked_for` — the re-run of the same scenario at 21:19 |
 | The report is a markdown file a person can open | Automated | `test_the_report_is_written_to_a_file_somebody_can_open` — `<config>/research/<date>-<slug>.md` |
-| Research against the **real** SearXNG and the open web | **Scripted** | `SEARXNG_URL=… python3 evals/research_eval.py --backend live` — needs the operator's SearXNG, which `jarvisdev` cannot start here (`BLOCKERS.md`). The command refuses clearly rather than pretending when the URL is unset |
+| Research against the **real** SearXNG and the open web | **Scripted** | `SEARXNG_URL=… python3 evals/research_eval.py --backend live` — M68's gate ran the client against both real instances (the tailnet one and the stack's); the eval scores the open web |
 | jarvis-browser's own guards (SSRF, robots, JavaScript rendering) | Automated *in its own suite* | `python3 -m pytest jarvis-browser/tests -q` — 337 tests |
 | A PDF or a Word file is read as text | Automated | `research-reads-a-document` (M32) — the warranty is in the PDF and nowhere else on the fixture web; `jarvis-browser/tests/test_documents.py` covers the shapes, including a scanned PDF being NAMED rather than returned empty |
 | A table survives extraction with its rows intact | Automated | `scripts/verify/m32-extraction.sh` asserts the night rate is still in the same row as its hours and its price; the research eval asks for exactly that |
@@ -1297,7 +1423,6 @@ Chromium, on this host: four shared vCPUs, no GPU.
 | The HUD driven against a **real jarvis-core** | **Unproven** | The Playwright suite runs the built app against `tests/web/mock-ha.mjs`, a JS stand-in. Nothing in CI points the HUD at an actual server. See *Closing the gaps*. |
 | Microphone capture in the browser | **Unproven** | Playwright runs with `--use-fake-device-for-media-stream`; that proves the code path, not that a real microphone is captured, encoded and streamed. |
 | Audio playback of TTS replies | **Unproven** | `--autoplay-policy=no-user-gesture-required` bypasses the thing most likely to break in a real browser. |
-| WebGL arc-reactor orb rendering | **Unproven** | Headless chromium with software rendering says nothing about how it looks or performs on the user's GPU. |
 
 ### android-app
 
@@ -1326,7 +1451,7 @@ Chromium, on this host: four shared vCPUs, no GPU.
 | **A question is asked on the surface already on screen** | Automated *as a Python mirror* | `speech_host_test.py`. The `CompanionSpeechHost` seam was written, documented and never constructed by anything, so every question started a full-screen activity over whatever conversation was up. The first check in the file is simply "does anything construct one". |
 | **A contact name is resolved to a number before the consent prompt** | Automated *as a Python mirror* | `contact_resolve_test.py`. "What was approved is what runs" applied to `send_sms` and `place_call`: a prompt reading `to: "Mum"` while the message goes to a number nobody saw is a prompt that lied. |
 | **Reminders survive a reboot** | Automated *as a Python mirror* | The store and the boot re-arm are structural; `BootReceiver` re-arms ahead of the automation master switch, because a reminder is the user's own. Whether an `AlarmManager` alarm actually fires after a real restart is **Unproven** — it needs a device that has been turned off and on. |
-| **The Kotlin compiles** | **Automated (CI only)** | `.github/workflows/android-apk.yml` runs a real Gradle build on every push and publishes the APK. It does not run in the dev container — there is still no Android SDK here — so a local `make test` says nothing about it. Read the workflow result, not the local suite. |
+| **The Kotlin compiles** | **Automated (here and in CI)** | `scripts/verify/m08-android.sh`, `m61-…`, `m71-…` build it with the JDK and SDK under `$HOME` (BLOCKERS §3 records when they arrived); `.github/workflows/android-apk.yml` runs a real Gradle build on every PR and publishes the APK. |
 | **The Kotlin matches its Python mirrors** | **Unproven** | The mirrors are a specification of the intended logic. Nothing mechanically checks that `ai.jarvis.app.*` implements them. This is the single largest unverified claim in the project. |
 | Headset routing rules (kind × opt-in × link availability) | Automated *as a Python mirror* | `audio_route_test.py` — 21 checks, 28 combinations |
 | Headset button policy, incl. "never answers a consent prompt" | Automated *as a Python mirror* | `media_button_test.py` — 24 checks, all 400 input combinations |
@@ -1338,7 +1463,7 @@ Chromium, on this host: four shared vCPUs, no GPU.
 | The app on a real GrapheneOS phone | **Unproven** | Needs the device. See *Closing the gaps*. |
 | **Wake word — always-on listening** | Automated *as a Python mirror*, plus **Unproven** on hardware | `WakeWordService` is a real foreground service with a real caller. `wake_listener_test.py` and `wake_start_policy_test.py` pin when it may start (Android forbids a microphone service starting from the background, so it needs a foreground Activity, a battery exemption, or the overlay grant) and the hand-back of the mic. Whether a phone in a pocket hears you is a claim only a phone can settle. |
 | **Wake word detected on the phone rather than the server** | Automated *as a Python mirror* | `OnDeviceWakeWord` runs openWakeWord's three-model ONNX chain locally, so nothing is streamed until the name is said. `wake_score_test.py` pins the threshold / consecutive-frames / refractory logic — the half that can be proved without a device — and `tool_run_test.py`'s neighbours cover the rest. The weights are downloaded from the user's own server at runtime, never bundled: `jarvis-core/tests/test_model_mirror.py`. |
-| **Speaker verification separates two voices** | Automated *against synthetic speech* | `jarvis-core/tests/test_speaker.py` (60). `tests/synth_voice.py` generates talkers from a source-filter model — the verifier's own claim about what distinguishes people, written as a signal generator. The cast includes two deliberately hard cases: a speaker at the owner's pitch with a different tract, and a breathy one whose pitch is not measurable at all. Everything is seeded. |
+| **Speaker verification separates two voices** | Automated *against synthetic speech* | `jarvis-core/tests/test_speaker.py` (54 functions, parametrised; one — `test_a_refused_turn_never_teaches` — skips itself when the synthetic impostor is not separable at the margin, and says so). `tests/synth_voice.py` generates talkers from a source-filter model — the verifier's own claim about what distinguishes people, written as a signal generator. The cast includes two deliberately hard cases: a speaker at the owner's pitch with a different tract, and a breathy one whose pitch is not measurable at all. Everything is seeded. |
 | **Speaker verification on REAL human speech** | **Unproven** | Nothing here has heard a person. Synthetic voices settle that the code separates signals differing in the cues it claims to use; they say nothing about false-accept and false-reject rates on real speech in a real room. This is why `observe` mode exists and why `docs/voice-identity.md` tells you to spend a few days in it reading your own scores. Only your own voice can close this row. |
 | **A refused turn cannot reach a tool** | Automated | `jarvis-core/tests/test_speaker_gate.py` (63) asserts it by behaviour — the fake conversation agent records whether it was called — rather than by reading the code meant to prevent it. Also covers: `observe` never blocks, `off` does not even buffer the audio, a crashing verifier lets the turn through, a bad `mode:` falls back to `off`, and the wake leg is never used to identify anyone. |
 | **The voiceprint never leaves the server** | Automated | Same file: every enrolment response is searched for the profile's own numbers. The audio is checked to be dropped when the run ends. |
@@ -1437,7 +1562,7 @@ Chromium, on this host: four shared vCPUs, no GPU.
 | The shell path is gated twice, in two processes, with two credentials | Automated | `test_orchestrator.py`, `jarvis-orchestrator/tests/test_api.py` |
 | A command rewritten in flight is refused, not approved | Automated | `test_orchestrator.py` |
 | Holding the API token alone cannot execute anything | Automated | `jarvis-orchestrator/tests/test_api.py::test_bearer_token_alone_cannot_approve` |
-| The persona promises no tool that is not registered | Automated | `test_orchestrator.py::test_the_persona_prompts_tools_all_exist` |
+| The persona promises no tool that is not registered | Automated | `test_orchestrator.py::test_the_persona_promises_no_tool_it_cannot_guarantee` |
 | Refusals fail closed (`"false"` denies) | Automated | `test_llm.py` |
 | Fetched content is fenced before the model sees it, and cannot close its own fence | Automated | `test_web_integration.py`, `test_vision.py`, `test_orchestrator.py` |
 | Untrusted content cannot reach a dispatcher without fresh approval | Automated | The fence is wording; the control is the tier. Every source that fences also marks the turn, so a later `control_device` is requested at CONFIRM: `test_web_integration.py::test_a_page_read_earlier_in_the_turn_forces_a_device_action_to_confirm`, `test_vision.py::test_looking_at_a_camera_raises_the_bar_for_the_rest_of_the_turn`, `test_orchestrator.py::test_command_output_raises_the_bar_for_the_rest_of_the_turn`, and `test_device_control.py::test_every_integration_that_fences_content_also_raises_the_tier`, which walks the source tree so a *new* integration cannot fence its output and forget the mark. |
@@ -1920,7 +2045,7 @@ back as audio. Every one of those is unproven today.
 ### 3. The voice stack end to end, with a microphone
 
 ```bash
-docker compose up -d          # whisper, piper, openWakeWord, ollama
+docker compose up -d          # whisper, piper, openWakeWord, the model gateway
 ./scripts/e2e-smoke.sh        # proves they are reachable and piper speaks
 python3 scripts/pipeline-smoke.py   # the existing pipeline probe
 ```
@@ -1948,9 +2073,7 @@ only once these scripts have been run against the live stack and have passed.
 
 ### 6. Performance
 
-Nothing anywhere measures latency, GPU throughput, memory under load, or how
-long a cold model takes to answer. The smoke script prints timings for its own
-checks, which is a starting point and nothing more.
+Per-stage latency is measured on every live run (stt, first token, intent, tts, total; median and p95 in `docs/LIVE_TEST_REPORT.md`) and by the scorecard idle and under load (`scripts/verify/m30-toolbelt.sh`). GPU throughput and memory under load are not measured anywhere; there is no GPU on this box to measure.
 
 ---
 
