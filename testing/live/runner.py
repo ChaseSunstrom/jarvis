@@ -832,6 +832,14 @@ class Runner:
                     "nothing was held for approval, so there was no gate to "
                     f"{decision}. Held so far: {observer.approvals[approval_mark:]!r}"
                 )
+            elif decision == "hold":
+                # The hold is the assertion, and the NEXT turn's spoken yes is
+                # what resolves it: the rig must not touch it. On the fifteenth
+                # rebuild the model declined an unlock instead of calling the
+                # gated tool, nothing was held, and the first turn still passed
+                # on "no service called, still locked" — the miss surfaced a
+                # turn late, on the yes that had nothing to answer.
+                self._approval_cursor = observer.approvals.index(held) + 1
             else:
                 self._approval_cursor = observer.approvals.index(held) + 1
                 answered = await observer.answer(held["request_id"], decision == "approve")

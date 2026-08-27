@@ -59,7 +59,7 @@ EXPECT_KEYS = {
     "notification",      # {title_contains?, kind?, source?, within?}
     "surface",           # {entity?, kind?, count?, within?} — the voice screen's panels (M83/M92)
     "memory",            # {recalls?, forgotten?}
-    "approval",          # {tool, decision: approve|deny}
+    "approval",          # {tool, decision: approve|deny|hold, within?} — hold leaves it for the next turn
     "ui",                # {testid, contains, within?} or a list of them — the page
                          # after the answer; only the voice-ui/text-ui variants look
     "file",              # {path, exists: bool} — containment checks
