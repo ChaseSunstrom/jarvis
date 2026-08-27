@@ -78,3 +78,14 @@ def test_stop_that_is_cancel_task_and_nothing_else():
     then the whole audit done by hand in the turn, then run_background_task
     again. Stop means stop."""
     assert '"Stop that", "cancel that\n  job" is cancel_task and nothing else' in TOOL_RULES
+
+
+def test_a_kept_fact_is_acknowledged_in_the_words_it_was_given():
+    """The nineteenth house (27 Aug 2026): "reacts badly to peanuts" was kept,
+    and acknowledged as "the peanut butter" — the judge read a changed fact.
+    The rule says repeat, never elaborate."""
+    from jarvis.llm.agent import TOOL_RULES
+
+    assert "in the words" in TOOL_RULES
+    assert "peanut butter" in TOOL_RULES
+    assert "Never elaborate a fact" in TOOL_RULES
