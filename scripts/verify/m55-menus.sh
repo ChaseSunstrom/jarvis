@@ -61,7 +61,9 @@ want = {
   "sections/Devices.svelte": 1, "sections/Areas.svelte": 1, "sections/Automations.svelte": 1,
   "sections/Tasks.svelte": 1, "sections/Code.svelte": 1, "sections/Notes.svelte": 1, "sections/Memory.svelte": 1,
   "sections/Tools.svelte": 2, "components/Extensions.svelte": 1, "components/McpServers.svelte": 1,
-  "components/SkillsPanel.svelte": 1, "components/SettingPlain.svelte": 1, "components/SettingRaw.svelte": 1,
+  "components/SkillsPanel.svelte": 1,
+  # the settings rows (plain and raw) are the shared SettingRow (M107), rendered with a testid; the mark lives there
+  "ui/SettingRow.svelte": 1,
 }
 for rel, n in want.items():
     src = Path("jarvis-web/src/lib", rel).read_text()
