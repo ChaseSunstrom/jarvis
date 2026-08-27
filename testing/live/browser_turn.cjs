@@ -58,7 +58,13 @@ const say = (payload) => process.stdout.write(JSON.stringify(payload) + '\n');
 
 	const t0 = Date.now();
 	try {
-		await page.goto(job.mode === 'text' ? `${job.url}/?mode=chat` : job.url, {
+		// M93: the thread named by the rig rides in the URL; the page opens it
+		// (or starts it under that id) before the turn is sent.
+		const params = new URLSearchParams();
+		if (job.mode === 'text') params.set('mode', 'chat');
+		if (job.conversation) params.set('conversation', job.conversation);
+		const query = params.toString();
+		await page.goto(query ? `${job.url}/?${query}` : job.url, {
 			waitUntil: 'domcontentloaded',
 			timeout
 		});

@@ -408,6 +408,7 @@
 						// show the turn that just happened — and the moment the
 						// title, taken from the first thing said, is decided.
 						openConversationId = client?.conversationId ?? openConversationId;
+						syncUrl();
 						void refreshHistory();
 					},
 					onError: (code, message) => {
@@ -594,6 +595,24 @@
 		}
 	}
 
+	/**
+	 * M93: a conversation has a URL. `?conversation=<id>` opens it; the address
+	 * bar follows whichever thread is open, so a link can be copied, the phone
+	 * can open the same thread, and the rig's browser transport can hold one
+	 * across turns. `mode=chat` rides along.
+	 */
+	function syncUrl(): void {
+		try {
+			const params = new URLSearchParams(location.search);
+			if (openConversationId) params.set('conversation', openConversationId);
+			else params.delete('conversation');
+			const query = params.toString();
+			history.replaceState(history.state, '', location.pathname + (query ? `?${query}` : ''));
+		} catch {
+			/* a page without history (a test harness) keeps its address */
+		}
+	}
+
 	/** Open a past conversation: its transcript on screen, its id on the wire. */
 	async function openConversation(id: string): Promise<void> {
 		if (!client) return;
@@ -608,8 +627,16 @@
 			response = '';
 			errorMsg = '';
 		} catch {
-			historyError = 'Could not open that conversation.';
+			// An id the archive does not have yet is a thread that has not
+			// started: a link opened before its first turn, or the rig naming
+			// the thread it is about to hold. The next turn creates it under
+			// THIS id rather than a fresh one.
+			messages = [];
+			openConversationId = id;
+			client.conversationId = id;
+			historyError = '';
 		}
+		syncUrl();
 	}
 
 	function newConversation(): void {
@@ -619,6 +646,7 @@
 		transcript = '';
 		response = '';
 		errorMsg = '';
+		syncUrl();
 	}
 
 	async function forgetConversation(id: string): Promise<void> {
@@ -825,9 +853,24 @@
 
 	const sessionMeta = $derived(openConversationId ? `session ${openConversationId.slice(0, 6)}` : 'this session');
 
+	// M93: the thread named in the URL, opened once the client is connected.
+	let wantedConversation = $state<string | null>(null);
+
 	onMount(() => {
 		const params = new URLSearchParams(location.search);
 		e2eMode = params.has('e2e');
+		wantedConversation = params.get('conversation');
+		if (wantedConversation) {
+			// Connect now rather than at the first turn: a link to a thread must
+			// show its transcript without anybody having to speak first.
+			const wanted = wantedConversation;
+			wantedConversation = null;
+			void connectWs()
+				.then(() => openConversation(wanted))
+				.catch(() => {
+					historyError = 'Could not open that conversation.';
+				});
+		}
 		try {
 			muted = localStorage.getItem(MUTE_KEY) === '1';
 			// `?mode=chat` wins over the remembered choice, so a link can open
@@ -949,7 +992,7 @@
 		onToggleMode={toggleChatMode}
 	/>
 {:else}
-	<main class="voice" data-state={reactorState} data-testid="voice-screen">
+	<main class="voice" data-state={reactorState} data-testid="voice-screen" data-conversation-id={openConversationId ?? ''}>
 		<!-- The stage: the instrument, over three faint field lines. -->
 		<section class="stage">
 			<svg class="field" viewBox="0 0 1400 1400">

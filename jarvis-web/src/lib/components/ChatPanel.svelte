@@ -142,7 +142,7 @@
 	});
 </script>
 
-<section class="chat" data-testid="chat-panel" data-state={turnState}>
+<section class="chat" data-testid="chat-panel" data-state={turnState} data-conversation-id={conversationId ?? ''}>
 	<!-- Off-canvas below the breakpoint, docked above it. -->
 	<aside
 		class="past"

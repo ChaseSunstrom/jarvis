@@ -905,3 +905,8 @@ is quiet. Done since:
   the next turn, the surface by voice), the rig's `surface` expectation and `surface` capability; m37's two
   config checks now read the M77 block (the M37 one is gone). Rig tests 49; the live half waits for a quiet
   house.
+- 05:06 — M93 built: `?conversation=<id>` opens a thread on the voice screen (its transcript, or a new thread
+  under that id), the address bar follows the open thread, the page carries `data-conversation-id`; the rig's
+  browser transport names the thread it holds and the one-turn rule on `-ui` variants is lifted —
+  thread-continuity runs through the real console now. Spec 2/2, rig tests 49; the live half waits. m37's
+  gate names M77's tests (10/10).

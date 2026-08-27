@@ -34,25 +34,26 @@ for line in block.splitlines():
         raise AssertionError(f"the env default is not empty: {stripped}")
 print("the key comes from the environment or a secret, never from the tracked file")
 '
-check "a workflow is Tier 3 unless the operator lowers it" \
-    grep -q 'tier: int = 3' jarvis-core/jarvis/integrations/n8n/__init__.py
-check "the allow-list is not a discovery" \
-    grep -q 'ALLOW-LIST, not a discovery' jarvis-core/config/configuration.yaml
-check_not "nothing lists every workflow on the instance" \
-    grep -q '/api/v1/workflows' jarvis-core/jarvis/integrations/n8n/__init__.py
-
-check_sh "off, un-listed and no-webhook are all refused, and one worked example runs" \
-    'cd jarvis-core && python3 -m pytest tests/test_n8n.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
-
-# The three the milestone names, each asserted by name so a rename cannot
-# quietly drop one.
-check "the flag being off is covered by name" \
-    grep -q 'def test_a_workflow_cannot_run_while_the_bridge_is_off' jarvis-core/tests/test_n8n.py
-check "so is the allow-list refusing" \
-    grep -q 'def test_something_nobody_listed_is_refused' jarvis-core/tests/test_n8n.py
-check "so is the worked example" \
-    grep -q 'def test_the_worked_example_end_to_end' jarvis-core/tests/test_n8n.py
+# M77 replaced the M37 bridge: workflows are listed from n8n's own API (a
+# read, Tier 1) and started only through their Webhook trigger; anything
+# that changes n8n — run, activate, create, update — is held for a yes.
+# These checks name M77's tests, since M37's (an allow-list in the config,
+# a flag) describe code that no longer exists.
+check "running, activating, creating and updating a workflow are held for approval (Tier 3)" python3 -c '
+from pathlib import Path
+rows = Path("jarvis-core/tests/test_gated_services.py").read_text()
+for tool in ("run_workflow", "activate_workflow", "create_workflow", "update_workflow"):
+    assert tool in rows, tool + " is not in the Tier-3 table"
+print("four n8n tools in the Tier-3 table")
+'
+check "a workflow without a Webhook trigger refuses to run, and says which node it needs" \
+    grep -q 'def test_a_workflow_runs_through_its_webhook_and_one_without_is_refused_with_the_reason' jarvis-core/tests/test_n8n.py
+check "unconfigured, it registers nothing and says so" \
+    grep -q 'def test_unconfigured_says_so_and_calls_nothing' jarvis-core/tests/test_n8n.py
+check "the assistant's words come back fenced, and nothing it says runs" \
+    grep -q 'def test_the_assistant_answers_fenced_and_nothing_it_says_runs' jarvis-core/tests/test_n8n.py
+check_sh "the n8n suite" \
+    'cd jarvis-core && python3 -m pytest tests/test_n8n.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
 
 check "the env var reaches jarvis-core" \
     grep -q 'N8N_URL=' jarvis-core/docker-compose.yml

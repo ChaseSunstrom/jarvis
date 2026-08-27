@@ -552,23 +552,21 @@ def test_a_reminder_is_a_schedule_entry_before_it_is_a_task():
     assert asyncio.run(Stub([new]).wait_for_schedule(title_contains="kettle", timeout=0.6)) is None
 
 
-def test_a_browser_scenario_is_one_turn_until_the_transport_carries_a_thread():
-    """A browser-driven turn is a fresh page, so it is a fresh conversation.
+def test_the_browser_transport_carries_the_thread():
+    """M93 lifted the one-turn rule: `browser_turn.cjs` opens the conversation
+    the rig names (`?conversation=<id>`) and the page starts or continues it
+    under that id, so a `-ui` scenario may have as many turns as any other.
+    What is pinned now is the wire: the job carries the id and the page reads
+    it."""
+    from pathlib import Path
 
-    `browser_turn.cjs` opens a new browser per turn and the console has no
-    way yet to open a named conversation from its URL; a second turn cannot
-    refer to the first. A scenario that declares a `-ui` variant with more
-    than one turn would fail for that reason and read as a product defect —
-    it did, once. Lift this when the transport carries the thread.
-    """
-    offenders = [
-        (s.name, s.variants, len(s.turns))
-        for s in load_all()
-        if any(v.endswith("-ui") for v in s.variants) and len(s.turns) > 1
-    ]
-    assert not offenders, f"browser-driven scenarios with more than one turn: {offenders}"
-
-
+    here = Path(__file__).resolve().parents[1]
+    script = (here / "browser_turn.cjs").read_text()
+    assert "params.set('conversation', job.conversation)" in script
+    transport = (here / "transport.py").read_text()
+    assert '"conversation": conversation_id or ""' in transport
+    page = (here.parents[1] / "jarvis-web" / "src" / "routes" / "+page.svelte").read_text()
+    assert "params.get('conversation')" in page and "data-conversation-id" in page
 def test_compose_is_refused_from_a_git_worktree(monkeypatch, tmp_path):
     """The rig will not bring the stack up from a worktree.
 

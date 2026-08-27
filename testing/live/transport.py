@@ -408,6 +408,7 @@ class Browser:
         mode: str = "voice",
         timeout: float = 180.0,
         probes: list[dict[str, Any]] | None = None,
+        conversation_id: str | None = None,
         **_ignored: Any,
     ) -> Turn:
         wav_path = None
@@ -428,6 +429,10 @@ class Browser:
             "url": self.console.url,
             "mode": mode,
             "text": text,
+            # M93: the thread this turn belongs to. The page opens
+            # `?conversation=<id>`, so a second browser turn continues the first
+            # instead of starting a fresh conversation on a fresh page.
+            "conversation": conversation_id or "",
             "wav": str(wav_path) if wav_path else None,
             "headless": self.headless,
             "timeoutMs": int(timeout * 1000),

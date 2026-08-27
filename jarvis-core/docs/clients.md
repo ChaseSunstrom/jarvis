@@ -130,6 +130,8 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/notes/search` | `query` and/or `tag`; full text through SQLite FTS5, with a word-by-word fallback so a query containing punctuation returns notes rather than a syntax error |
 | `jarvis/memory/list` | optional `query`, `tag`, `limit`; every durable note, newest first, or the matches for a query — `{entries: [...], total, query, tag}`. The whole store rather than a page of it: the point of the route is that a person can read what is held about them |
 | `jarvis/memory/reflect` | M87: read the day's conversations once and keep the new durable facts as `learned` — `{status, turns, learned: [...], skipped: [{fact, reason}]}`; a note and a `reflection` card say what was learned; scheduled nightly by `memory: reflect_at`. |
+
+**A conversation has a URL (M93).** The console's voice screen opens `?conversation=<id>` — its transcript from the archive, or a new thread under that id when the archive has none — and the address bar follows whichever thread is open; the screen carries `data-conversation-id` for whoever reads the page (the rig's browser transport holds a thread across turns this way, and the phone can open the same link). `mode=chat` rides along.
 | `jarvis/memory/add` | `text`, optional `tags`, `pinned`, `allow_untrusted`. The console is a person typing, so it may store what the model may not |
 | `jarvis/memory/forget` | `entry_id` or `query`, or `all: true` for everything **including the vector sidecar** — a store that reported itself empty while an index still ranked the old text would be the least visible kind of broken promise |
 | `jarvis/memory/pin` | `entry_id`, `pinned`; a pinned note keeps its place in the prompt whatever the turn is about |
