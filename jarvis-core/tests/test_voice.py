@@ -1498,6 +1498,44 @@ async def test_the_spoken_answer_is_the_answer_not_the_working(tmp_path):
     assert "already off" in progress
 
 
+async def test_the_answer_is_still_the_answer_through_the_voice_wrapper(tmp_path):
+    """The house wraps the agent's converse for a spoken turn (`fast_model`,
+    `voice: think: false`), and a closure has no `__self__` — so the drop above
+    never ran on the voice path, and "The front door is locked, Sir.", written
+    before the model was nudged into its call, was in the spoken clip ahead of
+    "waiting on your confirmation" (27 Aug 2026). The wrapper names its agent."""
+    from jarvis.integrations.voice import _on_the_fast_model
+
+    class Agent:
+        fast_model = ""
+
+        def __init__(self) -> None:
+            self.last_result = type(
+                "R", (), {"text": "The front door is waiting on your confirmation, Sir.",
+                          "preamble": "The front door is locked, Sir."}
+            )()
+
+        async def converse(self, text, conversation_id=None, *, model=None, think=None, **kwargs):
+            for piece in ("The front door is locked, Sir.",
+                          "The front door is waiting on your confirmation, Sir."):
+                yield piece
+
+    agent = Agent()
+    wrapped = _on_the_fast_model(agent, agent.converse, think_on_voice=False)
+    assert not hasattr(wrapped, "__self__")
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt("lock the front door again"),
+        tts=FakeTts(),
+        converse=wrapped,
+        start_stage="intent",
+        end_stage="intent",
+    )
+    await run.execute(None, None, text="lock the front door again")
+
+    assert run.response_text == "The front door is waiting on your confirmation, Sir."
+
+
 async def test_an_agent_with_no_last_result_is_left_alone(tmp_path):
     """Duck-typed, and optional: the stand-in agent and every test's two-line
     coroutine have no `last_result`, and their stream is the answer."""

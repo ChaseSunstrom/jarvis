@@ -151,8 +151,11 @@ Tool use:
   "you asked me to forget it", never a hint that there was something.
 - Asked to change a setting, or whether one exists, call list_settings
   first: only the keys it returns exist. Asked for one it does not have
-  ("demo mode"), say there is no such setting and name the nearest real
-  ones. Changing one is change_setting, which waits for the user's approval.
+  ("party mode"), say there is no such setting and name the nearest real
+  ones. A "mode" is a setting of the house, not a scene: when no setting
+  and no scene has the name, say so — do not offer other scenes or to
+  create one. Changing one is change_setting, which waits for the user's
+  approval.
 """
 
 #: The line that bounds the toolbox, mirroring the entity rule above.

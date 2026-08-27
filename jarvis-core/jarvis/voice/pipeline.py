@@ -1208,7 +1208,11 @@ class PipelineRun:
         has no `last_result` and the stream is used unchanged. The prefix check
         is what keeps a stale result from a previous turn out of this one.
         """
-        agent = getattr(self.converse, "__self__", None)
+        # A bound method names its agent as `__self__`; the voice integration's
+        # wrapper (`_on_the_fast_model`) names it as `agent`, since a closure
+        # has no `__self__` — without that second look the drop never ran on
+        # a spoken turn and the model's guess was heard before its answer.
+        agent = getattr(self.converse, "__self__", None) or getattr(self.converse, "agent", None)
         result = getattr(agent, "last_result", None)
         preamble = str(getattr(result, "preamble", "") or "")
         answer = str(getattr(result, "text", "") or "")
@@ -1230,7 +1234,7 @@ class PipelineRun:
         text together: the id is what the memory page links to, and the text is
         the only part a person recognises.
         """
-        agent = getattr(self.converse, "__self__", None)
+        agent = getattr(self.converse, "__self__", None) or getattr(self.converse, "agent", None)
         result = getattr(agent, "last_result", None)
         used = list(getattr(result, "memory_used", None) or [])
         if not used or self.jarvis is None:

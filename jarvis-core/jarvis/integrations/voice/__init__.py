@@ -304,6 +304,14 @@ def _on_the_fast_model(agent: Any, converse: Any, think_on_voice: bool = True) -
             kwargs.setdefault("think", False)
         return converse(text, conversation_id, *args, **kwargs)
 
+    # The pipeline asks the converse it was given for the agent behind it —
+    # `Pipeline._authoritative_answer` reads `last_result` to drop the words
+    # the model wrote before a tool ran. A bound method carries `__self__`; a
+    # closure carries nothing, and with this wrapper in place the drop never
+    # happened on the voice path: "The front door is locked, Sir." — written
+    # before the model was nudged into its call — was in the spoken clip
+    # ahead of "waiting on your confirmation" (27 Aug 2026).
+    spoken.agent = agent  # type: ignore[attr-defined]
     return spoken
 
 

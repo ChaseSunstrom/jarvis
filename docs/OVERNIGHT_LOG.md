@@ -826,3 +826,14 @@ is quiet. Done since:
   matched none of "no tests ran" / "ERROR: file not found" (a batch had named a file that does not exist);
   released, the suites are 87 + 134 + 60 green. The fourteenth core rebuild is up next, then the confirm,
   lock, removal, settings and briefing scenarios and the M74 gate.
+- 03:23 — the fourteenth rebuild (78a331b): 8/9 scenarios, 19/20 turns, WER 0.0 over 10, median 2.2 s.
+  Nothing read aloud but words now; every hold one card (the log line shows unlock and lock as two
+  different requests, as they are); M74 7/7 on the house — first audio 19.65 s of a 28.17 s clip. Two
+  left: the sentence the model writes before it is nudged into its call ("The front door is locked,
+  Sir.") is still in the spoken clip, and the settings turn offered scenes for "party mode" (passed on
+  the twelfth; rule tightened: a mode is a setting, not a scene). verify-all (M23) running since 03:21.
+- 03:25 — why the guess was spoken: the voice integration wraps the agent's converse for a spoken turn
+  (`fast_model`, `voice: think: false`), a closure has no `__self__`, and `_authoritative_answer` found no
+  agent behind it — the M60 drop of the words written before a tool ran had never run on the voice path.
+  The wrapper names its agent now; the pipeline looks both ways (voice suite +1). verify-all's first gate
+  (m00) is red because `m63-dashboard-widgets.sh` was committed without its executable bit — fixed.
