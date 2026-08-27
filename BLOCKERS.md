@@ -237,3 +237,21 @@ cannot be diagnosed from here, only reproduced — a full 3.12 run of HEAD at
 12:33 found this one (`test_ask_and_answer`, a rule 6625b61 had widened; fixed
 in the commit after), twenty-three minutes a run, and the check run still
 said nothing: the step's `::error::` lines never reached it either.
+
+
+## The operator's voice profile (M100, M105): one enrolment sample far off in pitch
+
+**Needed by:** M100's live slice (`memory-per-person`: a preference said in the rig's Piper voice must be filed under
+`Rig`, never under the operator) — red on the eighteenth, nineteenth, twentieth and twenty-first houses at composite
+scores of 4.79–4.88 against the operator's configured threshold 4.925.
+
+The gate scores three blocks as equals with a veto line per block drawn from the operator's own spread (M105). The
+twentieth's probe measured that spread: timbre 3.0, variability 3.9, **pitch 8.35** — one of the eleven enrolment
+samples lies far off in pitch, so the pitch veto line stays at the old ceiling (9.85) and a Piper phrase whose pitch
+block is ~9.3 is not vetoed while its composite lands under 4.925. The operator's own self-scores run 0.4–4.7; the
+suggested threshold (worst sample × 1.25) is 5.85.
+
+What the operator can do, either of: on SETTINGS › Voice, forget and re-enrol (the self-scores are shown per sample;
+the far-off one is the eighth), which brings the pitch line down to ~2× the real spread; or set
+`voice: speaker: threshold:` nearer the tighter end (≈3.5 would refuse the Piper phrases at 4.8–4.9 and accept ten of
+the eleven samples). Nothing in the code chooses between a looser gate and a re-enrolment for them.
