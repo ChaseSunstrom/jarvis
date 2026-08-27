@@ -89,8 +89,8 @@ console it shows is your own server. No `chmod`, no `sudo` (running as root
 is refused by Electron anyway, and `--no-sandbox` under `sudo` loses the
 display).
 
-If nothing answers at the console URL yet, the app shows **No console
-there yet** with the URL it tried and how to point it elsewhere
+If nothing answers at the console URL yet, the app shows **No console there yet**
+with the URL it tried and how to point it elsewhere
 (`JARVIS_CONSOLE_URL=http://<host>:8199`), and keeps trying every five
 seconds — bringing the stack up is enough. A renderer that dies is said on
 stderr with Chromium's reason rather than left as a blank window.

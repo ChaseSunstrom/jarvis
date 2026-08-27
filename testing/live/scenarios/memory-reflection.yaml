@@ -29,7 +29,10 @@ turns:
     reflect: true
     expect:
       memory: {recalls: "Mira"}
-      notification: {kind: reflection, title_contains: "learned", within: 30}
+      # No card is the DESIGN when the day's one fact was kept the moment it
+      # was said (reflect.py: "nothing when there is nothing new — no 'I
+      # learned nothing today' cards"); the twentieth house was right to send
+      # none. The card with new facts is proved by the unit tests.
       reply_means: >
         says it learned that the user's daughter Mira is allergic to peanuts
         (or names Mira and peanuts) — from what it remembers, not a guess

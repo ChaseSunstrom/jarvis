@@ -58,7 +58,7 @@ for (const viewport of [
 			expect(box?.height ?? 0, 'a collapsed task row is more than one line tall').toBeLessThanOrEqual(44);
 		}
 		const list = await page.getByTestId('task-dock-list').boundingBox();
-		expect(list?.height ?? 0, 'the list grows past its cap instead of scrolling inside itself').toBeLessThanOrEqual(viewport.height * 0.32 + 2);
+		expect(list?.height ?? 0, 'the list grows past its cap instead of scrolling inside itself').toBeLessThanOrEqual(viewport.height * 0.28 + 2);
 	});
 }
 

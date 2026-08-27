@@ -6,12 +6,13 @@ cd "$(dirname "$0")/../.."
 verify_begin "M106" "notes read as they were written"
 use_venv
 
-check "the renderer exists, escapes first, and draws only a conservative subset" python3 -c '
+check "the renderer exists, escapes first, and draws links to http(s) only" python3 -c '
 from pathlib import Path
 src = Path("jarvis-web/src/lib/markdown.ts").read_text()
 assert "export function renderMarkdown" in src, "no renderMarkdown"
 assert "escapeHtml" in src or "escape(" in src, "nothing escapes first"
-assert "javascript:" in src, "the link scheme is not checked"
+# M113 made the renderer complete; the scheme check is an allowlist (http(s)), not a denylist.
+assert "SAFE_HREF" in src and "https?:" in src, "the link scheme is not an http(s) allowlist"
 assert "rel=\"noopener" in src or "noopener" in src, "links do not carry noopener"
 print("renderMarkdown, escaped first, http(s) links only")
 '

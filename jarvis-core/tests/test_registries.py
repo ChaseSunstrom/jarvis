@@ -194,43 +194,62 @@ async def test_read_github_skills_pins_to_the_branch_head_and_lists_the_folders(
 
 
 @pytest.mark.asyncio
-async def test_fetch_github_skill_downloads_every_file_from_raw_and_refuses_a_symlink():
-    folder = "/repos/anthropics/skills/contents/skills/academy-guide"
-    listing = [
-        {"name": "SKILL.md", "type": "file", "download_url": "https://raw.githubusercontent.com/anthropics/skills/x/skills/academy-guide/SKILL.md"},
-        {"name": "scripts", "type": "dir", "url": f"https://api.github.com{folder}/scripts?ref={COMMIT}"},
-    ]
-    nested = [
-        {"name": "run.sh", "type": "file", "download_url": "https://raw.githubusercontent.com/anthropics/skills/x/skills/academy-guide/scripts/run.sh"},
-    ]
-    routes = {
-        ("api.github.com", folder): lambda r: httpx.Response(200, json=listing),
-        ("api.github.com", folder + "/scripts"): lambda r: httpx.Response(200, json=nested),
-        ("raw.githubusercontent.com", "/anthropics/skills/x/skills/academy-guide/SKILL.md"): lambda r: httpx.Response(200, content=b"---\nname: academy-guide\n---\nbody"),
-        ("raw.githubusercontent.com", "/anthropics/skills/x/skills/academy-guide/scripts/run.sh"): lambda r: httpx.Response(200, content=b"#!/bin/sh\n"),
+async def test_fetch_github_skill_reads_the_tree_once_and_every_file_from_raw():
+    tree = {
+        "truncated": False,
+        "tree": [
+            {"path": "skills/academy-guide", "type": "tree"},
+            {"path": "skills/academy-guide/SKILL.md", "type": "blob", "mode": "100644", "size": 30},
+            {"path": "skills/academy-guide/scripts", "type": "tree"},
+            {"path": "skills/academy-guide/scripts/run.sh", "type": "blob", "mode": "100755", "size": 10},
+            {"path": "skills/other/SKILL.md", "type": "blob", "mode": "100644", "size": 5},
+            {"path": "README.md", "type": "blob", "mode": "100644", "size": 5},
+        ],
     }
+    calls: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.host == "api.github.com":
+            return httpx.Response(200, json=tree)
+        return httpx.Response(200, content=b"#!/bin/sh\n" if request.url.path.endswith("run.sh") else b"---\nname: academy-guide\n---\nbody")
+
     entries = parse_github_listing(_fixture("github-skills.json"), SKILLS, owner="anthropics", repo="skills", commit=COMMIT)
     entry = next(e for e in entries if e.id == "academy-guide")
-    async with httpx.AsyncClient(transport=_transport(routes)) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
         files = await fetch_github_skill(client, entry)
     assert set(files) == {"SKILL.md", "scripts/run.sh"}
     assert files["scripts/run.sh"].startswith(b"#!")
-
-    listing.append({"name": "link", "type": "symlink", "target": "/etc/passwd"})
-    async with httpx.AsyncClient(transport=_transport(routes)) as client:
-        with pytest.raises(RegistryError, match="symlink"):
-            await fetch_github_skill(client, entry)
+    assert calls[0] == f"/repos/anthropics/skills/git/trees/{COMMIT}"
+    assert calls[1:] == [
+        f"/anthropics/skills/{COMMIT}/skills/academy-guide/SKILL.md",
+        f"/anthropics/skills/{COMMIT}/skills/academy-guide/scripts/run.sh",
+    ], "one tree request, then one per file from raw"
 
 
 @pytest.mark.asyncio
-async def test_a_download_url_off_the_raw_host_is_refused():
-    folder = "/repos/anthropics/skills/contents/skills/academy-guide"
-    listing = [{"name": "SKILL.md", "type": "file", "download_url": "https://evil.example/SKILL.md"}]
-    routes = {("api.github.com", folder): lambda r: httpx.Response(200, json=listing)}
+async def test_fetch_github_skill_refuses_a_symlink_a_submodule_and_too_much():
     entries = parse_github_listing(_fixture("github-skills.json"), SKILLS, owner="anthropics", repo="skills", commit=COMMIT)
     entry = next(e for e in entries if e.id == "academy-guide")
-    async with httpx.AsyncClient(transport=_transport(routes)) as client:
-        with pytest.raises(RegistryError, match="raw.githubusercontent.com"):
+
+    def with_rows(rows):
+        return httpx.MockTransport(lambda r: httpx.Response(200, json={"tree": rows}))
+
+    link = [{"path": "skills/academy-guide/link", "type": "blob", "mode": "120000", "size": 3}]
+    async with httpx.AsyncClient(transport=with_rows(link)) as client:
+        with pytest.raises(RegistryError, match="symlink"):
+            await fetch_github_skill(client, entry)
+    sub = [{"path": "skills/academy-guide/vendor", "type": "commit", "mode": "160000"}]
+    async with httpx.AsyncClient(transport=with_rows(sub)) as client:
+        with pytest.raises(RegistryError, match="commit"):
+            await fetch_github_skill(client, entry)
+    big = [{"path": f"skills/academy-guide/f{i}.md", "type": "blob", "mode": "100644", "size": 1} for i in range(81)]
+    async with httpx.AsyncClient(transport=with_rows(big)) as client:
+        with pytest.raises(RegistryError, match="limit for one skill"):
+            await fetch_github_skill(client, entry)
+    heavy = [{"path": "skills/academy-guide/SKILL.md", "type": "blob", "mode": "100644", "size": 3_000_000}]
+    async with httpx.AsyncClient(transport=with_rows(heavy)) as client:
+        with pytest.raises(RegistryError, match="bytes"):
             await fetch_github_skill(client, entry)
 
 

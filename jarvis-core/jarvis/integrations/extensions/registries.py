@@ -71,9 +71,8 @@ TIMEOUT_S = 12.0
 MAX_BODY = 2_000_000
 MAX_PAGES = 5
 PAGE_SIZE = 100
-MAX_SKILL_FILES = 40
-MAX_SKILL_DEPTH = 3
-MAX_SKILL_REQUESTS = 24
+MAX_SKILL_FILES = 80
+MAX_SKILL_BYTES = 2_000_000
 
 #: The registry's remote transports this house can speak. `sse` is a
 #: transport the mcp integration does not implement (it has http and stdio),
@@ -220,52 +219,56 @@ async def read_github_skills(client: httpx.AsyncClient, source: Source) -> list[
 async def fetch_github_skill(client: httpx.AsyncClient, entry: Entry) -> dict[str, bytes]:
     """Every file under a skill folder, as `install.fetch_local` would read it.
 
-    Bounded three ways (files, depth, requests) so a folder that is really a
-    repository does not become a download, and every file comes from
-    `raw.githubusercontent.com` — the `download_url` GitHub names — never
-    from a URL the listing could point anywhere.
+    ONE request for the repository's tree at the pinned commit (the git
+    trees API, recursive), then one per file from `raw.githubusercontent.com`
+    — never from a URL the listing could point anywhere. The contents API a
+    folder at a time cost a request per sub-folder and hit the 24-request
+    bound on the twentieth house (27 Aug 2026: canvas-design has scripts and
+    examples inside). Bounded by files and bytes so a folder that is really
+    a repository does not become a download.
     """
-    files: dict[str, bytes] = {}
-    requests = 0
-    owner, repo, root, _ = github_parts(entry.url)
-
-    async def walk(url: str, prefix: str, depth: int) -> None:
-        nonlocal requests
-        if depth > MAX_SKILL_DEPTH:
-            raise RegistryError(f"{entry.id}: folders nested deeper than {MAX_SKILL_DEPTH}")
-        requests += 1
-        if requests > MAX_SKILL_REQUESTS:
-            raise RegistryError(f"{entry.id}: more than {MAX_SKILL_REQUESTS} requests to read one skill")
-        rows = await fetch_json(client, url)
-        if not isinstance(rows, list):
-            raise RegistryError(f"{entry.id}: {url} is not a folder")
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            name = str(row.get("name") or "")
-            if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$", name):
-                raise RegistryError(f"{entry.id}: {name!r} is not a usable file name")
-            relative = f"{prefix}{name}"
-            if row.get("type") == "dir":
-                await walk(str(row.get("url") or ""), f"{relative}/", depth + 1)
-                continue
-            if row.get("type") != "file":
-                # A symlink or a submodule: the two ways a folder of plain
-                # files reaches outside itself. Refused, as fetch_local does.
-                raise RegistryError(f"{entry.id}: {relative} is a {row.get('type')}, not a file")
-            if len(files) >= MAX_SKILL_FILES:
-                raise RegistryError(f"{entry.id}: more than {MAX_SKILL_FILES} files")
-            download = str(row.get("download_url") or "")
-            if urlparse(download).hostname != "raw.githubusercontent.com":
-                raise RegistryError(f"{entry.id}: {relative} is not served from raw.githubusercontent.com")
-            requests += 1
-            if requests > MAX_SKILL_REQUESTS:
-                raise RegistryError(f"{entry.id}: more than {MAX_SKILL_REQUESTS} requests to read one skill")
-            files[relative] = await fetch_bytes(client, download)
-
-    await walk(entry.url, "", 1)
-    if not files:
+    owner, repo, root, ref = github_parts(entry.url)
+    if not _SHA.match(ref):
+        raise RegistryError(f"{entry.id}: the folder is not pinned to a commit ({ref!r})")
+    tree = await fetch_json(
+        client, f"https://api.github.com/repos/{owner}/{repo}/git/trees/{ref}", params={"recursive": "1"}
+    )
+    rows = tree.get("tree") if isinstance(tree, dict) else None
+    if not isinstance(rows, list):
+        raise RegistryError(f"{entry.id}: GitHub did not answer with a tree")
+    if isinstance(tree, dict) and tree.get("truncated"):
+        raise RegistryError(f"{entry.id}: the repository's tree is too large to read in one piece")
+    prefix = root.rstrip("/") + "/"
+    wanted: list[tuple[str, int]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        path = str(row.get("path") or "")
+        if not path.startswith(prefix):
+            continue
+        relative = path[len(prefix):]
+        kind = str(row.get("type") or "")
+        if kind == "tree":
+            continue
+        if kind != "blob" or str(row.get("mode") or "") == "120000":
+            # A symlink (mode 120000) or a submodule (commit): the two ways a
+            # folder of plain files reaches outside itself. Refused, as
+            # fetch_local refuses a symlink.
+            raise RegistryError(f"{entry.id}: {relative} is a {'symlink' if kind == 'blob' else kind}, not a file")
+        if not all(re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$", part) for part in relative.split("/")):
+            raise RegistryError(f"{entry.id}: {relative!r} is not a usable file name")
+        wanted.append((relative, int(row.get("size") or 0)))
+    if not wanted:
         raise RegistryError(f"{entry.id}: the folder {root} in {owner}/{repo} is empty")
+    if len(wanted) > MAX_SKILL_FILES:
+        raise RegistryError(f"{entry.id}: {len(wanted)} files; {MAX_SKILL_FILES} is the limit for one skill")
+    if sum(size for _, size in wanted) > MAX_SKILL_BYTES:
+        raise RegistryError(f"{entry.id}: {sum(size for _, size in wanted)} bytes; {MAX_SKILL_BYTES} is the limit")
+    files: dict[str, bytes] = {}
+    for relative, _ in wanted:
+        files[relative] = await fetch_bytes(
+            client, f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{prefix}{relative}"
+        )
     return files
 
 

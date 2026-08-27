@@ -114,8 +114,13 @@ test('a background job with steps puts its plan on the screen, and its result st
 
 	// When it is done the plan comes down and the result stays as a note.
 	await expect(plan).toHaveCount(0, { timeout: 15_000 });
-	const note = page.locator('[data-testid^="surface-text-"]');
-	await expect(note).toBeVisible({ timeout: 10_000 });
+	// The result stays as a note — a one-row brief since M112, its title and
+	// first line; ⤢ opens it to the whole result.
+	const brief = page.locator('[data-testid^="surface-brief-"]');
+	await expect(brief).toBeVisible({ timeout: 10_000 });
 	await expect(page.locator('.surface').getByText('Finished: Audit every sensor')).toBeVisible();
+	await page.locator('[data-testid^="surface-open-"]').first().click();
+	const note = page.locator('[data-testid^="surface-text-"]');
+	await expect(note).toBeVisible({ timeout: 5_000 });
 	await expect(note).toContainText('all twelve read');
 });

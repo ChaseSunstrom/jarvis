@@ -209,11 +209,22 @@ def _register_services(
         raise CatalogError(f"{source_name} does not offer {entry_id!r}")
 
     async def _fetch(entry: Any) -> dict[str, bytes]:
+        """The files of one entry. A remote payload is kept for ten minutes so
+        the plan and the install that follows it are one download, not two —
+        eighty files is eighty of GitHub's sixty requests an hour."""
+        import time
+
         from .install import fetch_local
 
         if entry.url.startswith("file://"):
             return fetch_local(entry)
-        return await fetch_remote(_client(), entry)
+        key = ("payload", entry.url)
+        hit = remote["cache"].get(key)
+        if hit and time.monotonic() - hit[0] < 600.0:
+            return dict(hit[1])
+        files = await fetch_remote(_client(), entry)
+        remote["cache"][key] = (time.monotonic(), files, 0)
+        return dict(files)
 
     def _mcp_plan(entry: Any) -> dict[str, Any]:
         """What installing an MCP server would do: one `mcp:` entry, no files."""

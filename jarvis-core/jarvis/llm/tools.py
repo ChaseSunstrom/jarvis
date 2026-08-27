@@ -2211,11 +2211,18 @@ def register_builtin_tools(
             return {"status": "error", "error": resolution.error}
         changed: list[dict[str, Any]] = []
         failed: dict[str, str] = {}
+        # The ends of the range ARE open and close: "Close the living room
+        # window" came through as position 0 on the twentieth house (27 Aug
+        # 2026), and a cover with no position control (the demo's, many real
+        # ones) has only open_cover/close_cover to answer with.
+        if position in (0, 100):
+            service = "close_cover" if position == 0 else "open_cover"
+            data: dict[str, Any] = {"entity_id": resolution.entity_ids}
+        else:
+            service = "set_cover_position"
+            data = {"entity_id": resolution.entity_ids, "position": position}
         try:
-            result = await _call_service(
-                jarvis, "cover", "set_cover_position",
-                {"entity_id": resolution.entity_ids, "position": position}, context,
-            )
+            result = await _call_service(jarvis, "cover", service, data, context)
         except ToolError as exc:
             return {"status": "error", "error": str(exc)}
         _merge_service_result(jarvis, result, changed, failed)

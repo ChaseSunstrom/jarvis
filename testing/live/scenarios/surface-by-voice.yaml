@@ -32,7 +32,9 @@ turns:
       # the surface assertion above is the proof, the sentence need not
       # narrate the screen.
       reply_means: "gives the garage temperature, and/or says it is on the screen ('there it is' counts)"
-  - say: "Clear the screen."
+  # "Clear the screen." was heard as "Clean it, sir." by the rig's own ear on
+  # the twentieth house (WER 1.0) — the deed happened, the transcript missed.
+  - say: "Take everything off the screen."
     expect:
       capability: surface
       surface: {count: 0, within: 20}

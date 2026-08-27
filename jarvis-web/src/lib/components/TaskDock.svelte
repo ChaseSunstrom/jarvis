@@ -165,11 +165,21 @@
 
 <style>
 	.dock {
+		display: flex;
+		flex-direction: column;
+		/* The dock as a whole never takes more than a quarter-and-a-bit of the
+		   viewport, header included: on the twentieth house (27 Aug 2026) one
+		   opened task plus three rows pushed the page into a scroll at 1440×900
+		   with the list alone capped. The list scrolls inside what is left. */
+		max-height: min(28vh, 16rem);
 		background: var(--jv-panel);
 		border: 1px solid var(--jv-line-hair);
 		border-radius: var(--jv-radius-md);
 		margin-bottom: var(--jv-space-4);
 		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
+	}
+	header {
+		flex: 0 0 auto;
 	}
 	header {
 		display: flex;
@@ -214,7 +224,8 @@
 		/* Past a few rows the list scrolls inside itself: the dock sits between
 		   the instrument and the exchange, and every row it grew by pushed the
 		   one control on the page (the dock at the bottom) off the screen. */
-		max-height: min(32vh, 18rem);
+		flex: 1 1 auto;
+		min-height: 0;
 		overflow-y: auto;
 	}
 	li {

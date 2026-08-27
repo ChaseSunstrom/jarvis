@@ -42,6 +42,7 @@ turns:
       # up, so "running again" is the truthful answer; the completion that
       # follows is what the notification above asserts on.
       reply_means: >
-        says the work is running again, was picked back up, is finishing, or
-        finished — any of these; it must NOT say the job failed, was
-        interrupted, or that there is no such job
+        says the work is running (on whatever step), running again, was picked
+        back up, is finishing, or finished — any of these; a progress report
+        such as "on step two of five" counts; it must NOT say the job failed,
+        was interrupted, or that there is no such job

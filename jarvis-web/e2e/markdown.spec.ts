@@ -14,7 +14,7 @@ test('a markdown note opens rendered — headings, a list, bold — with raw HTM
 	const read = page.getByTestId('note-read');
 	await expect(read).toBeVisible();
 	await expect(read.locator('h1')).toHaveText('Cheap rate report');
-	await expect(read.locator('h2')).toHaveText('Findings');
+	await expect(read.locator('h2').first()).toHaveText('Findings');
 	await expect(read.locator('li').first()).toHaveText('dishwasher: 2.2 kW');
 	// M113: a table with alignment, a nested list, task items — all three drawn.
 	await expect(read.locator('table th')).toHaveCount(3);
