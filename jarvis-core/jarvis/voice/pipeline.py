@@ -792,6 +792,18 @@ class PipelineRun:
         in `tests/contracts/speaker_verdict.json`; the console, the phone and
         `tests/test_speaker_gate.py` all read it. Never audio, never a vector.
         """
+        # One line in the container log per verdict — who, the score against
+        # the threshold, the reason — because on 27 Aug 2026 the only way to
+        # learn why a memory was filed under the operator was to replay the
+        # rig's voice against the API by hand.
+        _LOGGER.info(
+            "speaker: %s (nearest %s) score %s/%s %s",
+            payload.get("label") or "nobody",
+            payload.get("nearest") or "-",
+            payload.get("score"),
+            payload.get("threshold"),
+            payload.get("reason"),
+        )
         if self.jarvis is None:
             return
         event = {
