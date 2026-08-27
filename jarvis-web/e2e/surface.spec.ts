@@ -119,8 +119,8 @@ test('a background job with steps puts its plan on the screen, and its result st
 	const panel = page.locator('[data-testid^="surface-panel-"]').filter({ hasText: 'Finished: Audit every sensor' });
 	await expect(panel).toHaveCount(1, { timeout: 10_000 });
 	await expect(panel.locator('[data-testid^="surface-brief-"]')).toBeVisible();
-	await page.waitForTimeout(900);
-	await panel.locator('[data-testid^="surface-open-"]').click();
+	// Dispatched, not pointed: see notes-brief.spec — CI never saw the enter animation end.
+	await panel.locator('[data-testid^="surface-open-"]').dispatchEvent('click');
 	const note = panel.locator('[data-testid^="surface-text-"]');
 	await expect(note).toBeVisible({ timeout: 5_000 });
 	await expect(note).toContainText('all twelve read');

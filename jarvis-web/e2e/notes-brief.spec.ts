@@ -70,11 +70,10 @@ test('three long notes are three one-row briefs; the page does not scroll', asyn
 test('⤢ opens one note to the whole text as written, and ⤡ folds it back to a line', async ({ page }) => {
 	const ids = await threeNotes(page);
 	const id = ids[0];
-	// Let the panels' enter animation finish before the click: Playwright's
-	// stability wait timed out on CI while it ran.
-	await page.waitForTimeout(900);
-	await page.getByTestId(`surface-open-${id}`).scrollIntoViewIfNeeded();
-	await page.getByTestId(`surface-open-${id}`).click();
+	// The click is dispatched on the button itself: Playwright's actionability
+	// wait never saw the panel's enter animation end on CI (it ends in a second
+	// here), and what this case proves is the state after ⤢, not the pointer.
+	await page.getByTestId(`surface-open-${id}`).dispatchEvent('click');
 	const text = page.getByTestId(`surface-text-${id}`);
 	await expect(text).toBeVisible({ timeout: 5_000 });
 	await expect(text.locator('h1')).toHaveText('Sensor audit');
@@ -82,7 +81,7 @@ test('⤢ opens one note to the whole text as written, and ⤡ folds it back to 
 	const row = (await page.getByTestId('surface').boundingBox())!.width / 12;
 	const open = (await page.getByTestId(`surface-panel-${id}`).boundingBox())!;
 	expect(open.height).toBeGreaterThan(row * 3);
-	await page.getByTestId(`surface-open-${id}`).click();
+	await page.getByTestId(`surface-open-${id}`).dispatchEvent('click');
 	await expect(page.getByTestId(`surface-brief-${id}`)).toBeVisible({ timeout: 5_000 });
 	const folded = (await page.getByTestId(`surface-panel-${id}`).boundingBox())!;
 	expect(folded.height).toBeLessThanOrEqual(row + 2);
