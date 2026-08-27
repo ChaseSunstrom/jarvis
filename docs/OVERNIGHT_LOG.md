@@ -1056,3 +1056,12 @@ is quiet. Done since:
   outvoting 8 of pitch at 9.35); blocks are equal votes and one block twice over the threshold is a named veto; 68
   speaker tests hold. CI's core leg went red again on 79bb9b4 with no FAILED/ERROR row (3.8 min, a full run); the step
   now annotates pytest's tail; a full 3.12 run of HEAD is queued here.
+- 12:16 UTC — the seventeenth, mid-way: m94 7/7 ("turn off the lights in here" typed from a tablet in the kitchen is the
+  kitchen — typed turns on the socket); m102's review answered from the record ("a run was stopped by you — twice, in
+  fact — and one tool call was cut off") and the judge failed it for naming the second real stop — criterion fixed;
+  m96's scenario passed and its probe stopped a run that had already finished (a fixed second after intent-start) —
+  it stops on the first token now; m42 sent both pages to the summarizer, correctly, so the scenario's second piece is
+  the coder's tests; m100 still the old scoring (M105 is on the tree, not this house). The rig refuses a turn key it
+  does not read (a `reply_means` one level too shallow had loaded silently). CI's core leg: red again with nothing on
+  the check run even with the tail annotation — the job log needs a token (BLOCKERS); the changed files pass under 3.12
+  here (472), the full run is in progress.
