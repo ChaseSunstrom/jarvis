@@ -954,3 +954,55 @@ async def test_the_known_fenced_sources_are_all_wired_up(tmp_path):
         assert expected <= registered, expected - registered
     finally:
         await instance.async_stop()
+
+
+# ---------------------------------------------------------------------------
+# M98: a task definition shipped to the phone
+# ---------------------------------------------------------------------------
+
+TASK_BUNDLE = {
+    "version": 1,
+    "tasks": [
+        {
+            "id": "torch-on-charge",
+            "name": "Torch on charge",
+            "enabled": True,
+            "triggers": [{"type": "power_connected"}],
+            "steps": [{"type": "action", "action": "toggle_torch", "params": {"on": True}}],
+        }
+    ],
+}
+
+
+async def test_a_nested_bundle_reaches_the_phone_intact(jarvis, manager, phone):
+    """The phone's `import_tasks` takes a whole document as one parameter.
+
+    Everything else on the wire is flat strings and numbers, so the cleaning
+    between the tool and the frame was never exercised on a nested object; a
+    version that stringified or truncated (`MAX_TEXT` is 400) would have shipped
+    `"{'version': 1, 'tasks': [{'id': 'tor…"` and the phone would have imported
+    nothing, with the tool reporting success.
+    """
+    link, wire = phone
+    link.actions["import_tasks"] = link.actions["sms_send"].__class__.from_manifest(
+        {
+            "id": "import_tasks",
+            "tier": 3,
+            "description": "Install tasks on this phone",
+            "params": {"bundle": "object", "task": "object"},
+            "capability": "automation",
+            "available": True,
+        }
+    )
+    command, outcome = await answer(
+        manager.run(PHONE, "import_tasks", {"bundle": TASK_BUNDLE}, reason="the user asked"),
+        link,
+        wire,
+        result={"imported": 1, "held_for_consent": 0},
+    )
+    assert command["action"] == "import_tasks"
+    assert command["tier"] == 3
+    assert command["params"]["bundle"] == TASK_BUNDLE, command["params"]
+    assert isinstance(command["params"]["bundle"]["tasks"][0]["steps"][0]["params"]["on"], bool)
+    assert outcome["status"] == "ok"
+    assert outcome["result"]["imported"] == 1

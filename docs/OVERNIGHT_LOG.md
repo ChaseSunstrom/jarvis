@@ -962,3 +962,12 @@ is quiet. Done since:
   config written at startup (`OPENCODE_CONFIG`, a writable HOME on the tmpfs) and `house/<model>` names, and
   it answered "ready" through the gateway from inside the container. BLOCKERS' mirror entry resolved.
   CI on 0e38c70: one Playwright flake on the runner (enrol's four-states `release` before the route was hit).
+- 08:06 — M98 ticked (16/16): PHONE TASKS' way in built as `import_tasks`/`list_tasks` builtin phone actions plus the
+  `phone-tasks` skill; the gate's fake phone was sent `torch-on-plug-in` by the model. Found in the container logs while
+  reading the quiet pass's stack-logs reds: the nightly memory reflection (`reflect_at: "03:30"`) died on its first line
+  at every start — the raw string reached `next_time_of_day` — reported only as "Task exception was never retrieved"
+  at shutdown, so it has never run; parsed once now, two tests. The fifteenth's one voice miss (a refused unlock, no
+  hold for the spoken yes) reworded in the rules and made the first turn's assertion (`decision: hold`); the delegation
+  scenario's routing miss (two research calls for a two-job request) addressed in the tool's and rule 4's wording —
+  both are the next live run's to show. The house's clock says CDT because the operator saved America/Chicago from
+  the console on the 26th (recorded then); not changed.

@@ -267,7 +267,8 @@ class AutomationsActivity : Activity() {
             col.addView(
                 JarvisUi.hint(
                     this,
-                    "Tasks arrive from jarvis-core over the device channel. One containing " +
+                    "Tasks arrive from the house over the device channel — its " +
+                        "import_tasks action, which you confirm on this phone. One containing " +
                         "an action that needs confirming arrives switched off, and this is " +
                         "where you turn it on."
                 )

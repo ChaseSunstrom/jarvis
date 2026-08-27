@@ -151,6 +151,7 @@ possible for a third-party app on modern Android (with the reason).
 | If / else / loops / wait | `tasks/TaskRunner.kt` — if, wait, and a repeat step (by count, or while a condition holds) bounded by `TaskLimits` | mirror (`task_repeat_test.py`, M61) | done |
 | Ask the user mid-task | `tasks/AskJarvis.kt`, `CompanionAskActivity` | unit | done |
 | Policy: tiers, kill switch, audit | `policy/*`, `audit/*` | unit | done |
+| A task the house writes (Tasker's import) | `builtin/TaskActions.kt` — `import_tasks` (tier 3, the consent screen once) hands a bundle to `TaskStore.import`, screened like any document; `list_tasks`; the house's side is the `phone-tasks` skill | unit (`TaskActionsTest`), mirror (`phone_tasks_test.py`), M98 gate's fake phone on the house | done (M98) |
 
 M61's work list — media control and now-playing (the most-asked), screenshot
 and lock screen (accessibility, no new permission), send_intent and

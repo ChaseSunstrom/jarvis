@@ -300,3 +300,27 @@ async def test_the_shipped_skills_are_there_on_a_fresh_install(tmp_path):
     off.data["llm_tools"] = ToolRegistry(off)
     await skills_integration.async_setup(off, {"path": str(root), "bundled": False})
     assert off.data["skills"].skills == {}
+
+
+# --- the skills that ship in config/ -------------------------------------------
+
+
+def test_the_phone_tasks_skill_ships_and_narrows_to_the_device_tools():
+    """M98: the model learns the phone's task format from `config/skills/phone-tasks`.
+
+    The skill is the house's half of `import_tasks`; without it the model has
+    no idea what a trigger or a step is called and would invent a format the
+    phone drops silently. Loaded from the checked-in directory, exactly as a
+    house that copied `config/` would load it.
+    """
+    root = Path(__file__).resolve().parents[1] / "config" / "skills"
+    store = SkillStore(root)
+    assert store.load() >= 1, store.errors
+    skill = store.skills["phone-tasks"]
+    assert "import_tasks" in skill.body and "control_device" in skill.body
+    assert set(skill.allowed_tools) == {"list_my_devices", "control_device"}
+    # Every trigger the phone has is in the body, so a stale skill fails here
+    # rather than in a kitchen: the list is the phone's `TriggerIds`.
+    for trigger in ("power_connected", "time_schedule", "geofence_enter", "notification_posted", "manual"):
+        assert f"`{trigger}`" in skill.body, trigger
+    assert "tier-3" in skill.body and "switched off" in skill.body

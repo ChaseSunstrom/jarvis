@@ -1411,7 +1411,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m97-timers-routines-whats-new.sh`
   - 27 Aug 05:27: the routines and what's-new halves are built (read back, listed, tier 2 by default,
     capability cards, `whats_new`); timers as entities are the remaining half.
-- [ ] **M98 — The phone keeps up** · size M · deps M71, M66, M83 · parallel-ok M97
+- [x] **M98 — The phone keeps up** · size M · deps M71, M66, M83 · parallel-ok M97
   - Scope: from the Android audit — the speaker gate's mode reaches the phone on every socket
     connect and on `jarvis_setting_changed` (today a phone against an enforcing house refuses
     every turn while Settings says the opposite); a held Tier-3 action can be approved on the
@@ -1425,6 +1425,19 @@ web and of Tasker. Local only. Each row here is planned in that document.
     on the consent screen answered over jarvis/approve, a typed field on the voice screen, the tier
     contract's phone variant recorded; PHONE TASKS' way in is the remaining item, and a room for a
     companion device on the console (for M94's area) belongs here too.
+  - 27 Aug 08:06: ticked — gate 16/16 on the rebuilt house. The fifth item: `import_tasks` (tier 3,
+    the consent screen once) and `list_tasks` are builtin phone actions, so a task definition is a
+    plain `device_command` through `control_device`; the store screens it (`TaskStore.import`,
+    `fromServer = true`) and a task with a confirm-tier step arrives switched off. The house's side
+    is the `phone-tasks` skill (the phone's trigger and step vocabularies, an example, the rules).
+    Live: a fake phone registered `import_tasks` over the websocket, "set up a task on my Test
+    phone: whenever it is plugged in, turn its torch on" made the model read the skill and ship
+    `torch-on-plug-in` (trigger `power_connected`, step `toggle_torch`), and the reply reported the
+    install once the phone answered. Kotlin: gradle assembleDebug + testDebugUnitTest green
+    (`TaskActionsTest`, 4); mirrors `phone_tasks_test.py` 16/16, prompt 20/20, tool tiers 4/4;
+    server `test_device_control.py` (+1: a nested bundle reaches the wire intact),
+    `test_skills.py` (+1: the shipped skill loads and narrows to the device tools).
+    Not in this milestone: a console room for a companion device (M94's area) — a follow-up.
 
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
