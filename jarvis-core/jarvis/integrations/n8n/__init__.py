@@ -439,9 +439,14 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     http = httpx.AsyncClient(transport=transport) if transport is not None else httpx.AsyncClient()
     client = N8nClient(cfg, http)
     store.update({"config": cfg, "client": client})
-    if not cfg.configured:
-        _LOGGER.info("n8n: not configured (N8N_URL / N8N_API_KEY empty); the tools answer so")
-    _register_tools(jarvis, client)
+    if cfg.configured:
+        _register_tools(jarvis, client)
+    else:
+        # No tools at all rather than seven that answer "not configured": every
+        # tool in the toolbox is words in every prompt, and on the night of
+        # 26 Aug the house's intent accuracy fell as the toolbox grew. The
+        # status service still says why, and Settings › Tools shows it.
+        _LOGGER.info("n8n: not configured (N8N_URL / N8N_API_KEY empty); no tools registered")
 
     async def status(call: Any) -> dict[str, Any]:
         if not cfg.configured:

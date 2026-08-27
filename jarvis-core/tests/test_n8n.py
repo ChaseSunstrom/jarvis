@@ -161,8 +161,9 @@ async def test_unconfigured_says_so_and_calls_nothing(tmp_path):
     jarvis.data["llm_tools"] = registry
     jarvis.data["n8n"] = {"transport": httpx.MockTransport(fake)}
     assert await n8n_mod.async_setup(jarvis, {"url": "", "api_key": ""})
-    listed = await registry.call("list_workflows", {}, None)
-    assert listed["status"] == "error" and "N8N_URL" in listed["error"]
+    # No tools at all: seven tools that can only say "not configured" are
+    # words in every prompt for nothing, and the toolbox's size costs intent.
+    assert "list_workflows" not in registry.names() and "ask_n8n_assistant" not in registry.names()
     assert fake.requests == []
     status = await jarvis.services.async_call("n8n", "status", {}, blocking=True, return_response=True)
     assert status["status"] == "not_configured"

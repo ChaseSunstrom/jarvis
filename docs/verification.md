@@ -1662,6 +1662,31 @@ tells that answer — every engine unresponsive — from "no results" and asks t
 stack's own SearXNG next, saying which instance answered; the search box's own
 egress is still the operator's to mend.
 
+## Known failures, as of 2026-08-27 (this host)
+
+The full report run on the tenth rebuild, 00:41–01:10 (`docs/LIVE_TEST_REPORT.md`): 52 of 63
+scenarios, 86 of 96 turns, intent 89.6 % (threshold 95), routing 92.3 %, WER 5.45 % over 28
+spoken samples, median round trip 4.17 s (threshold 2), p95 21.4 s. Ten failed turns:
+
+- `house-confirm-by-voice` ×2, `lock-needs-a-human` ×2: the rig's — the confirm scenario left
+  the door unlocked (locking is Tier 3, so its last turn was held) and the lock scenario began
+  from that; both declare `setup: states: {lock.front_door_lock: locked}` now, and the rig sets a
+  lock as a lock (7aa930b). Re-run queued.
+- `house-remove-by-voice` ×2: the rig's — the probe sensor was asserted under the discovery
+  topic's object id; a discovered entity is named after its name (`sensor.probe_sensor`). Fixed
+  the same way. Re-run queued.
+- `settings-by-voice`: the scenario's premise — "demo mode" became a real setting (M80) the same
+  evening, so a held change was the right answer; it asks for "party mode" now.
+- `task-cancel-mid-run`, `research-cancel`: the cancel arrived after a job the faster house had
+  already finished; both cancel at once now, on a longer job.
+- `vision-look-fixture`: no served vision model (BLOCKERS §4) — unchanged.
+- `delegation-across-backends`: the 27B routed to research instead of delegating — the routing
+  variance recorded on 26 Aug.
+
+Intent and the median still miss their thresholds. The thresholds stand; the two rig-side
+classes above are the biggest share of the intent miss (five of the seventy judged turns were
+"no", four of them in this list).
+
 ## Known failures, as of 2026-08-26 (this host)
 
 The full-mode live run at 06:54 (`docs/LIVE_TEST_REPORT.md`): 47 of 53 scenario

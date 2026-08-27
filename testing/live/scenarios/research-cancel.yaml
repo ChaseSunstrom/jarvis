@@ -23,8 +23,11 @@ turns:
       everything you can find — and write it all up.
     expect:
       task: {kind: research, within: 60}
+  # At once: since M75 (fallback first, text-first reads, three at a time) a
+  # quick run finishes inside the five seconds this used to wait, and "it
+  # had already finished" was the right answer to a scenario that failed it.
   - say: "Actually, stop that research — I have changed my mind."
-    wait: 5
+    wait: 0
     expect:
       task: {kind: research, status: cancelled, within: 120}
       reply_means: "confirms it has stopped the research"

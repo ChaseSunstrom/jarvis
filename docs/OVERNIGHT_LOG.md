@@ -776,3 +776,14 @@ is quiet. Done since:
   marking the turn untrusted, the control test_device_control keeps for every integration that
   fences; fixed (e6142bb). Gradle assembled and ran the phone's unit tests on the branch; the
   tenth rebuild is up.
+- 01:12 — the tenth rebuild's full report run (00:41–01:10, `docs/LIVE_TEST_REPORT.md`): 52 of 63
+  scenarios, 86 of 96 turns, intent 89.6 %, routing 92.3 %, WER 5.45 % over 28 spoken samples,
+  median 4.17 s, p95 21.4 s. Ten failed turns, none a new fault of the house: six were the rig's
+  own — the confirm scenario left the front door unlocked for the lock scenario after it (locking
+  is Tier 3 too), and the probe sensor was asserted under the topic's id where the house names an
+  entity after its name — fixed in 7aa930b; one was settings-by-voice asking for "demo mode",
+  which M80 made real the same evening (a held change is now the right answer; it asks for "party
+  mode"); two were cancels arriving after a job the faster house had already finished (both cancel
+  at once now); one is the vision role with no served model (BLOCKERS §4), and one the
+  delegation scenario's known routing variance. Intent and median still miss their thresholds,
+  as recorded since 26 Aug; the miss is the rig's and the model's, and the thresholds stand.

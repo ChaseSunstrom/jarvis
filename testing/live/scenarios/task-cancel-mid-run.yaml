@@ -8,11 +8,16 @@ intent: >
   today this can only be done from the console.
 variants: [voice, text]
 turns:
-  - say: "Look into every sensor in the house and write me a long report about all of them."
+  # A job long enough to be mid-run when the next sentence lands: every
+  # sensor, each with its history and a paragraph of its own. On the rebuilt
+  # house of 27 Aug a report on "all of them" was written in the three seconds
+  # the cancel used to wait, and "it's already finished, Sir" was the right
+  # answer to a scenario that then failed it — so the cancel follows at once.
+  - say: "Look into every sensor in the house, one at a time, and write me a long report with a paragraph about each one and its history over the last day."
     expect:
       task: {kind: background, within: 30}
   - say: "Actually, stop that job."
-    wait: 3
+    wait: 0
     expect:
       task: {kind: background, status: cancelled, within: 60}
       reply_means: "confirms it has stopped the job"
