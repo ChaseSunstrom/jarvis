@@ -318,6 +318,11 @@ async def test_memory_refuses_a_note_and_names_the_right_tool(tmp_path):
     from test_features import setup_memory
 
     assert not set(NOTE_REQUESTS) & set(MEMORY_REQUESTS)
+    # An offered fact asks to be kept; a remark in passing does not (27 Aug 2026).
+    assert "a fact for you" in MEMORY_REQUESTS and "for the record" in MEMORY_REQUESTS
+    assert not any(p in "mira reacts badly to peanuts, the poor thing" for p in MEMORY_REQUESTS)
+    # …and "so you know" is how a secret is mentioned in passing, not a request.
+    assert not any(p in "just so you know while we talk, the safe is 4471" for p in MEMORY_REQUESTS)
     jarvis = await setup_memory(tmp_path)
     context = Context(origin="llm")
     remember_utterance(

@@ -116,6 +116,15 @@ MEMORY_REQUESTS = (
     "remember", "don't forget", "do not forget", "keep in mind", "bear in mind",
     "commit that to memory", "memorise", "memorize",
     "for future reference", "from now on", "always ", "never forget",
+    # A fact OFFERED is a fact asked to be kept: "Mira, the youngest in this
+    # house, reacts badly to peanuts — a fact for you" was refused three
+    # times as unasked on the eighteenth house (27 Aug 2026), and the model
+    # apologised that the store "insists I was never asked". Said in passing
+    # with none of these is still refused — that is the leak the refusal
+    # exists for, and "just so you know, the safe is 4471" is that leak:
+    # "so you know" and "you should know" are how a secret is mentioned, not
+    # how a fact is handed over, so they are not here.
+    "a fact for you", "for the record", "for your records",
 )
 
 #: Phrases that ask for a NOTE — a document to find again — and not a memory.

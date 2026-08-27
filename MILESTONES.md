@@ -1592,7 +1592,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     files / 244, vitest 43 / 710). Found on the way: `Store.save` shared one temp file across writers, and a
     task cancelled mid-write (a timer snoozed as it finished) broke the next save — the CI red on 6c816c8;
     a temp file per write now (8b53d39). Gate: the live half runs after the rebuild.
-- [ ] **M102 — Jarvis learns from its own mistakes** · size M · deps M87, M95, M96 · parallel-ok M100
+- [x] **M102 — Jarvis learns from its own mistakes** · size M · deps M87, M95, M96 · parallel-ok M100
   - Scope: the nightly reflection learns facts about the person; nothing learns from the day's FAILURES.
     A review, once a night beside the reflection and on demand (`review.run`, `review: true` in the rig),
     reads the day's record — traces whose tools errored, turns the claimed-action guard caught, runs that
@@ -1603,6 +1603,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     Settings row for the hour; off by leaving it unset. Scenario `self-review`: a request the house
     cannot fulfil, a review, and the answer names it.
   - Verify: `bash scripts/verify/m102-learns-from-mistakes.sh`
+  - 27 Aug 13:30: ticked — gate 6/6 on the eighteenth's house (the 13:17 image): a run stopped mid-answer is on the trace as a
+    stop, the review reads the day and leaves its note and card, and "what did you get wrong today?" is answered from the
+    record — the stop, and the record's other real entries, named.
   - 27 Aug 09:53: planned.
   - 27 Aug 09:57: built, not ticked — `integrations/review`: the day log (guard catches and stopped runs
     as bus events, persisted), the traces' errored spans (a model server that could not be reached counted
