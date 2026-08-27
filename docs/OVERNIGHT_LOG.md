@@ -1080,3 +1080,13 @@ is quiet. Done since:
   the summary", cover.set_cover_position for "close", two house commands routed to a task, a stalled run (240 s), the
   engine pick-up and M105 (on the tree, not this house), M56, and piper's "Task exception was never retrieved" after a
   stopped run. The eighteenth started 13:17.
+- 13:31 UTC — the eighteenth (13:17 house), first gates: m102 6/6 → M102 ticked; m96 5/5 (the stop over the socket, the
+  scenario included); m86 7/8 — the garage offer itself works now (notice + held question) and the yes met a leftover lock
+  offer from an earlier scenario ("which one?") — the rig declines every leftover at a scenario's end, the agent no longer
+  nags other conversations with a house question; m85 4/5 — the pick-up WORKS ("just picked back up after a restart") and
+  the completion outran five minutes under load (eight now); m87 5/6 — the store refused an offered fact three times as
+  unasked ("a fact for you" is a request now; "so you know" still is not — the red-team's safe); m100 10/11 — the rig's
+  synthetic voice still accepted as the operator under M105's scoring on the scenario's utterance (the nineteenth's M105
+  probe prints the blocks). The M105 gate died on its verify_begin call (fixed). CI's core leg on 4404966: a question
+  opener now means a report, whatever verbs it holds (a test my selection had never run); the Android job: a mirror
+  count in the register.
