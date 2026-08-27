@@ -826,7 +826,9 @@ def _register_tools(jarvis: "Jarvis", manager: ScheduleManager) -> None:
         description=(
             "Put something off until later: a reminder to say, or a research "
             "run to start. Give `at` an ISO timestamp for a one-off ('remind me "
-            "at seven'), or `daily_at`/`days` for a repeat. Every firing shows "
+            "at seven'; 'remind me in five minutes that the audit ran' is `at` "
+            "five minutes from now with the words as the message), or "
+            "`daily_at`/`days` for a repeat. Every firing shows "
             "up on the Tasks page. This cannot schedule actions on the house — "
             "those are set up in the console."
         ),

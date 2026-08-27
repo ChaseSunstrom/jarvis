@@ -27,7 +27,10 @@ setup:
 turns:
   - say: "What's the temperature in the garage?"
     expect:
-      capability: sensors
+      # No `capability:` here: the reading is in the house summary the model
+      # is given, and answering from it — no tool — is right (the sixteenth
+      # house, 27 Aug 2026: "The garage is sitting at 12.5 °C, Sir"). The
+      # second turn is the point: what it looked at, from the record.
       reply_means: "gives the garage temperature as a number"
   - say: "Why did you say that? What did you look at to answer?"
     expect:

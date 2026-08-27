@@ -2113,7 +2113,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M90 — The claims register, re-measured | **Automated** (6/6, ticked) | `m90-claims-register.sh` reruns every count and fails on drift |
 | M91 — A gate cannot pass on a skip | **Ticked** (3/3; 76 gates read the pytest summary, a skip fails unless allowed by count, `results-<gate>.json` per gate) | `m91-no-pass-on-a-skip.sh` |
 | M92 — The house by voice, beyond lights | **Built** (3/4) | `m92-the-house-by-voice.sh`; ten scenarios; rig tests 49 |
-| M93 — Pick up where you left off | **Built** (5/6) | `m93-pick-up-where-you-left-off.sh`; `conversation-link.spec.ts` 2/2; `interactions-thread-continuity` gains `text-ui` |
+| M93 — Pick up where you left off | Automated + Containerised (7/7 on 27 Aug 2026, the 10:21 house) | `m93-pick-up-where-you-left-off.sh`; `conversation-link.spec.ts` 2/2; `interactions-thread-continuity` gains `text-ui` |
 | M94 — In here | **Ticked** (6/6 on the house: a registered device is told its own name; the device line and `device_of`) | `m94-in-here.sh`; `test_llm.py`, `test_voice.py`; scenario `in-here-by-voice` (the sixteenth) |
 | M95 — Jarvis reads its own record | **Built** (4/5) | `m95-reads-its-own-record.sh`; `test_notifications.py` (+3), `test_llm.py` (+2); scenarios `explain-yourself`, `what-did-you-tell-me` |
 | M96 — Stop means stop | **Ticked** (4/4 on the house: a run stopped one second in ends interrupted) | `m96-stop-means-stop.sh`; `test_api.py` (+1); scenario `stop-means-stop` (the sixteenth) |

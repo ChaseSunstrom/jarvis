@@ -1389,13 +1389,14 @@ web and of Tasker. Local only. Each row here is planned in that document.
     voice — each with a demo-house entity to act on and a state assertion, and the routing
     table extended to match.
   - Verify: `bash scripts/verify/m92-the-house-by-voice.sh`
-- [ ] **M93 — Pick up where you left off** · size M · deps M17, M25 · parallel-ok M92
+- [x] **M93 — Pick up where you left off** · size M · deps M17, M25 · parallel-ok M92
   - Scope: FUTURE #1 and #4 — a `?conversation=<id>` deep link on the voice screen and the id
     exposed on the page, so the rig's browser transport can hold a thread across turns and a
     person can reopen one from the history sidebar or the phone; `voice-ui`/`text-ui` variants
     become part of `--full` for every scenario that has a console counterpart; the thread
     survives a core restart (ISSUES).
   - Verify: `bash scripts/verify/m93-pick-up-where-you-left-off.sh`
+  - 27 Aug 10:56: ticked — gate 7/7 on the sixteenth's house (the 10:21 image), the live slice included.
 - [x] **M94 — In here** · size S · deps M71, M83 · parallel-ok M93, M95
   - Scope: the device and area a request came from reach the model (`converse` takes them; one
     line after the speaker line), so "turn off the lights in here", "show the camera on this

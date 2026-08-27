@@ -1937,12 +1937,22 @@ def register_builtin_tools(
                     "description": "Target temperature for a thermostat, or kelvin for a light.",
                 },
             }
+        # The flip is said as the flip it is. "Close the living room window"
+        # reached cover.toggle on the live house (27 Aug 2026) — right once and
+        # wrong the next time — so the toggle names what it is for and what it
+        # is not, and covers are not on its list at all.
+        description = (
+            "Flip lights, switches or fans to their other state — only when the "
+            "user says toggle or flip. 'Turn on' and 'turn off' are turn_on and "
+            "turn_off; a cover, blind or garage door is opened or closed, never "
+            "flipped. Give a name, an area, or both."
+            if action == "toggle"
+            else f"Turn {verb} lights, switches, fans, covers, media players or scenes. "
+            "Give a name, an area, or both."
+        )
         registry.register(
             name=action,
-            description=(
-                f"Turn {verb} lights, switches, fans, covers, media players or scenes. "
-                "Give a name, an area, or both."
-            ),
+            description=description,
             parameters=schema_object(properties),
             handler=lambda args, ctx, _a=action: _switch(args, ctx, _a),
             tier=TIER_DIRECT,

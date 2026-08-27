@@ -560,7 +560,9 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
             "and a label; the timer becomes an entity timer.<label>, counts down on the house's "
             "clock, and chimes where it was asked for when it finishes. `status` reads the time "
             "left — say `remaining_spoken` back rather than working it out. Not for 'at seven' "
-            "or 'tomorrow': that is schedule_task."
+            "or 'tomorrow', and not for a reminder that carries a message ('remind me in five "
+            "minutes that the oven is on'): those are schedule_task, which says the words back; "
+            "a timer only chimes."
         ),
         parameters=schema_object(
             {

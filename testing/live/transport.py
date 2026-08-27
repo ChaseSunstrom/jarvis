@@ -158,6 +158,7 @@ class ApiVoice:
         conversation_id: str | None = None,
         timeout: float = TURN_TIMEOUT,
         wake_phrase: str = "",
+        stop_after: float | None = None,
         **_ignored: Any,
     ) -> Turn:
         utterance: Utterance | None = None
@@ -187,28 +188,9 @@ class ApiVoice:
             timeout=timeout,
             run_timeout=timeout,
             keep_streaming=wake_audio is not None,
+            stop_after=stop_after,
         )
-        # `at` comes off the client, which stamps each frame as it ARRIVES.
-        # Stamping here instead gave every stage the same number, because this
-        # code runs once, after the whole run is over.
-        events = [
-            {"type": event.get("type"), "data": event.get("data"),
-             "at": float(event.get("at") or time.monotonic())}
-            for event in run.events
-        ]
-        turn = Turn(
-            said=text,
-            transcript=run.transcript,
-            reply_text=run.response_text,
-            tts_url=run.tts_url,
-            wake_word=run.wake_word,
-            conversation_id=run.conversation_id,
-            error=run.error,
-            events=events,
-            latency=_stage_latencies(events, started),
-            transport=self.name,
-        )
-        turn.latency.setdefault("total", time.monotonic() - started)
+        turn = _turn_from_run(run, text, started, self.name)
         if turn.tts_url:
             turn.reply_heard = await self._hear_reply(turn.tts_url)
         return turn
@@ -219,6 +201,32 @@ class ApiVoice:
         if not data:
             return ""
         return await self.ears.hear_wav(data)
+
+
+def _turn_from_run(run: Any, said: str, started: float, transport: str) -> Turn:
+    """One pipeline run as a Turn: its events, timings and what it answered."""
+    # `at` comes off the client, which stamps each frame as it ARRIVES.
+    # Stamping here instead gave every stage the same number, because this
+    # code runs once, after the whole run is over.
+    events = [
+        {"type": event.get("type"), "data": event.get("data"),
+         "at": float(event.get("at") or time.monotonic())}
+        for event in run.events
+    ]
+    turn = Turn(
+        said=said,
+        transcript=run.transcript or said,
+        reply_text=run.response_text,
+        tts_url=run.tts_url,
+        wake_word=run.wake_word,
+        conversation_id=run.conversation_id,
+        error=run.error,
+        events=events,
+        latency=_stage_latencies(events, started),
+        transport=transport,
+    )
+    turn.latency.setdefault("total", time.monotonic() - started)
+    return turn
 
 
 class Text:
@@ -244,11 +252,29 @@ class Text:
                          re.IGNORECASE | re.DOTALL)
 
     async def say(self, text: str, *, conversation_id: str | None = None,
-                  timeout: float = TURN_TIMEOUT, **_ignored: Any) -> Turn:
+                  timeout: float = TURN_TIMEOUT, stop_after: float | None = None,
+                  **_ignored: Any) -> Turn:
         started = time.monotonic()
         channelled = self.CHANNEL.match(text.strip())
         if channelled is not None:
             return await self._as_channel_message(channelled, started)
+        if stop_after is not None:
+            # A typed turn that is to be STOPPED runs the way the console's
+            # typed turns run — `assist_pipeline/run` from the intent stage —
+            # because that is the only path with a run to stop and a run-end
+            # to say `interrupted`. The REST call has neither: on 27 Aug 2026
+            # `stop-means-stop (text)` sent its stop into the void and read
+            # `interrupted=False` off a run that had never existed.
+            run = await self.client.run_pipeline(
+                text=text,
+                start_stage="intent",
+                end_stage="intent",
+                conversation_id=conversation_id,
+                timeout=timeout,
+                run_timeout=timeout,
+                stop_after=stop_after,
+            )
+            return _turn_from_run(run, text, started, self.name)
         answer = await self.client.conversation(text, conversation_id=conversation_id)
         response = (answer or {}).get("response") or {}
         speech = ((response.get("speech") or {}).get("plain") or {}).get("speech") or ""
