@@ -27,6 +27,7 @@ turns:
       reply_means: >
         names, from its record, that a run was stopped before it finished (the
         one the user cut off); it may name other things the record holds — more
-        stops, a tool call cut off, a reply its own claim guard recorded as
-        "said done when no tool ran" (those ARE the record's) — and must not
-        invent a failure the record does not hold
+        stops, a tool call cut off or failed, a reply its own claim guard
+        recorded as "said done when no tool ran" (those ARE the record's, in
+        whatever words the reply uses for them) — and must not invent a
+        failure the record does not hold
