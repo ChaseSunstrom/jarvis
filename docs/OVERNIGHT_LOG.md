@@ -1090,3 +1090,8 @@ is quiet. Done since:
   probe prints the blocks). The M105 gate died on its verify_begin call (fixed). CI's core leg on 4404966: a question
   opener now means a report, whatever verbs it holds (a test my selection had never run); the Android job: a mirror
   count in the register.
+- 13:51 UTC — the eighteenth's gates done (13:48): green m96 m102 m95 m97 m59 m82; red m105 (its own first line — fixed),
+  m86 7/8, m85 4/5, m87 5/6, m100 10/11, m42 11/13 (with two shapes of work the model fetched the page itself and started
+  the coding job directly — rule 4 now says a lead, never the pieces by hand), m92 18/20 (set_cover_position for "close" —
+  its wording is on the tree; "play something" answered "what should I play?" — media_control says play). Its report is
+  running alone on the box; the nineteenth (M105's gate first) follows.
