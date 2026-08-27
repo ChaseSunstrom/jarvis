@@ -1836,6 +1836,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     (`.env.example` copied into the image), and `test_packaging` pins that every `NAME=` line there is in it.
   - Verify: `bash scripts/verify/m114-env-from-the-console.sh`
   - 27 Aug 16:12: planned, from the report.
+  - 27 Aug 16:32: built. Server: `jarvis/environment.py` (the catalogue from `.env.example`, shipped in the image;
+    overrides in `.storage/environment.json`, applied first thing in the entrypoint), four ws commands and
+    `jarvis/system/restart`; console: SETTINGS › SYSTEM (`SettingsSystem.svelte`, the strip is six sections now);
+    the mock reads the repository's `.env.example`; `e2e/environment.spec.ts` (4) and the live probe. Gate runs on
+    the twenty-first.
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,

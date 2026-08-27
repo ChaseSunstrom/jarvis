@@ -229,6 +229,14 @@ export const SCREENS: Screen[] = [
 		chord: 'g e'
 	},
 	{
+		path: '/settings/system',
+		name: 'System',
+		purpose: 'Every .env variable, set from here and kept; and a restart to apply them.',
+		nav: false,
+		within: '/settings',
+		probe: 'settings-system-lede'
+	},
+	{
 		path: '/settings/tools',
 		name: 'Tools',
 		purpose: 'What Jarvis can call, what it is allowed to call, and what is installed.',

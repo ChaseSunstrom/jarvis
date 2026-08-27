@@ -546,6 +546,14 @@ async def test_climate_cover_and_media_tools(tmp_path):
     blind = await registry.call("set_cover_position", {"name": "blind", "position": 40})
     assert blind["status"] == "ok"
     assert objects["cover.living_room_blind"].calls[-1] == ("position", {"position": 40})
+    # The ends of the range are close_cover and open_cover (the twentieth house,
+    # 27 Aug 2026: "Close the living room window" came through as position 0).
+    shut = await registry.call("set_cover_position", {"name": "blind", "position": 0})
+    assert shut.get("status") != "error", shut
+    assert objects["cover.living_room_blind"].calls[-1] == ("close", {}), objects["cover.living_room_blind"].calls[-3:]
+    wide = await registry.call("set_cover_position", {"name": "blind", "position": 100})
+    assert wide.get("status") != "error", wide
+    assert objects["cover.living_room_blind"].calls[-1] == ("open", {}), objects["cover.living_room_blind"].calls[-3:]
 
     play = await registry.call("media_control", {"name": "kitchen speaker", "action": "play"})
     assert play["status"] == "ok"

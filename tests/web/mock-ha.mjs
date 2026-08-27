@@ -28,6 +28,7 @@
 //
 // Usage:  node mock-ha.mjs [port]         (standalone)
 //         import { startMockHA } from './mock-ha.mjs'
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 
@@ -1630,6 +1631,58 @@ index 1234567..89abcde 100644
 	 *
 	 * @type {Map<string, any>}
 	 */
+	// The environment (M114): the catalogue is the repository's own .env.example,
+	// read the way jarvis-core reads it; overrides live in a map, and a "restart"
+	// makes them the booted set. Secrets are masked in every listing.
+	const envCatalog = (() => {
+		try {
+			const text = readFileSync(new URL('../../jarvis-core/.env.example', import.meta.url), 'utf8');
+			const out = [];
+			const seen = new Set();
+			let comment = [];
+			const isSecret = (name) => /(TOKEN|SECRET|KEY|PASSWORD|PASSWD|PASS)(_|$)/.test(name);
+			for (const raw of text.split('\n')) {
+				const line = raw.trim();
+				if (!line) { comment = []; continue; }
+				if (line.startsWith('#')) {
+					const body = line.replace(/^#+\s?/, '');
+					const hidden = /^(?:export\s+)?([A-Z][A-Z0-9_]*)=(.*)$/.exec(body);
+					if (hidden && !seen.has(hidden[1])) { out.push({ name: hidden[1], why: comment.join(' ').trim(), default: hidden[2].trim().replace(/^"|"$/g, ''), secret: isSecret(hidden[1]), section: '' }); seen.add(hidden[1]); comment = []; continue; }
+					if (!/^-{3,}$|^={3,}$/.test(body)) comment.push(body);
+					continue;
+				}
+				const m = /^(?:export\s+)?([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+				if (m && !seen.has(m[1])) { out.push({ name: m[1], why: comment.join(' ').trim(), default: m[2].trim().replace(/^"|"$/g, ''), secret: isSecret(m[1]), section: '' }); seen.add(m[1]); }
+				comment = [];
+			}
+			return out;
+		} catch {
+			return [{ name: 'TZ', why: 'The house clock.', default: 'Europe/London', secret: false, section: '' }, { name: 'JARVIS_TOKEN', why: 'The token.', default: '', secret: true, section: '' }];
+		}
+	})();
+	const envOverrides = new Map();
+	const envBooted = new Map();
+	const envLive = new Map([['TZ', 'America/Chicago'], ['JARVIS_TOKEN', 'live-token-value'], ['PIPER_VOICE', 'en_GB-alan-medium']]);
+	const ENV_MASK = '••••••••';
+	function envPending(name) {
+		return (envOverrides.get(name) ?? '') !== (envBooted.get(name) ?? '');
+	}
+	function envRow(v) {
+		const override = envOverrides.get(v.name);
+		const booted = envBooted.has(v.name);
+		const live = booted ? envBooted.get(v.name) : envLive.get(v.name);
+		const source = booted ? 'override' : envLive.has(v.name) ? 'environment' : 'unset';
+		return {
+			...v,
+			set: override !== undefined,
+			source,
+			is_set_in_environment: envLive.has(v.name),
+			pending: envPending(v.name),
+			value: override === undefined ? null : v.secret ? ENV_MASK : override,
+			live: live === undefined ? null : v.secret ? ENV_MASK : live
+		};
+	}
+
 	const mcpServers = new Map([
 		[
 			"house",
@@ -4195,6 +4248,44 @@ index 1234567..89abcde 100644
 				}
 				// Test hook: what the model's `show` does, so a spec can put a
 				// thing up the way a spoken "show me the front door" would.
+				// --- the environment (M114): every .env variable, set from the console, kept ---
+				case 'jarvis/environment/list': {
+					ok(msg.id, {
+						variables: envCatalog.map((v) => envRow(v)),
+						count: envCatalog.length,
+						pending: envCatalog.filter((v) => envPending(v.name)).length,
+						store: '/config/.storage/environment.json',
+						note: 'What is set here is kept and applied at the next restart; the file on the host is never written.'
+					});
+					break;
+				}
+				case 'jarvis/environment/set': {
+					const name = String(msg.name || '');
+					if (!envCatalog.some((v) => v.name === name)) { ok(msg.id, { status: 'error', error: `'${name}' is not a variable .env.example names` }); break; }
+					if (/[\r\n]/.test(String(msg.value ?? ''))) { ok(msg.id, { status: 'error', error: `${name}: one line, please` }); break; }
+					envOverrides.set(name, String(msg.value ?? ''));
+					ok(msg.id, { status: 'ok', name, pending: true });
+					break;
+				}
+				case 'jarvis/environment/clear': {
+					const name = String(msg.name || '');
+					if (!envOverrides.has(name)) { ok(msg.id, { status: 'error', error: `${name} is not set from the console` }); break; }
+					envOverrides.delete(name);
+					ok(msg.id, { status: 'ok', name, pending: true });
+					break;
+				}
+				case 'jarvis/environment/reveal': {
+					const name = String(msg.name || '');
+					ok(msg.id, { status: 'ok', name, value: envOverrides.get(name) ?? envLive.get(name) ?? null });
+					break;
+				}
+				case 'jarvis/system/restart': {
+					// The house stops after the reply; here the "boot" applies the overrides at once.
+					for (const [name, value] of envOverrides) envBooted.set(name, value);
+					for (const name of [...envBooted.keys()]) if (!envOverrides.has(name)) envBooted.delete(name);
+					ok(msg.id, { status: 'ok', restarting_in: 0.5 });
+					break;
+				}
 				case 'jarvis/test/surface_show': {
 					const panel = {
 						id: `panel-${world.surface.length + 1}`, kind: msg.kind || 'entity', title: msg.title || '',

@@ -27,13 +27,13 @@ const boot = async (page: Page) => {
 
 const SETTINGS_SECTIONS = sectionsOf('/settings');
 
-test('SETTINGS has five sections, in order, each a real page', async ({ page }) => {
+test('SETTINGS has six sections, in order, each a real page', async ({ page }) => {
 	await boot(page);
 	await page.goto('/settings');
 	await expect(page).toHaveURL(/\/settings\/assistant$/);
 
 	const strip = page.locator('nav[aria-label="Sections"] a');
-	await expect(strip).toHaveText(['ASSISTANT', 'VOICE', 'HOUSE', 'CONSOLE', 'TOOLS'], { ignoreCase: true });
+	await expect(strip).toHaveText(['ASSISTANT', 'VOICE', 'HOUSE', 'CONSOLE', 'SYSTEM', 'TOOLS'], { ignoreCase: true });
 	expect(SETTINGS_SECTIONS.map((s) => s.path)).toEqual([
 		'/settings/assistant',
 		'/settings/voice',

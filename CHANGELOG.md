@@ -7,6 +7,8 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+- Every .env variable, set from the console, kept (M114): SETTINGS › SYSTEM lists what `.env.example` documents, with its why; a value set there is kept in the house's store and applied at the next restart before configuration is read; secrets masked until REVEAL; a RESTART JARVIS control beside it.
+
 - Markdown renders completely (M113): tables, nested and task lists, code with its language, nested quotes, setext headings, hard breaks, strikethrough and autolinks — escaped first, links http(s) only, images as links.
 
 - Notes on the voice screen are a brief (M112): a note or a page is one row at a side — its title and first line — opened to the whole note with ⤢ and folded with ⤡; the house sizes and stacks them that way.

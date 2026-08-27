@@ -79,6 +79,7 @@ const PAGE_KEYWORDS: Readonly<Record<string, string>> = {
 	'/settings/voice': 'wake word tts voice speaker enrol enrolment whose voice language',
 	'/settings/house': 'time zone timezone units metric imperial areas rooms location',
 	'/settings/console': 'text size backend pairing password pair phone desktop shell machines agent computer events log',
+	'/settings/system': 'environment env variables .env restart token secret tz timezone',
 	'/settings/tools': 'llm catalogue exposure mcp skills plugins extensions catalog install'
 };
 
