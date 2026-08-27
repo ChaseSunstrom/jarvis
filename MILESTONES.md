@@ -1757,6 +1757,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     prompt line is for. Anything the table finds ungated is fixed in the registry, never in a prompt.
   - Verify: `bash scripts/verify/m109-injection-is-a-gate.sh`
   - 27 Aug 14:24: planned, from the report.
+  - 27 Aug 14:34: built, not ticked — `OUTBOUND_READERS` (the six web readers) are HELD on a tainted turn in
+    `requires_approval`, beside the actions; `test_taint_table.py` walks every built-in tool and holds it to the table,
+    and pins that no words un-taint a turn; `docs/injection.md` says what is enforced where and what a prompt line is
+    for. The gate's live half (the four red-team scenarios) waits for a rebuilt house and a quiet rig.
 ## Final
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
