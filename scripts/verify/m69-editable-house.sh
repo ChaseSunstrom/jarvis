@@ -61,7 +61,7 @@ check "the tool, the websocket command and the REST twin all run Jarvis.async_re
 check "a device removal takes its entities first, then the record" grep -q "for entity_id in entity_ids:" jarvis-core/jarvis/core.py
 check "the entity knows its platform, so a removal stops the poll loop writing the state back" bash -c 'grep -q "entity.platform = self" jarvis-core/jarvis/entity.py && grep -q "getattr(getattr(entity, \"platform\", None), \"async_remove_entity\", None)" jarvis-core/jarvis/core.py'
 check_sh "clients.md documents the two commands, and the documented set equals the handled set" 'grep -q "\`/remove\`" jarvis-core/docs/clients.md && cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 --timeout-method=signal -k "websocket_command_is_documented" 2>&1 | tail -1'
-check_sh "the core suite: removal at the core, the API and the tools; the tier table; the websocket command" 'cd jarvis-core && python3 -m pytest tests/test_entity_remove.py tests/test_gated_services.py tests/test_api.py -q --timeout=120 --timeout-method=signal -k "not test_ws_conversation" 2>&1 | tail -1'
+check_pytest "the core suite: removal at the core, the API and the tools; the tier table; the websocket command" 'cd jarvis-core && python3 -m pytest tests/test_entity_remove.py tests/test_gated_services.py tests/test_api.py -q --timeout=120 --timeout-method=signal -k "not test_ws_conversation"'
 check_sh "end to end through the real server: a removal confirmed by the next turn, and \"all of the elements\" refused" 'python3 -m pytest testing/e2e/test_ask_and_answer.py -q --timeout=300 --timeout-method=signal -k "removal or elements" 2>&1 | tail -1'
 
 # --- the console -----------------------------------------------------------

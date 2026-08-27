@@ -44,8 +44,7 @@ for need in ("/model/info", "/running", "status", "in_use_for", "loaded", "as na
     assert need in src, f"catalogue.py never mentions {need!r}"
 print("gateway, llama-swap and TEI shapes all handled")
 '
-check_sh "core: the catalogue, the settings and the packaging pins" \
-    'cd jarvis-core && python3 -m pytest tests/test_llm_catalogue.py tests/test_settings.py tests/test_settings_api.py tests/test_packaging.py tests/test_api.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -3'
+check_pytest "core: the catalogue, the settings and the packaging pins" 'cd jarvis-core && python3 -m pytest tests/test_llm_catalogue.py tests/test_settings.py tests/test_settings_api.py tests/test_packaging.py tests/test_api.py -q --timeout=120 --timeout-method=signal'
 check_not "no network in the catalogue tests" grep -nE "127\.0\.0\.1:(4000|8080|7997|7998)|tail05d9af" jarvis-core/tests/test_llm_catalogue.py
 
 # --- the mock backend serves the same shape --------------------------------

@@ -15,8 +15,7 @@ require_file jarvis-web/src/lib/components/Extensions.svelte
 require_file jarvis-web/e2e/extensions.spec.ts
 
 # --- the enforcement, against a real registry -------------------------------
-check_sh "turning a plugin off takes its tools off the MODEL, not off a list" \
-    'cd jarvis-core && python3 -m pytest tests/test_extensions.py -q --timeout=120 -k "disabling or revoking or survives or back_on or resurrect" 2>&1 | tail -2'
+check_pytest "turning a plugin off takes its tools off the MODEL, not off a list" 'cd jarvis-core && python3 -m pytest tests/test_extensions.py -q --timeout=120 -k "disabling or revoking or survives or back_on or resurrect"'
 
 check "an edited permission scope withdraws exactly the tools that needed it" python3 -c '
 import asyncio, sys, tempfile

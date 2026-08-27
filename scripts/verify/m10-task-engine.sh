@@ -28,6 +28,5 @@ require_file jarvis-core/tests/test_taskengine.py
 for t in queue retry backoff restart cancel; do
     check "test_taskengine.py covers: $t" grep -qE "def test_[a-z_]*$t" jarvis-core/tests/test_taskengine.py
 done
-check_sh "task engine + schedule + tasks tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_taskengine.py tests/test_tasks.py tests/test_schedule.py tests/test_schedule_plan.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "task engine + schedule + tasks tests" 'cd jarvis-core && python3 -m pytest tests/test_taskengine.py tests/test_tasks.py tests/test_schedule.py tests/test_schedule_plan.py -q --timeout=120 --timeout-method=signal'
 verify_end

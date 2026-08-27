@@ -75,7 +75,7 @@ check "the skill mandates the four states" grep -qiE 'loading.*empty.*error.*off
 ensure_web_deps
 check_sh "web token parity + contrast (vitest tokens.test.ts, motion.test.ts, icons.test.ts)" \
     'cd jarvis-web && npx vitest run src/lib/tokens.test.ts src/lib/motion.test.ts src/lib/icons.test.ts 2>&1 | tail -4'
-check_sh "desktop theme tests" 'cd jarvis-desktop && python3 -m pytest tests/test_theme.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "desktop theme tests" 'cd jarvis-desktop && python3 -m pytest tests/test_theme.py -q --timeout=120 --timeout-method=signal'
 check "android design_token mirror" python3 android-app/tools/design_token_test.py
 check "android type_scale mirror" python3 android-app/tools/type_scale_test.py
 check "android gradle-script spec" python3 android-app/tools/gradle_script_test.py

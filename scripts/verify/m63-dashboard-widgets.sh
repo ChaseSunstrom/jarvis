@@ -127,8 +127,7 @@ grep -q "### The dashboard shows the house (M63)" docs/verification.md &&
 grep -q "### M63 — the dashboard shows the house" docs/UI_MIGRATION.md && echo "all five"'
 
 use_venv
-check_sh "jarvis-core: the layout, the kinds, layouts saved before kinds, the three commands, the refused still" \
-    'cd jarvis-core && python3 -m pytest tests/test_dashboards.py tests/test_dashboard_widgets.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "jarvis-core: the layout, the kinds, layouts saved before kinds, the three commands, the refused still" 'cd jarvis-core && python3 -m pytest tests/test_dashboards.py tests/test_dashboard_widgets.py -q --timeout=120 --timeout-method=signal'
 check "token lint: the console is clean" python3 scripts/verify/token_lint.py --require-clean jarvis-web/src
 check "every screen is declared and uses ScreenState" python3 scripts/verify/web_states_check.py
 check "no dead controls" node scripts/verify/web_dead_controls.mjs

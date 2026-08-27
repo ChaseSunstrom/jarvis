@@ -21,8 +21,7 @@ check_not "research no longer says 'nothing was found' for a search that could n
 check_not "no cloud search engine anywhere in the integration (M18's rule, kept)" grep -rniE 'duckduckgo\.com|bing\.com|google\.com/search|serpapi|brave\.com/api' jarvis-core/jarvis/integrations/web
 check "the config documents the knob" grep -q 'searxng_fallback_url' jarvis-core/config/configuration.yaml
 check "the docs say what the one fallback is" grep -q 'The one fallback there is' jarvis-core/docs/search.md
-check_sh "the web suite, with the eight second-instance tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_web_integration.py -q --timeout=120 2>&1 | tail -1'
+check_pytest "the web suite, with the eight second-instance tests" 'cd jarvis-core && python3 -m pytest tests/test_web_integration.py -q --timeout=120'
 
 # Live: the branch's client against the house's real instances — the one in
 # jarvis-core/.env (read, never written) and the stack's own. The house is the

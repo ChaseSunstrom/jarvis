@@ -32,8 +32,7 @@ cfg = Path("jarvis-core/config/configuration.yaml").read_text()
 assert re.search(r"^llm:", cfg, re.M), "no llm: block"
 print("depends on llm (configured) and companion (loaded by the platform)")
 '
-check_sh "the briefing suite: sections, the empty case, delivery by presence, the length cap" \
-    'cd jarvis-core && python3 -m pytest tests/test_features.py -q --timeout=120 --timeout-method=signal -k briefing 2>&1 | tail -1'
+check_pytest "the briefing suite: sections, the empty case, delivery by presence, the length cap" 'cd jarvis-core && python3 -m pytest tests/test_features.py -q --timeout=120 --timeout-method=signal -k briefing'
 check "the rig routes get_briefing to its own capability" python3 -c '
 import sys; sys.path.insert(0, ".")
 from testing.live.capability import TOOL_CAPABILITY, capability_of

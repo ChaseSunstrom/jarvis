@@ -18,9 +18,7 @@ from jarvis.api.devices import RECENT_LISTENER_WINDOW
 assert 2.0 <= RECENT_LISTENER_WINDOW <= 8.0; print(f"{RECENT_LISTENER_WINDOW:g}s")
 '
 check "schedule refuses an identical job made a moment ago" grep -q "already scheduled" jarvis-core/jarvis/integrations/schedule/__init__.py
-check_sh "the voice suite: the second listener yields, the same device may repeat itself" \
-    'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal -k "listener" 2>&1 | tail -1'
-check_sh "the schedule suite: the duplicate is refused and named" \
-    'cd jarvis-core && python3 -m pytest tests/test_schedule.py -q --timeout=120 -k "duplicate or twice" 2>&1 | tail -1'
+check_pytest "the voice suite: the second listener yields, the same device may repeat itself" 'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal -k "listener"'
+check_pytest "the schedule suite: the duplicate is refused and named" 'cd jarvis-core && python3 -m pytest tests/test_schedule.py -q --timeout=120 -k "duplicate or twice"'
 
 verify_end

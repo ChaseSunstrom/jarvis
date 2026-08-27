@@ -117,12 +117,10 @@ assert "AsyncClient" in text and "monkeypatch" in text, "the tests do not pin th
 print("httpx.AsyncClient is replaced for the whole module")
 '
 
-check_sh "the sky tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_sky.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
-check_sh "packaging: the example parses and every shipped option is read" \
-    'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the sky tests" 'cd jarvis-core && python3 -m pytest tests/test_sky.py -q \
+        --timeout=120 --timeout-method=signal'
+check_pytest "packaging: the example parses and every shipped option is read" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q \
+        --timeout=120 --timeout-method=signal'
 
 # Written against the target state, gated on this milestone: the router must
 # say `sky`, and the reply must name a time and a direction.

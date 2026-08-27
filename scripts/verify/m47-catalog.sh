@@ -225,8 +225,7 @@ for claim in ("no default source", "Nothing runs on install", "checked twice", "
 print("supply chain documented, including what it does NOT defend against")
 '
 
-check_sh "the suite" \
-    'cd jarvis-core && python3 -m pytest tests/test_extensions.py -q --timeout=120 2>&1 | tail -2'
+check_pytest "the suite" 'cd jarvis-core && python3 -m pytest tests/test_extensions.py -q --timeout=120'
 
 # --- the red-team probe ------------------------------------------------------
 check "the malicious-install probe is written and asserts the marker never appears" python3 -c '

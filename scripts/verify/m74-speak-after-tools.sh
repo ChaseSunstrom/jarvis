@@ -15,8 +15,7 @@ check_not "the M60 kill switch on tools is gone" grep -q "or self._tools_ran:" "
 check "the tail is the last chunk, before the whole-reply clip" grep -q "await self._speak_tail(text)" "$P"
 check "the remainder is found by text, never by an index into the stream" grep -q "def _unspoken_tail" "$P"
 check "the rig records first_audio from the first tts-chunk" grep -q '"tts-chunk": "first_audio"' testing/live/transport.py
-check_sh "the voice suite: the after-tools case, the tail chunk, the M60 cases" \
-    'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal -k "early or chunk or spoken or tool" 2>&1 | tail -1'
+check_pytest "the voice suite: the after-tools case, the tail chunk, the M60 cases" 'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal -k "early or chunk or spoken or tool"'
 check "on the house, a spoken research turn had its first audio before the whole clip (needs the rebuild and a voice run)" python3 -c '
 import json, pathlib
 r = json.loads(pathlib.Path(".verify/live/results.json").read_text())

@@ -60,13 +60,11 @@ check "held actions speak the same vocabulary as the model gate" \
     grep -q 'jarvis_approval_required' "$C/approvals.py"
 check "and jarvis/approve answers a coding job as well as the model" \
     grep -q 'resolve_approval' jarvis-core/jarvis/api/common.py
-check_sh "the gate tests, including silence is a refusal" \
-    'cd jarvis-core && python3 -m pytest tests/test_code_approvals.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the gate tests, including silence is a refusal" 'cd jarvis-core && python3 -m pytest tests/test_code_approvals.py -q --timeout=120 --timeout-method=signal'
 
 # --- the fences, unchanged --------------------------------------------------
 check "sandbox invariants pinned (argv unit tests)" test -f jarvis-core/tests/test_code_sandbox.py
-check_sh "sandbox, agent and git-escape tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_code_sandbox.py tests/test_code_agent.py tests/test_code_git_escape.py -q --timeout=180 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "sandbox, agent and git-escape tests" 'cd jarvis-core && python3 -m pytest tests/test_code_sandbox.py tests/test_code_agent.py tests/test_code_git_escape.py -q --timeout=180 --timeout-method=signal'
 
 # --- the fixture and the eval -----------------------------------------------
 require_dir fixtures/coding/failing-tests

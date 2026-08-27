@@ -18,12 +18,10 @@ print("code.workspace = /workspace")
 check "jarvis-core mounts ../jarvis-workspace at /workspace" bash -c 'awk "/^  jarvis-core:/{f=1} /^  wyoming-/{f=0} f" jarvis-core/docker-compose.yml | grep -q -- "- ../jarvis-workspace:/workspace"'
 check "the config-init one-shot mounts it and chowns it" bash -c 'awk "/^  jarvis-config-init:/{f=1} /^  jarvis-core:/{f=0} f" jarvis-core/docker-compose.yml | grep -q -- "- ../jarvis-workspace:/workspace" && awk "/^  jarvis-config-init:/{f=1} /^  jarvis-core:/{f=0} f" jarvis-core/docker-compose.yml | grep -q "chown.*/workspace"'
 check "../jarvis-workspace exists in the checkout (its .gitkeep is tracked)" bash -c 'test -d jarvis-workspace && git ls-files jarvis-workspace/.gitkeep | grep -q gitkeep'
-check_sh "packaging pins the three" \
-    'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "workspace" 2>&1 | tail -1'
+check_pytest "packaging pins the three" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "workspace"'
 check "uid 10003 can write /workspace in the running core (rebuilt after M72)" bash -c \
     'cd jarvis-core && docker compose exec -T jarvis-core python -c "import os, pathlib; p = pathlib.Path(\"/workspace/.m72-probe\"); p.mkdir(exist_ok=True); (p / \"ok\").write_text(\"ok\"); import shutil; shutil.rmtree(p); print(\"wrote and removed /workspace/.m72-probe as uid\", os.geteuid())"'
-check_sh "the code integration's tests still pass" \
-    'cd jarvis-core && python3 -m pytest tests/test_code_workspace.py tests/test_code_repos.py -q --timeout=120 2>&1 | tail -1'
+check_pytest "the code integration's tests still pass" 'cd jarvis-core && python3 -m pytest tests/test_code_workspace.py tests/test_code_repos.py -q --timeout=120'
 check "the image installs git (the step after the workspace)" grep -qE -- '--no-install-recommends.* git( |$)' jarvis-core/Dockerfile
 check "git is on the running core's PATH (rebuilt after M72)" bash -c \
     'cd jarvis-core && docker compose exec -T jarvis-core git --version'

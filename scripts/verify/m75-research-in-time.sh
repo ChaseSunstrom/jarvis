@@ -15,11 +15,9 @@ check "jarvis-browser fetches as text first" grep -q "def _plain_page" jarvis-br
 check "the plain fetch re-checks every redirect hop (no SSRF through the shortcut)" grep -q "get_with_checked_redirects(client, url, allowlist=s.lan_allowlist)" jarvis-browser/jarvis_browser/app.py
 check "research reads a bounded few pages at once" grep -q "read_slots = asyncio.Semaphore" jarvis-core/jarvis/integrations/research/__init__.py
 check "the config names the knob" grep -q "parallel_reads" jarvis-core/jarvis/integrations/research/__init__.py
-check_sh "the web suite: fallback first after a failure, restored on an answer" \
-    'cd jarvis-core && python3 -m pytest tests/test_web_integration.py -q --timeout=120 -k "fallback or remote or unresponsive" 2>&1 | tail -1'
-check_sh "the browser suite: text first, JavaScript pages fall back, a LAN redirect is refused" \
-    'python3 -m pytest jarvis-browser/tests -q --timeout=120 2>&1 | tail -1'
-check_sh "the research suite" 'cd jarvis-core && python3 -m pytest tests/test_research.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the web suite: fallback first after a failure, restored on an answer" 'cd jarvis-core && python3 -m pytest tests/test_web_integration.py -q --timeout=120 -k "fallback or remote or unresponsive"'
+check_pytest "the browser suite: text first, JavaScript pages fall back, a LAN redirect is refused" 'python3 -m pytest jarvis-browser/tests -q --timeout=120'
+check_pytest "the research suite" 'cd jarvis-core && python3 -m pytest tests/test_research.py -q --timeout=120 --timeout-method=signal'
 check "the running jarvis-browser reads a real news page as text in under ten seconds (rebuilt after M75)" bash -c '
 TOKEN=$(grep "^JARVIS_BROWSER_TOKEN=" jarvis-core/.env | cut -d= -f2-)
 START=$(date +%s.%N)

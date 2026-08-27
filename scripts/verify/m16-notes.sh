@@ -67,8 +67,7 @@ require_file jarvis-core/tests/test_notes_voice.py
 for t in create update append delete search tag_filter link; do
     check "test_notes.py covers: $t" grep -qE "def test_[a-z_]*$t" jarvis-core/tests/test_notes.py
 done
-check_sh "notes tests (API CRUD, search, tag filter, voice-intent fixture)" \
-    'cd jarvis-core && python3 -m pytest tests/test_notes.py tests/test_notes_voice.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "notes tests (API CRUD, search, tag filter, voice-intent fixture)" 'cd jarvis-core && python3 -m pytest tests/test_notes.py tests/test_notes_voice.py -q --timeout=120 --timeout-method=signal'
 check "routing eval still passes" make -s eval-routing
 require_file jarvis-web/e2e/notes.spec.ts
 ensure_web_deps

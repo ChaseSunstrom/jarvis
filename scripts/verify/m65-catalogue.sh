@@ -188,8 +188,7 @@ print(f"{len(checks)} documents")
 
 # --- the suites --------------------------------------------------------------
 check "ruff" python3 -m ruff check jarvis-core/jarvis/integrations/extensions jarvis-core/jarvis/integrations/skills jarvis-core/tests/test_extensions.py
-check_sh "core: the catalogue, the skills and the packaging pins" \
-    'cd jarvis-core && python3 -m pytest tests/test_extensions.py tests/test_skills.py tests/test_packaging.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "core: the catalogue, the skills and the packaging pins" 'cd jarvis-core && python3 -m pytest tests/test_extensions.py tests/test_skills.py tests/test_packaging.py -q --timeout=120 --timeout-method=signal'
 check "token lint: no new hard-coded value" python3 scripts/verify/token_lint.py
 check "every screen is declared and uses ScreenState" python3 scripts/verify/web_states_check.py
 check "no dead controls" node scripts/verify/web_dead_controls.mjs

@@ -29,8 +29,7 @@ note = Path("jarvis-core/jarvis/integrations/notifications/__init__.py").read_te
 assert "picked back up after a restart" in note
 print("engine, task record and completion agree")
 '
-check_sh "the engine suite: a resumable job is picked back up, a non-idempotent one stays errored" \
-    'cd jarvis-core && python3 -m pytest tests/test_taskengine.py tests/test_tasks.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the engine suite: a resumable job is picked back up, a non-idempotent one stays errored" 'cd jarvis-core && python3 -m pytest tests/test_taskengine.py tests/test_tasks.py -q --timeout=120 --timeout-method=signal'
 check "the scenario restarts the house between the two turns and expects the completion to say so" python3 -c '
 import yaml
 from pathlib import Path

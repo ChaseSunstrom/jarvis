@@ -94,14 +94,10 @@ tools = Path("jarvis-core/jarvis/llm/tools.py").read_text().lower()
 assert "enrol" not in tools and "voiceprint" not in tools, "the toolbox mentions enrolment"
 print("REST only, on the token-gated router")
 '
-check_sh "server: the speaker gate, the household, the bus, the store, the API, the posture" \
-    'cd jarvis-core && python3 -m pytest tests/test_speaker_gate.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
-check_sh "server: the agent is told who is speaking, and the prompt prefix stays stable" \
-    'cd jarvis-core && python3 -m pytest tests/test_llm.py -q --timeout=120 --timeout-method=signal -k "speaking or prompt_prefix or system_prompt" 2>&1 | tail -2'
-check_sh "server: the pipeline suite still passes with a speaker on the converse" \
-    'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
-check_sh "server: the verifier still separates the cast" \
-    'cd jarvis-core && python3 -m pytest tests/test_speaker.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "server: the speaker gate, the household, the bus, the store, the API, the posture" 'cd jarvis-core && python3 -m pytest tests/test_speaker_gate.py -q --timeout=120 --timeout-method=signal'
+check_pytest "server: the agent is told who is speaking, and the prompt prefix stays stable" 'cd jarvis-core && python3 -m pytest tests/test_llm.py -q --timeout=120 --timeout-method=signal -k "speaking or prompt_prefix or system_prompt"'
+check_pytest "server: the pipeline suite still passes with a speaker on the converse" 'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal'
+check_pytest "server: the verifier still separates the cast" 'cd jarvis-core && python3 -m pytest tests/test_speaker.py -q --timeout=120 --timeout-method=signal'
 check_sh "the harness self-test (the e2e rig with a fake STT) still passes" \
     'bash testing/scripts/run-e2e.sh -q 2>&1 | tail -3'
 

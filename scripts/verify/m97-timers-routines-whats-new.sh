@@ -27,12 +27,9 @@ cfg = {"alias": "Kitchen at seven", "trigger": [{"platform": "time", "at": "07:0
 assert describe(cfg) == "weekdays at 07:00: turn on light.kitchen_lights", describe(cfg)
 print(describe(cfg))
 '
-check_sh "the automation API suite" \
-    'cd jarvis-core && python3 -m pytest tests/test_automation_api.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
-check_sh "the create_tool suite" \
-    'cd jarvis-core && python3 -m pytest tests/test_create_tool_handler.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
-check_sh "the notifications suite (whats_new)" \
-    'cd jarvis-core && python3 -m pytest tests/test_notifications.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the automation API suite" 'cd jarvis-core && python3 -m pytest tests/test_automation_api.py -q --timeout=120 --timeout-method=signal'
+check_pytest "the create_tool suite" 'cd jarvis-core && python3 -m pytest tests/test_create_tool_handler.py -q --timeout=120 --timeout-method=signal'
+check_pytest "the notifications suite (whats_new)" 'cd jarvis-core && python3 -m pytest tests/test_notifications.py -q --timeout=120 --timeout-method=signal'
 check "two scenarios, gated on M97" python3 -c '
 import yaml
 from pathlib import Path

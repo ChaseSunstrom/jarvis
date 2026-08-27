@@ -16,8 +16,7 @@ import sys; sys.path.insert(0, "jarvis-core")
 from jarvis.settings import resolve_setting
 s = resolve_setting("demo mode"); assert s is not None and s.key == "demo.enabled", s; print("demo mode ->", s.key)
 '
-check_sh "the demo-mode suite: off removes the house live, on brings it back, off at boot clears stale entries" \
-    'cd jarvis-core && python3 -m pytest tests/test_demo_mode.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
-check_sh "the settings suites" 'cd jarvis-core && python3 -m pytest tests/test_settings.py tests/test_settings_api.py tests/test_settings_tool.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the demo-mode suite: off removes the house live, on brings it back, off at boot clears stale entries" 'cd jarvis-core && python3 -m pytest tests/test_demo_mode.py -q --timeout=120 --timeout-method=signal'
+check_pytest "the settings suites" 'cd jarvis-core && python3 -m pytest tests/test_settings.py tests/test_settings_api.py tests/test_settings_tool.py -q --timeout=120 --timeout-method=signal'
 
 verify_end

@@ -224,7 +224,6 @@ async def main():
 asyncio.run(main())
 '
 
-check_sh "the suite" \
-    'cd jarvis-core && python3 -m pytest tests/test_extensions.py tests/test_skills.py -q --timeout=120 2>&1 | tail -2'
+check_pytest "the suite" 'cd jarvis-core && python3 -m pytest tests/test_extensions.py tests/test_skills.py -q --timeout=120'
 
 verify_end

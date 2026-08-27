@@ -14,8 +14,7 @@ verify_begin "M82" "a coding job says when nobody can run it"
 O=jarvis-core/jarvis/integrations/orchestrator/__init__.py
 check "the watcher reads the remote job's own state, and a wrapper error is an error" bash -c "grep -q 'status.get(\"job_status\")' $O && grep -q 'state = \"error\"' $O"
 check "the orchestrator image unpacks OpenCode (unzip) and proves the binary at build time" bash -c 'grep -q "ca-certificates unzip" jarvis-orchestrator/Dockerfile && grep -q "opencode --version" jarvis-orchestrator/Dockerfile'
-check_sh "the orchestrator suite: a failed remote job fails the task within a poll" \
-    'cd jarvis-core && python3 -m pytest tests/test_orchestrator.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the orchestrator suite: a failed remote job fails the task within a poll" 'cd jarvis-core && python3 -m pytest tests/test_orchestrator.py -q --timeout=120 --timeout-method=signal'
 check "the running orchestrator has OpenCode on its PATH (rebuilt after M82)" bash -c 'docker exec jarvis-orchestrator sh -c "opencode --version" 2>&1 | grep -E "^[0-9]+\.[0-9]+"'
 check "the running orchestrator answers a code task without the missing-binary error" bash -c '
 TOK=$(grep "^ORCHESTRATOR_TOKEN=" jarvis-core/.env | cut -d= -f2-)

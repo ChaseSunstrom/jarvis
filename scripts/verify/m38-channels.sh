@@ -46,9 +46,8 @@ print("quarantined and tainted before the model sees a word")
 check "outbound goes through notifications rather than a second idea of it" \
     grep -q 'jarvis_notification' jarvis-core/jarvis/integrations/channels/__init__.py
 
-check_sh "the hub's own suite — mostly refusals, in order" \
-    'cd jarvis-core && python3 -m pytest tests/test_channels.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the hub's own suite — mostly refusals, in order" 'cd jarvis-core && python3 -m pytest tests/test_channels.py -q \
+        --timeout=120 --timeout-method=signal'
 
 # The live probes, through the REAL hub: authentication, rate limit,
 # quarantine, agent and reply. Only the wire is a fake, and it is a fake that

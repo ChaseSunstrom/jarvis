@@ -34,10 +34,8 @@ require_file jarvis-core/tests/test_agent_loop.py
 for t in plan verif replan; do
     check "test_agent_loop.py covers: $t" grep -qE "def test_[a-z_]*$t" jarvis-core/tests/test_agent_loop.py
 done
-check_sh "agent loop unit tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_agent_loop.py tests/test_turn_events.py tests/test_llm_tools.py tests/test_gated_services.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "agent loop unit tests" 'cd jarvis-core && python3 -m pytest tests/test_agent_loop.py tests/test_turn_events.py tests/test_llm_tools.py tests/test_gated_services.py -q --timeout=120 --timeout-method=signal'
 require_file testing/e2e/test_agent_loop.py
-check_sh "agent loop e2e through the harness (real server, scripted model)" \
-    'timeout 900 python3 -m pytest testing/e2e/test_agent_loop.py -q --timeout=600 --timeout-method=signal 2>&1 | tail -3'
+check_pytest "agent loop e2e through the harness (real server, scripted model)" 'timeout 900 python3 -m pytest testing/e2e/test_agent_loop.py -q --timeout=600 --timeout-method=signal'
 check "documented" grep -qiE 'plan.*act.*verify' jarvis-core/docs/features.md
 verify_end

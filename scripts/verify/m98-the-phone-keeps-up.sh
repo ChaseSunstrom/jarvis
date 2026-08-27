@@ -49,8 +49,7 @@ check "phone mirror: the on-device turn" python3 android-app/tools/on_device_tur
 check "phone mirror: a prompt reaches the person it was raised for (20 checks, the twentieth M98)" python3 android-app/tools/prompt_reaches_the_user_test.py
 check "phone mirror: tool tiers" python3 android-app/tools/tool_tiers_test.py
 use_venv
-check_sh "the tier contract's server half agrees, a nested bundle reaches the phone intact, the shipped skill loads" \
-    'cd jarvis-core && python3 -m pytest tests/test_tool_tiers_contract.py tests/test_device_control.py tests/test_skills.py -q --timeout=120 --timeout-method=signal -k "contract or nested_bundle or phone_tasks_skill or tiers" 2>&1 | tail -1'
+check_pytest "the tier contract's server half agrees, a nested bundle reaches the phone intact, the shipped skill loads" 'cd jarvis-core && python3 -m pytest tests/test_tool_tiers_contract.py tests/test_device_control.py tests/test_skills.py -q --timeout=120 --timeout-method=signal -k "contract or nested_bundle or phone_tasks_skill or tiers"'
 check "PHONE TASKS' way in: import_tasks and list_tasks on the phone, the phone-tasks skill on the house" python3 -c '
 from pathlib import Path
 kt = Path("android-app/app/src/main/kotlin/ai/jarvis/app/automation/actions/builtin/TaskActions.kt").read_text()

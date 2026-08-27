@@ -13,8 +13,7 @@ verify_begin "M70" "a faster voice"
 check "compose passes Piper its length scale, defaulting to 0.9" grep -q -- '--length-scale ${PIPER_LENGTH_SCALE:-0.9}' jarvis-core/docker-compose.yml
 check ".env.example documents the knob at the same number" grep -q '^PIPER_LENGTH_SCALE=0.9$' jarvis-core/.env.example
 check "the config says where the knob is, beside the voice" grep -q 'PIPER_LENGTH_SCALE in .env' jarvis-core/config/configuration.yaml
-check_sh "packaging pins compose and the example to one number in range" \
-    'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "length_scale" 2>&1 | tail -1'
+check_pytest "packaging pins compose and the example to one number in range" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "length_scale"'
 check "the settings registry has the pace, as a number applied on restart" python3 -c '
 import sys; sys.path.insert(0, "jarvis-core")
 from jarvis.settings import APPLY_RESTART, SETTINGS_BY_KEY
@@ -24,8 +23,7 @@ assert "PIPER_LENGTH_SCALE" in spec.note; print(spec.label, "-", spec.note[:60])
 check "the config reads the same variable into that key" grep -q 'length_scale: !env_var PIPER_LENGTH_SCALE' jarvis-core/config/configuration.yaml
 check "the console plan puts Pace on Settings › Voice with the knob named" bash -c "grep -q \"key: 'voice.tts.length_scale'\" jarvis-web/src/lib/sections/settingsPlan.ts && grep -q 'PIPER_LENGTH_SCALE' jarvis-web/src/lib/sections/settingsPlan.ts"
 check "the mock backend serves the row (or the console tests pass while the console breaks)" grep -q "key: 'voice.tts.length_scale'" tests/web/mock-ha.mjs
-check_sh "the settings suites pin it" \
-    'cd jarvis-core && python3 -m pytest tests/test_settings.py tests/test_settings_api.py -q --timeout=120 -k "pace or settings" 2>&1 | tail -1'
+check_pytest "the settings suites pin it" 'cd jarvis-core && python3 -m pytest tests/test_settings.py tests/test_settings_api.py -q --timeout=120 -k "pace or settings"'
 ensure_web_deps
 ensure_web_build
 check "Settings › Voice shows the pace row with the knob named (Playwright)" bash -c 'cd jarvis-web && E2E_PORT=${E2E_PORT:-8299} npx playwright test e2e/settings.spec.ts -g "voice pace" --reporter=line 2>&1 | tail -3 | grep -q " passed"'

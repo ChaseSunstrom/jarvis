@@ -18,8 +18,7 @@ assert "async def async_follow_task" in src and "FOLLOWED_KINDS" in src
 assert "plans" in src, "no surface: plans: switch"
 print("kind task; follows background; surface: plans: false turns it off")
 '
-check_sh "the surface suite: a job with steps is a task panel while it runs and a note when done; no steps, another kind, an error leave nothing" \
-    'cd jarvis-core && python3 -m pytest tests/test_surface.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the surface suite: a job with steps is a task panel while it runs and a note when done; no steps, another kind, an error leave nothing" 'cd jarvis-core && python3 -m pytest tests/test_surface.py -q --timeout=120 --timeout-method=signal'
 check "the console draws a task panel from the task record, with a stop" python3 -c '
 from pathlib import Path
 panel = Path("jarvis-web/src/lib/components/SurfacePanel.svelte").read_text()

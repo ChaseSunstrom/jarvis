@@ -12,10 +12,8 @@ notes = Path("jarvis-core/jarvis/integrations/notifications/__init__.py").read_t
 assert "name=\"recent_moments\"" in notes and "speak_completions" in notes and "SPOKEN_KINDS" in notes
 print("explain_last_turn, recent_moments, speak_completions")
 '
-check_sh "the notifications suite: a finished job is announced through companion, and the inbox is a tool" \
-    'cd jarvis-core && python3 -m pytest tests/test_notifications.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
-check_sh "the agent suite: explain_last_turn names the tools of the previous turn from the archive" \
-    'cd jarvis-core && python3 -m pytest tests/test_llm.py -q --timeout=120 --timeout-method=signal -k "explain_last_turn" 2>&1 | tail -1'
+check_pytest "the notifications suite: a finished job is announced through companion, and the inbox is a tool" 'cd jarvis-core && python3 -m pytest tests/test_notifications.py -q --timeout=120 --timeout-method=signal'
+check_pytest "the agent suite: explain_last_turn names the tools of the previous turn from the archive" 'cd jarvis-core && python3 -m pytest tests/test_llm.py -q --timeout=120 --timeout-method=signal -k "explain_last_turn"'
 check "two scenarios, gated on M95" python3 -c '
 import yaml
 from pathlib import Path

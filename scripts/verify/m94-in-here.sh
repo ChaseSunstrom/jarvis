@@ -16,12 +16,9 @@ control = Path("jarvis-core/jarvis/integrations/device_control/__init__.py").rea
 assert "_asking_device(context)" in control
 print("pipeline -> converse -> prompt line; remembered; tell_user prefers it")
 '
-check_sh "the agent: one line naming the device, after the speaker, none for a turn from no device" \
-    'cd jarvis-core && python3 -m pytest tests/test_llm.py -q --timeout=120 --timeout-method=signal -k device_asked 2>&1 | tail -1'
-check_sh "the pipeline hands the device to a converse that takes it and leaves one that cannot alone" \
-    'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal -k asking_device 2>&1 | tail -1'
-check_sh "tell_user goes to the device that asked unless one is named" \
-    'cd jarvis-core && python3 -m pytest tests/test_device_control.py -q --timeout=120 --timeout-method=signal -k tell_user 2>&1 | tail -1'
+check_pytest "the agent: one line naming the device, after the speaker, none for a turn from no device" 'cd jarvis-core && python3 -m pytest tests/test_llm.py -q --timeout=120 --timeout-method=signal -k device_asked'
+check_pytest "the pipeline hands the device to a converse that takes it and leaves one that cannot alone" 'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal -k asking_device'
+check_pytest "tell_user goes to the device that asked unless one is named" 'cd jarvis-core && python3 -m pytest tests/test_device_control.py -q --timeout=120 --timeout-method=signal -k tell_user'
 
 use_venv
 check "on the house, a registered device asks which device it is on, and is told its own name" python3 -c '

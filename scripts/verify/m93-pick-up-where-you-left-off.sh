@@ -26,7 +26,7 @@ assert "text-ui" in s["variants"] and len(s["turns"]) > 1
 print("the thread rides in the job; thread-continuity runs through the console")
 '
 check "clients.md says so" bash -c 'grep -q "A conversation has a URL (M93)" jarvis-core/docs/clients.md'
-check_sh "the rig tests" 'python3 -m pytest testing/live/tests -q --timeout=120 2>&1 | tail -1'
+check_pytest "the rig tests" 'python3 -m pytest testing/live/tests -q --timeout=120'
 ensure_web_build
 run_playwright "a link reopens a thread with its transcript; a link to an unstarted thread starts it under that id" e2e/conversation-link.spec.ts
 

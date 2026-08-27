@@ -33,8 +33,7 @@ check "mock backend streams task output" grep -q jarvis_task_output tests/web/mo
 check "mock backend streams task tool events" grep -q jarvis_task_tool_started tests/web/mock-ha.mjs
 
 require_file jarvis-core/tests/test_task_events.py
-check_sh "jarvis-core task tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_tasks.py tests/test_task_events.py tests/test_task_events_contract.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "jarvis-core task tests" 'cd jarvis-core && python3 -m pytest tests/test_tasks.py tests/test_task_events.py tests/test_task_events_contract.py -q --timeout=120 --timeout-method=signal'
 ensure_web_deps
 check_sh "web task reducers (vitest)" 'cd jarvis-web && npx vitest run src/lib/tasks.test.ts src/lib/taskEvents.test.ts 2>&1 | tail -3'
 require_file jarvis-web/e2e/task-live.spec.ts

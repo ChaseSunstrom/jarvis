@@ -26,10 +26,8 @@ check "mock backend serves notifications + conversation search" grep -q 'jarvis/
 require_file testing/e2e/test_threads.py
 require_file testing/e2e/test_continuity.py
 require_file jarvis-core/tests/test_notifications.py
-check_sh "thread persistence (create → restart → resume with prior context) + continuity (two clients, one thread)" \
-    'timeout 900 python3 -m pytest testing/e2e/test_threads.py testing/e2e/test_continuity.py -q --timeout=600 --timeout-method=signal 2>&1 | tail -3'
-check_sh "proactive trigger (fire a hook → a notification record exists and is retrievable)" \
-    'cd jarvis-core && python3 -m pytest tests/test_notifications.py tests/test_history.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "thread persistence (create → restart → resume with prior context) + continuity (two clients, one thread)" 'timeout 900 python3 -m pytest testing/e2e/test_threads.py testing/e2e/test_continuity.py -q --timeout=600 --timeout-method=signal'
+check_pytest "proactive trigger (fire a hook → a notification record exists and is retrievable)" 'cd jarvis-core && python3 -m pytest tests/test_notifications.py tests/test_history.py -q --timeout=120 --timeout-method=signal'
 require_file jarvis-web/e2e/moments.spec.ts
 ensure_web_deps
 ensure_web_build

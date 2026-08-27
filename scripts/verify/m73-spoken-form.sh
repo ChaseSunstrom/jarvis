@@ -19,7 +19,7 @@ assert said == "Price: about 78,721 dollars, up 0.15 percent over 24 hours. Sent
 print(said)
 '
 check "the transcript is untouched: response_text is what was written" grep -q "self.response_text\` keeps\|keeps the reply as written\|reply as written" jarvis-core/jarvis/voice/pipeline.py
-check_sh "the spoken-form suite" 'cd jarvis-core && python3 -m pytest tests/test_speech_text.py -q --timeout=60 2>&1 | tail -1'
-check_sh "the voice suite still passes (speakable is on every path)" 'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the spoken-form suite" 'cd jarvis-core && python3 -m pytest tests/test_speech_text.py -q --timeout=60'
+check_pytest "the voice suite still passes (speakable is on every path)" 'cd jarvis-core && python3 -m pytest tests/test_voice.py -q --timeout=120 --timeout-method=signal'
 
 verify_end

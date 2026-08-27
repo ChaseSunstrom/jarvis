@@ -59,8 +59,7 @@ check "widgets can be reordered" grep -rqiE 'reorder|drag' jarvis-web/src/lib/da
 check "mock backend serves dashboards" grep -q 'jarvis/dashboards/' tests/web/mock-ha.mjs
 check "mock backend serves metrics queries" grep -q 'jarvis/metrics/query' tests/web/mock-ha.mjs
 
-check_sh "jarvis-core dashboard + metrics tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_dashboards.py tests/test_metrics.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "jarvis-core dashboard + metrics tests" 'cd jarvis-core && python3 -m pytest tests/test_dashboards.py tests/test_metrics.py -q --timeout=120 --timeout-method=signal'
 ensure_web_deps
 check_sh "web dashboard unit tests" 'cd jarvis-web && npx vitest run src/lib/dashboards 2>&1 | tail -3'
 require_file jarvis-web/e2e/dashboards.spec.ts

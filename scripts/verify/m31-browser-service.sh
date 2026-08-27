@@ -44,9 +44,8 @@ check "the fixture stand-in says what it does not prove" \
 # The whole rig suite rather than a `-k` selector: the selector matched three
 # of the six tests that matter here, and a check that silently runs half of
 # what it names is worse than one that runs none.
-check_sh "the rig borrows the real browser and gives it back" \
-    'python3 -m pytest testing/live/tests -q \
-        --timeout=300 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the rig borrows the real browser and gives it back" 'python3 -m pytest testing/live/tests -q \
+        --timeout=300 --timeout-method=signal'
 
 # The running service, which is the thing the operator actually has.
 check_sh "the running jarvis-browser can open a page" '

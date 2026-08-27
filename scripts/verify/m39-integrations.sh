@@ -50,9 +50,8 @@ print("an email is a web page with a stamp on it")
 check "an address nobody allow-listed is refused rather than asked about" \
     grep -q 'is a prompt somebody clicks yes on' jarvis-core/jarvis/integrations/mail/__init__.py
 
-check_sh "the interface and both clients" \
-    'cd jarvis-core && python3 -m pytest tests/test_integrations_plugins.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the interface and both clients" 'cd jarvis-core && python3 -m pytest tests/test_integrations_plugins.py -q \
+        --timeout=120 --timeout-method=signal'
 
 # The three things the brief asks to be SHOWN. The fixtures are started here
 # rather than assumed: a probe that silently skips is a probe that passes.

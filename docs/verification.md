@@ -2110,7 +2110,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M88 — A plan on the screen | **Built** (6/7) | `m88-a-plan-on-the-screen.sh`; `test_surface.py` (7); `surface.spec.ts` 4/4 |
 | M89 — Stack hygiene | **Built** (3/5) | `m89-stack-hygiene.sh`; `test_packaging.py` (+3); the two stack checks wait for the recreate |
 | M90 — The claims register, re-measured | **Automated** (6/6, ticked) | `m90-claims-register.sh` reruns every count and fails on drift |
-| M91 — A gate cannot pass on a skip | Planned | waits for a box with no gate running (`lib.sh`) |
+| M91 — A gate cannot pass on a skip | **Ticked** (3/3; 76 gates read the pytest summary, a skip fails unless allowed by count, `results-<gate>.json` per gate) | `m91-no-pass-on-a-skip.sh` |
 | M92 — The house by voice, beyond lights | **Built** (3/4) | `m92-the-house-by-voice.sh`; ten scenarios; rig tests 49 |
 | M93 — Pick up where you left off | **Built** (5/6) | `m93-pick-up-where-you-left-off.sh`; `conversation-link.spec.ts` 2/2; `interactions-thread-continuity` gains `text-ui` |
 | M94 — In here | **Built** (6/6 — the live check passed on the fourteenth build too, so it does not yet discriminate; re-run after the rebuild) | `m94-in-here.sh`; `test_llm.py`, `test_voice.py`, `test_device_control.py` (+1 each) |

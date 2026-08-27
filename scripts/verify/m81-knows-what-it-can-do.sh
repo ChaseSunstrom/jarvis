@@ -11,9 +11,7 @@ check "the nudge is wired beside the claimed-action one" grep -q "denied_capabil
 check "the form of address is one line the persona cannot override" grep -q "def address_rule" "$A"
 check "the persona no longer says 'Sir or ma'am'" bash -c "! grep -q \"Sir or ma'am\" jarvis-core/config/prompts/jarvis.txt"
 check "the config and the registry carry llm.address" bash -c 'grep -q "^  address: Sir" jarvis-core/config/configuration.yaml && grep -q "key=\"llm.address\"" jarvis-core/jarvis/settings.py'
-check_sh "the agent suite: the guard's cases and the address rule" \
-    'cd jarvis-core && python3 -m pytest tests/test_llm.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
-check_sh "packaging: the persona file is where the model looks, the new key is read" \
-    'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "persona or silently_ignored or env_var" 2>&1 | tail -1'
+check_pytest "the agent suite: the guard's cases and the address rule" 'cd jarvis-core && python3 -m pytest tests/test_llm.py -q --timeout=120 --timeout-method=signal'
+check_pytest "packaging: the persona file is where the model looks, the new key is read" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "persona or silently_ignored or env_var"'
 
 verify_end

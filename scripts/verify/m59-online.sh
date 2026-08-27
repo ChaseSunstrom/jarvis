@@ -51,12 +51,10 @@ text = Path("jarvis-core/config/configuration.yaml").read_text()
 assert "\nwatch:\n" in text, "no watch: block — the integration never loaded"
 print("switched on")
 '
-check_sh "the watch tests: page change, no change, feed, question, reader (plain and browser), a malformed feed, the floor, persistence" \
-    'cd jarvis-core && python3 -m pytest tests/test_watch.py -q --timeout=120 --timeout-method=signal -p no:cacheprovider 2>&1 | tail -2'
+check_pytest "the watch tests: page change, no change, feed, question, reader (plain and browser), a malformed feed, the floor, persistence" 'cd jarvis-core && python3 -m pytest tests/test_watch.py -q --timeout=120 --timeout-method=signal -p no:cacheprovider'
 # The Atom namespace is a name, not a fetch; every other host is.
 check_not "no network in the watch tests" bash -c 'grep -nE "https?://(www\.)?[a-z0-9.-]+\.(com|org|net|io)/" jarvis-core/tests/test_watch.py | grep -v "w3.org/2005/Atom" | grep -q .' 
-check_sh "packaging still agrees (the new config block is read)" \
-    'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=300 -p no:cacheprovider -k "silently_ignored or shipped" 2>&1 | tail -2'
+check_pytest "packaging still agrees (the new config block is read)" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=300 -p no:cacheprovider -k "silently_ignored or shipped"'
 check "ruff is clean" bash -c "cd jarvis-core && python3 -m ruff check jarvis/integrations/watch tests/test_watch.py && cd .. && python3 -m ruff check testing/live"
 # --- live ---------------------------------------------------------------------
 # The integrator's line: on the fixture ground the rig rewrites a page it

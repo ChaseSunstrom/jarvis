@@ -52,8 +52,7 @@ check "unconfigured, it registers nothing and says so" \
     grep -q 'def test_unconfigured_says_so_and_calls_nothing' jarvis-core/tests/test_n8n.py
 check "the assistant's words come back fenced, and nothing it says runs" \
     grep -q 'def test_the_assistant_answers_fenced_and_nothing_it_says_runs' jarvis-core/tests/test_n8n.py
-check_sh "the n8n suite" \
-    'cd jarvis-core && python3 -m pytest tests/test_n8n.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the n8n suite" 'cd jarvis-core && python3 -m pytest tests/test_n8n.py -q --timeout=120 --timeout-method=signal'
 
 check "the env var reaches jarvis-core" \
     grep -q 'N8N_URL=' jarvis-core/docker-compose.yml

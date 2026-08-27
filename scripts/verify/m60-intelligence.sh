@@ -72,8 +72,7 @@ print("read-only batching pinned")
 
 # --- the evals, never lowered -------------------------------------------------
 check "the core suite is green" bash -c 'cd jarvis-core && python3 -m pytest tests -q --timeout=120 --timeout-method=signal -x -p no:cacheprovider 2>&1 | tail -1 | grep -q " passed"'
-check_sh "the routing table and its two mirrors agree (make eval-routing, offline)" \
-    'cd evals && python3 -m pytest test_routing.py -q --timeout=600 2>&1 | tail -2'
+check_pytest "the routing table and its two mirrors agree (make eval-routing, offline)" 'cd evals && python3 -m pytest test_routing.py -q --timeout=600'
 check "the intelligence eval floors are what they were — never lowered to pass" python3 -c '
 import sys; sys.path.insert(0, "evals/intelligence")
 from run import FLOORS
@@ -81,6 +80,5 @@ pinned = {"context_retention": 0.75, "routing": 0.85, "reasoning": 0.60, "instru
 assert FLOORS == pinned, f"the floors moved: {FLOORS}"
 print("floors unchanged")
 '
-check_sh "the planner, the pipeline and the client suites" \
-    'cd jarvis-core && python3 -m pytest tests/test_task_plan_batching.py tests/test_voice.py tests/test_llm.py tests/test_openai_compat.py -q --timeout=120 --timeout-method=signal -p no:cacheprovider 2>&1 | tail -1'
+check_pytest "the planner, the pipeline and the client suites" 'cd jarvis-core && python3 -m pytest tests/test_task_plan_batching.py tests/test_voice.py tests/test_llm.py tests/test_openai_compat.py -q --timeout=120 --timeout-method=signal -p no:cacheprovider'
 verify_end

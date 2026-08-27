@@ -27,7 +27,7 @@ require_file jarvis-web/src/lib/sections/Memory.svelte
 check "console memory route can export and wipe" grep -qE 'export' jarvis-web/src/lib/sections/Memory.svelte
 check "mock backend serves jarvis/memory/*" grep -q 'jarvis/memory/' tests/web/mock-ha.mjs
 require_file jarvis-core/tests/test_memory.py
-check_sh "memory unit tests" 'cd jarvis-core && python3 -m pytest tests/test_memory.py tests/test_memory_vectors.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "memory unit tests" 'cd jarvis-core && python3 -m pytest tests/test_memory.py tests/test_memory_vectors.py -q --timeout=120 --timeout-method=signal'
 require_file evals/memory_eval.py
 check_sh "scripted eval: store → restart → retrieve → forget → export → wipe (exit code)" \
     'timeout 900 python3 evals/memory_eval.py --out .verify/memory 2>&1 | tail -6'

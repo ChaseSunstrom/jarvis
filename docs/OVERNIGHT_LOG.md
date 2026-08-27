@@ -971,3 +971,4 @@ is quiet. Done since:
   scenario's routing miss (two research calls for a two-job request) addressed in the tool's and rule 4's wording —
   both are the next live run's to show. The house's clock says CDT because the operator saved America/Chicago from
   the console on the 26th (recorded then); not changed.
+- 08:10 — M91 ticked (3/3): 76 gates converted to `check_pytest` by atomic replace while the quiet pass ran; no suite with a skip mark skips on this box (speaker+ssrf 103, harness selftest 43).

@@ -22,7 +22,7 @@ check "the task UI renders the tree" grep -rqiE 'tree|children' "jarvis-web/src/
 check "the orchestrator delegates through core" grep -qE 'agents|subagent' "$CORE/integrations/orchestrator/__init__.py"
 require_file jarvis-core/tests/test_agents.py
 require_file jarvis-core/tests/test_llm_pool.py
-check_sh "agents + pool unit tests" 'cd jarvis-core && python3 -m pytest tests/test_agents.py tests/test_llm_pool.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "agents + pool unit tests" 'cd jarvis-core && python3 -m pytest tests/test_agents.py tests/test_llm_pool.py -q --timeout=120 --timeout-method=signal'
 require_file evals/subagents_eval.py
 check_sh "fixture task: two parallel subagents + roll-up, with log evidence of concurrency (harness, scripted model)" \
     'timeout 900 python3 evals/subagents_eval.py --out .verify/subagents 2>&1 | tail -6'

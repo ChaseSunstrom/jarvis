@@ -17,8 +17,7 @@ check "configuration is documented" grep -rqi influx jarvis-core/docs/
 check "verification claim with a reproducible command" grep -qi influx docs/verification.md
 require_file scripts/check-influx.py
 require_file jarvis-core/tests/test_metrics_influx.py
-check_sh "adapter tests against a fake InfluxDB (v1 + v2)" \
-    'cd jarvis-core && python3 -m pytest tests/test_metrics_influx.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "adapter tests against a fake InfluxDB (v1 + v2)" 'cd jarvis-core && python3 -m pytest tests/test_metrics_influx.py -q --timeout=120 --timeout-method=signal'
 check "widget editor can pick an Influx source" grep -rqi influx jarvis-web/src/lib/dashboards
 check "an example homelab/GPU dashboard ships" grep -rqi gpu jarvis-core/config/dashboards/
 check "mock backend offers an influx source" grep -qi influx tests/web/mock-ha.mjs

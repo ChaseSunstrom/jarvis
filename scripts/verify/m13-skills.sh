@@ -47,7 +47,7 @@ require_file jarvis-core/tests/test_skills.py
 for t in frontmatter invalid on_demand gated; do
     check "test_skills.py covers: $t" grep -qE "def test_[a-z_]*$t" jarvis-core/tests/test_skills.py
 done
-check_sh "skills tests" 'cd jarvis-core && python3 -m pytest tests/test_skills.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "skills tests" 'cd jarvis-core && python3 -m pytest tests/test_skills.py -q --timeout=120 --timeout-method=signal'
 # This milestone's own live scenarios. A capability is not done until it works
 # when a person talks to it — which is a different claim from "its unit tests
 # pass", and the only one an operator can feel. Its scenarios are gated on this

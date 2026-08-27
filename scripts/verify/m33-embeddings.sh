@@ -54,9 +54,8 @@ assert "6/6" in text and "5/6" in text, "the numbers behind that choice are not 
 print("research: on. memory: off, with the measurement beside it")
 '
 
-check_sh "the rerank client, and the per-model floors" \
-    'cd jarvis-core && python3 -m pytest tests/test_rerank.py tests/test_memory_vectors.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the rerank client, and the per-model floors" 'cd jarvis-core && python3 -m pytest tests/test_rerank.py tests/test_memory_vectors.py -q \
+        --timeout=120 --timeout-method=signal'
 
 # The running services. A container that is up and cannot answer is the M28
 # lesson, so this asks them to do the actual job.

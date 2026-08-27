@@ -44,9 +44,8 @@ assert \"| --- |\" in text
 print(\"the night rate is still in the same row as its hours and its price\")
 "'
 
-check_sh "documents are read, and an unreadable one says so" \
-    'python3 -m pytest jarvis-browser/tests/test_documents.py -q --timeout=60 \
-        --timeout-method=signal 2>&1 | tail -2'
+check_pytest "documents are read, and an unreadable one says so" 'python3 -m pytest jarvis-browser/tests/test_documents.py -q --timeout=60 \
+        --timeout-method=signal'
 check "a scanned PDF is named rather than returned empty" \
     grep -q 'no text layer' jarvis-browser/jarvis_browser/documents.py
 check "document text is fenced as untrusted, like a page" \

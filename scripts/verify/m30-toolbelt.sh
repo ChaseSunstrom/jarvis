@@ -70,8 +70,7 @@ check_sh "it refuses to snapshot when an eval has not been run" \
         test $status -ne 0 || { echo "it wrote a snapshot with a missing eval"; exit 1; }; \
         echo "refused, as it should"; \
      fi'
-check_sh "worse numbers exit non-zero, and noise does not" \
-    'python3 -m pytest testing/tools -q --timeout=60 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "worse numbers exit non-zero, and noise does not" 'python3 -m pytest testing/tools -q --timeout=60 --timeout-method=signal'
 
 # The comparison end to end, on two snapshots this check makes itself: the unit
 # tests exercise `compare()`, and this exercises the command a person types.

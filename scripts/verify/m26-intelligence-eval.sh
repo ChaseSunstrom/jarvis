@@ -28,8 +28,7 @@ print(f"{len(data[chr(114)+chr(111)+chr(117)+chr(116)+chr(105)+chr(110)+chr(103)
 '
 check "the scorecard cannot pass a section that never ran" \
     grep -q "nothing ran, so its floor cannot be met" evals/intelligence/run.py
-check_sh "the scoring arithmetic has its own tests" \
-    'python3 -m pytest evals/intelligence -q --timeout=60 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the scoring arithmetic has its own tests" 'python3 -m pytest evals/intelligence -q --timeout=60 --timeout-method=signal'
 check "latency is measured idle AND under load" grep -q 'under_load\|background_load' evals/intelligence/run.py
 check_sh "the scorecard runs and writes its numbers" \
     'set -a; . ./.env 2>/dev/null; set +a; timeout 5400 python3 evals/intelligence/run.py --out .verify/live/scorecard.json 2>&1 | tail -14'

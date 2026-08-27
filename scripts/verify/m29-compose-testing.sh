@@ -95,13 +95,11 @@ print("restored")
 PY'
 
 # --- the dev loop -----------------------------------------------------------
-check_sh "watch rules sync into the directory each image runs from" \
-    'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q -k watch --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "watch rules sync into the directory each image runs from" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q -k watch --timeout=120 --timeout-method=signal'
 check "the runbook says how to run the suite against a live house" \
     grep -q 'Run the live suite against this stack' docs/RUNBOOK.md
 
-check_sh "the rig's own tests" \
-    'python3 -m pytest testing/live/tests -q --timeout=300 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the rig's own tests" 'python3 -m pytest testing/live/tests -q --timeout=300 --timeout-method=signal'
 
 # --- and then it actually does it -------------------------------------------
 # The milestone's own live scenarios: a container restarted underneath a

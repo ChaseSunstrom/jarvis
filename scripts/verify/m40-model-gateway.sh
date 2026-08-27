@@ -50,9 +50,8 @@ print(f"custom_auth: {hook}")
 check "prompts are not logged by the proxy" \
     grep -q 'turn_off_message_logging: true' jarvis-core/gateway/config.yaml
 
-check_sh "both halves of the guard, and that they agree" \
-    'cd jarvis-core && python3 -m pytest tests/test_privacy_gateway.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "both halves of the guard, and that they agree" 'cd jarvis-core && python3 -m pytest tests/test_privacy_gateway.py -q \
+        --timeout=120 --timeout-method=signal'
 
 # The four behaviours, against a real proxy and a provider that records what it
 # was asked. "Refused" is proved by the mock having heard NOTHING, not by a log.

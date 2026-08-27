@@ -26,7 +26,7 @@ check "console can inspect a server" grep -qi 'inspect' jarvis-web/src/lib/compo
 check "console can test-call a tool through the gate" grep -qE 'jarvis/tools/call|test.?call' jarvis-web/src/lib/components/McpServers.svelte
 check "mock backend serves jarvis/mcp/inspect" grep -q 'jarvis/mcp/inspect' tests/web/mock-ha.mjs
 require_file jarvis-core/docs/mcp.md
-check_sh "mcp unit tests" 'cd jarvis-core && python3 -m pytest tests/test_mcp.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "mcp unit tests" 'cd jarvis-core && python3 -m pytest tests/test_mcp.py -q --timeout=120 --timeout-method=signal'
 ensure_web_deps
 check_sh "mcp draft tests" 'cd jarvis-web && npx vitest run src/lib/mcpDraft.test.ts 2>&1 | tail -3'
 ensure_web_build

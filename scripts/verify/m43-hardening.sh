@@ -94,9 +94,8 @@ for needle in ("Prompt injection, as a class", "compromised model server", "the 
 print("the limits are written down, not just the wins")
 '
 
-check_sh "the security suite" \
-    'cd jarvis-core && python3 -m pytest tests/test_security.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the security suite" 'cd jarvis-core && python3 -m pytest tests/test_security.py -q \
+        --timeout=120 --timeout-method=signal'
 
 # --- the probes ------------------------------------------------------------
 #

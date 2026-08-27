@@ -51,7 +51,6 @@ print("no vector database in the stack")
 check_not "and nothing imports one" \
     grep -rqE '^\s*(import|from)\s+(qdrant|pymilvus|weaviate|chromadb)' \
         jarvis-core/jarvis jarvis-core/requirements.txt
-check_sh "the sidecar's own tests still hold" \
-    'cd jarvis-core && python3 -m pytest tests/test_memory_vectors.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the sidecar's own tests still hold" 'cd jarvis-core && python3 -m pytest tests/test_memory_vectors.py -q \
+        --timeout=120 --timeout-method=signal'
 verify_end

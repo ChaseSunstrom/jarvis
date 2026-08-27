@@ -50,9 +50,8 @@ tts = (cfg.get("voice") or {}).get("tts") or {}
 assert str(tts.get("engine") or "wyoming").lower() != "openai", "the default voice changed"
 print(f"voice: {tts.get(chr(118)+chr(111)+chr(105)+chr(99)+chr(101))}")
 '
-check_sh "the opt-in client returns what the pipeline expects" \
-    'cd jarvis-core && python3 -m pytest tests/test_openai_tts.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the opt-in client returns what the pipeline expects" 'cd jarvis-core && python3 -m pytest tests/test_openai_tts.py -q \
+        --timeout=120 --timeout-method=signal'
 
 # The A/B itself. Piper alone is enough to run it — the script says so when
 # Kokoro is not up rather than pretending there was a comparison.

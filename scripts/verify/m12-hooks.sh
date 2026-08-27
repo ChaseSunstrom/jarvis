@@ -32,6 +32,5 @@ require_file jarvis-core/tests/test_hooks.py
 for t in wake_word task_started task_completed task_failed webhook schedule; do
     check "test_hooks.py covers: $t" grep -qE "def test_[a-z_]*$t" jarvis-core/tests/test_hooks.py
 done
-check_sh "hooks + automation tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_hooks.py tests/test_automation.py tests/test_automation_api.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "hooks + automation tests" 'cd jarvis-core && python3 -m pytest tests/test_hooks.py tests/test_automation.py tests/test_automation_api.py -q --timeout=120 --timeout-method=signal'
 verify_end

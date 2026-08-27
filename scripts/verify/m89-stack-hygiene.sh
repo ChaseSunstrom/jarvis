@@ -4,8 +4,7 @@ set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 verify_begin "M89" "stack hygiene"
 
-check_sh "packaging pins: the live sandbox, SearXNG's bind under granian, the console not root, the orchestrator's model server" \
-    'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "sandbox_is_pinned or searxng_binds or not_run_as_root or same_model_server" 2>&1 | tail -1'
+check_pytest "packaging pins: the live sandbox, SearXNG's bind under granian, the console not root, the orchestrator's model server" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "sandbox_is_pinned or searxng_binds or not_run_as_root or same_model_server"'
 check "the docs say what is true: RUNBOOK names stack.py, DEVIATIONS §7 the root compose, the matrix the console's user" python3 -c '
 from pathlib import Path
 assert "testing/live/volumes.py" not in Path("docs/RUNBOOK.md").read_text()

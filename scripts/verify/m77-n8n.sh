@@ -21,9 +21,9 @@ check "Settings › Tools carries the n8n line" bash -c 'grep -q "<N8nConnection
 ensure_web_deps
 ensure_web_build
 run_playwright "the line says not configured and what to set, against the mock" 'e2e/n8n.spec.ts'
-check_sh "the n8n suite against a fake n8n" 'cd jarvis-core && python3 -m pytest tests/test_n8n.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
-check_sh "the tier table and the contract" 'cd jarvis-core && python3 -m pytest tests/test_gated_services.py tests/test_tool_tiers_contract.py -q --timeout=120 2>&1 | tail -1'
-check_sh "packaging: the three env vars are read by configuration.yaml" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "env_var or documented or silently" 2>&1 | tail -1'
+check_pytest "the n8n suite against a fake n8n" 'cd jarvis-core && python3 -m pytest tests/test_n8n.py -q --timeout=120 --timeout-method=signal'
+check_pytest "the tier table and the contract" 'cd jarvis-core && python3 -m pytest tests/test_gated_services.py tests/test_tool_tiers_contract.py -q --timeout=120'
+check_pytest "packaging: the three env vars are read by configuration.yaml" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "env_var or documented or silently"'
 check "the house's n8n answers (needs N8N_URL and N8N_API_KEY in jarvis-core/.env)" bash -c '
 URL=$(grep "^N8N_URL=" jarvis-core/.env | cut -d= -f2-); KEY=$(grep "^N8N_API_KEY=" jarvis-core/.env | cut -d= -f2-)
 [ -n "$URL" ] && [ -n "$KEY" ] || { echo "N8N_URL / N8N_API_KEY not set in jarvis-core/.env — the operator supplies them"; exit 1; }

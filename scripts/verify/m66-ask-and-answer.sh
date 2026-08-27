@@ -74,10 +74,10 @@ assert by["a tainted question is never answered by voice"]["expect"]["kind"] == 
 assert by["free text is the answer, verbatim"]["expect"]["answer"] == "http://printer.lan"
 print(len(c["cases"]), "cases;", len(c["affirmations"]), "affirmations,", len(c["denials"]), "denials")
 '
-check_sh "every case in the table decides as the table says" 'cd jarvis-core && python3 -m pytest tests/test_spoken_answers.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "every case in the table decides as the table says" 'cd jarvis-core && python3 -m pytest tests/test_spoken_answers.py -q --timeout=120 --timeout-method=signal'
 check "the agent asks the rules before the model, and never for a tainted request" bash -c 'grep -q "note, settled = await self._answer_pending(conversation.id, message, context, result, emit)" jarvis-core/jarvis/llm/agent.py && grep -q "if verdict.kind == KIND_TAINTED:" jarvis-core/jarvis/llm/agent.py'
-check_sh "the registry, the bridge, the companion, the pipeline and the agent, in the core suite" 'cd jarvis-core && python3 -m pytest tests/test_ask_and_answer.py tests/test_ask_user.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
-check_sh "end to end through the real server: a question answered by the next turn, and an expired one told so" 'python3 -m pytest testing/e2e/test_ask_and_answer.py -q --timeout=300 --timeout-method=signal -k "question or expired" 2>&1 | tail -1'
+check_pytest "the registry, the bridge, the companion, the pipeline and the agent, in the core suite" 'cd jarvis-core && python3 -m pytest tests/test_ask_and_answer.py tests/test_ask_user.py -q --timeout=120 --timeout-method=signal'
+check_pytest "end to end through the real server: a question answered by the next turn, and an expired one told so" 'python3 -m pytest testing/e2e/test_ask_and_answer.py -q --timeout=300 --timeout-method=signal -k "question or expired"'
 require_grep "security.md states the rule and the taint boundary" '^## An answer can be said, and the taint boundary decides when it may not be' docs/security.md
 require_grep "clients.md documents ttl, conversation_id, spoken and jarvis_approval_expired" 'jarvis_approval_expired' jarvis-core/docs/clients.md
 

@@ -123,8 +123,7 @@ text = build_config(**kw, vision_camera_url="http://127.0.0.2:8901/camera/kitche
 assert "vision:" in text and "consent: always" in text and "house-vision" in text, text
 print("vision block present when asked for")
 '
-check_sh "the rig's own tests" \
-    'python3 -m pytest testing/live/tests -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the rig's own tests" 'python3 -m pytest testing/live/tests -q --timeout=120 --timeout-method=signal'
 
 # --- hygiene ------------------------------------------------------------------
 check "ruff is clean on everything this milestone touched" \

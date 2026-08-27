@@ -26,7 +26,7 @@ src = open(scenario.__file__).read()
 assert "\"surface\"," in src
 print("surface: three tools, one expectation")
 '
-check_sh "the rig tests" 'python3 -m pytest testing/live/tests -q --timeout=120 2>&1 | tail -1'
+check_pytest "the rig tests" 'python3 -m pytest testing/live/tests -q --timeout=120'
 check_sh "on the house: the ten scenarios, spoken and typed" \
     'LIVE_ONLY=house-climate,house-cover,house-media,house-vacuum,house-fan-and-switch,sensors-compare,sky-moon,notes-append,ask-which-light,surface-by-voice bash scripts/verify/live_interaction.sh --full 2>&1 | tail -8'
 

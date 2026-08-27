@@ -32,12 +32,10 @@ check "concurrency is still the pool's to bound" \
 check "a fan-out is labelled a fan-out, not what it delegated" \
     grep -q 'the outer act is the answer' testing/live/capability.py
 
-check_sh "the dispatch, and what it refuses to guess" \
-    'cd jarvis-core && python3 -m pytest tests/test_delegation_backends.py -q \
-        --timeout=180 --timeout-method=signal 2>&1 | tail -2'
-check_sh "the subagent suite still holds" \
-    'cd jarvis-core && python3 -m pytest tests -q -k "agent" \
-        --timeout=300 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the dispatch, and what it refuses to guess" 'cd jarvis-core && python3 -m pytest tests/test_delegation_backends.py -q \
+        --timeout=180 --timeout-method=signal'
+check_pytest "the subagent suite still holds" 'cd jarvis-core && python3 -m pytest tests -q -k "agent" \
+        --timeout=300 --timeout-method=signal'
 
 check_sh "one request, two backends, one lead" \
     'set -a; . ./.env 2>/dev/null; set +a; \

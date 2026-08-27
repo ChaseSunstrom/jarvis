@@ -8,6 +8,7 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### In progress — from the audit of 27 Aug 2026 (`docs/AUDIT_2026-08-27.md`)
+- **M91 — a gate cannot pass on a skip.** Every verify gate that runs a pytest suite now reads the suite's summary line: a suite that skipped (beyond what the check allows), ran nothing, or errored fails the gate, where the exit status alone let a fully-skipped suite pass. Each gate's live slice keeps its own results file.
 - **M98 — the phone keeps up.** The speaker gate's mode reaches the phone on every connect; a held Tier-3 action is answered on the phone's consent screen; a typed field on the voice screen runs the same pipeline; the tier contract records the phone's ask-once; and the house can put a task on the phone — "whenever it's plugged in, turn the torch on" becomes an `import_tasks` command the phone screens and lists under PHONE TASKS, with the `phone-tasks` skill teaching the model the format. Gate 16/16 on the house with a fake phone.
 - **M84 — Jarvis volunteers a briefing.** The briefing block is on the house; "what's my briefing?" is
   one `get_briefing` call. Ticked when the rig hears it after the rebuild.

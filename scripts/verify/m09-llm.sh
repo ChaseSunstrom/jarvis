@@ -53,8 +53,7 @@ sys.exit(0 if real else 1)
 PY'
 check_sh_not "orchestrator no longer hardcodes the ollama/ model prefix" \
     'grep -rn "\"ollama/\|f\"ollama/\|'"'"'ollama/" jarvis-orchestrator/app'
-check_sh "llm client + tool-call tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_openai_compat.py tests/test_tool_call_recovery.py tests/test_narrated_tool_calls.py tests/test_llm.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
-check_sh "local-only guard tests" 'cd jarvis-core && python3 -m pytest tests/test_llm_local_only.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
-check_sh "orchestrator tests" 'python3 -m pytest jarvis-orchestrator/tests -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "llm client + tool-call tests" 'cd jarvis-core && python3 -m pytest tests/test_openai_compat.py tests/test_tool_call_recovery.py tests/test_narrated_tool_calls.py tests/test_llm.py -q --timeout=120 --timeout-method=signal'
+check_pytest "local-only guard tests" 'cd jarvis-core && python3 -m pytest tests/test_llm_local_only.py -q --timeout=120 --timeout-method=signal'
+check_pytest "orchestrator tests" 'python3 -m pytest jarvis-orchestrator/tests -q --timeout=120 --timeout-method=signal'
 verify_end

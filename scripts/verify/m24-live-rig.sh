@@ -60,8 +60,7 @@ check "the judge is local-only" grep -q 'LLM_URL' "$LIVE/judge.py"
 check_not "nothing here reaches a cloud model" \
     grep -rniE 'api\.openai\.com|api\.anthropic\.com|generativelanguage' "$LIVE"
 
-check_sh "the rig's own unit tests" \
-    'python3 -m pytest testing/live/tests -q --timeout=300 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the rig's own unit tests" 'python3 -m pytest testing/live/tests -q --timeout=300 --timeout-method=signal'
 
 # The real services this rig cannot work without. A failure here names which
 # one is down rather than reporting a scenario failure somewhere else.

@@ -34,7 +34,7 @@ print("desktop: SETTINGS > Console; /settings/desktop redirects there")
 '
 require_file jarvis-desktop/jarvis_desktop/ipc.py
 check "consent prompts can be answered by the shell" grep -qE 'class ShellConsentGateway' jarvis-desktop/jarvis_desktop/consent.py
-check_sh "agent ipc tests" 'cd jarvis-desktop && python3 -m pytest tests/test_ipc.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "agent ipc tests" 'cd jarvis-desktop && python3 -m pytest tests/test_ipc.py -q --timeout=120 --timeout-method=signal'
 require_dir "$APP/node_modules"
 check_sh "shell builds" 'cd jarvis-desktop-app && npm run build 2>&1 | tail -5'
 check_sh "shell unit tests (vitest, electron mocked)" 'cd jarvis-desktop-app && npx vitest run 2>&1 | tail -4'

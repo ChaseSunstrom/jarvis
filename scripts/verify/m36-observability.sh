@@ -36,9 +36,8 @@ check "and it cannot fail a turn by failing to count one" \
 check "the recorder never raises on the hot path" \
     grep -q 'observability is never fatal' jarvis-core/jarvis/integrations/observability/__init__.py
 
-check_sh "the recorder's own tests" \
-    'cd jarvis-core && python3 -m pytest tests/test_observability.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the recorder's own tests" 'cd jarvis-core && python3 -m pytest tests/test_observability.py -q \
+        --timeout=120 --timeout-method=signal'
 check_sh "the console's reading half" \
     'cd jarvis-web && npx vitest run src/lib/trace.test.ts 2>&1 | tail -3'
 check "the websocket commands are documented" \

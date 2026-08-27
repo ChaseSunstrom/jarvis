@@ -39,9 +39,8 @@ print("BLOCKERS.md carries the row and says what it costs")
 check "the threat model has not quietly changed" \
     grep -q 'NOT the operator' docs/THREAT_MODEL.md
 
-check_sh "the backend's own suite: off, keyless, unsandboxed, and the protocol" \
-    'cd jarvis-core && python3 -m pytest tests/test_claude_backend.py -q \
-        --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "the backend's own suite: off, keyless, unsandboxed, and the protocol" 'cd jarvis-core && python3 -m pytest tests/test_claude_backend.py -q \
+        --timeout=120 --timeout-method=signal'
 
 # The containment claim, against a real container and a stand-in that speaks
 # the same protocol. There is no key on this host and there should not be one.

@@ -17,8 +17,7 @@ check "the config enables it" grep -q "^surface:" jarvis-core/config/configurati
 check "the voice page mounts the surface over the stage" grep -q "<Surface {conn} />" jarvis-web/src/routes/+page.svelte
 check "a panel is the dashboard's own widget for its kind (never a copy of the house)" bash -c 'grep -q "EntityTile" jarvis-web/src/lib/components/SurfacePanel.svelte && grep -q "CameraStillView" jarvis-web/src/lib/components/SurfacePanel.svelte && grep -q "Readings" jarvis-web/src/lib/components/SurfacePanel.svelte'
 check "the mock serves the five commands and the show hook" bash -c '[ $(grep -c "case '"'"'jarvis/surface/" tests/web/mock-ha.mjs) -eq 5 ] && grep -q "jarvis/test/surface_show" tests/web/mock-ha.mjs'
-check_sh "the surface suite: slots, one panel per thing, the oldest makes room, the tools, a clamped drag" \
-    'cd jarvis-core && python3 -m pytest tests/test_surface.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the surface suite: slots, one panel per thing, the oldest makes room, the tools, a clamped drag" 'cd jarvis-core && python3 -m pytest tests/test_surface.py -q --timeout=120 --timeout-method=signal'
 check_sh "no new hard-coded value in the two components" 'python3 scripts/verify/token_lint.py 2>&1 | tail -1'
 ensure_web_deps
 ensure_web_build

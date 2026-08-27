@@ -42,7 +42,7 @@ check "the live claim is recorded as Scripted, not as passing" \
     grep -q "research.*Scripted\|Scripted.*research" docs/verification.md
 check "and the reason it cannot run here is written down" \
     grep -qi 'searxng' BLOCKERS.md
-check_sh "research unit tests" 'cd jarvis-core && python3 -m pytest tests/test_research.py tests/test_research_plan.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_pytest "research unit tests" 'cd jarvis-core && python3 -m pytest tests/test_research.py tests/test_research_plan.py -q --timeout=120 --timeout-method=signal'
 # This milestone's own live scenarios. A capability is not done until it works
 # when a person talks to it — which is a different claim from "its unit tests
 # pass", and the only one an operator can feel. Its scenarios are gated on this

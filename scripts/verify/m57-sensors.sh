@@ -46,10 +46,8 @@ for name in ("sensor_readings", "sensor_compare", "sensor_history", "sensor_summ
     assert f"name=\"{name}\"" in src, f"no {name} tool"
 print("four tools")
 '
-check_sh "the sensor tests: components, birth, allowlist, units, translators, tools, a malicious template" \
-    'cd jarvis-core && python3 -m pytest tests/test_mqtt_sensors.py tests/test_mqtt.py -q --timeout=120 2>&1 | tail -2'
-check_sh "packaging still agrees (the new config keys are read)" \
-    'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "config or shipped or example" 2>&1 | tail -2'
+check_pytest "the sensor tests: components, birth, allowlist, units, translators, tools, a malicious template" 'cd jarvis-core && python3 -m pytest tests/test_mqtt_sensors.py tests/test_mqtt.py -q --timeout=120'
+check_pytest "packaging still agrees (the new config keys are read)" 'cd jarvis-core && python3 -m pytest tests/test_packaging.py -q --timeout=120 -k "config or shipped or example"'
 check "sensors and the new mqtt keys are switched on in the deployed config" python3 -c '
 from pathlib import Path
 text = Path("jarvis-core/config/configuration.yaml").read_text()

@@ -19,8 +19,7 @@ assert "case \x27assist_pipeline/stop\x27" in mock
 assert "Stop means stop (M96)" in Path("jarvis-core/docs/clients.md").read_text()
 print("stop: command, flag, console, mock, docs")
 '
-check_sh "the API suite: a run stopped mid-answer ends interrupted; a run not in progress is not_found" \
-    'cd jarvis-core && python3 -m pytest tests/test_api.py -q --timeout=120 --timeout-method=signal -k "stopped_at_the_server or pipeline_run" 2>&1 | tail -1'
+check_pytest "the API suite: a run stopped mid-answer ends interrupted; a run not in progress is not_found" 'cd jarvis-core && python3 -m pytest tests/test_api.py -q --timeout=120 --timeout-method=signal -k "stopped_at_the_server or pipeline_run"'
 
 use_venv
 check "on the house, a run stopped one second in ends with run-end interrupted" python3 -c '

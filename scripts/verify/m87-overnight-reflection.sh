@@ -15,10 +15,8 @@ src = Path("jarvis-core/jarvis/integrations/memory/__init__.py").read_text()
 assert "_attach_reflection(jarvis, memory, options)" in src
 print("memory.reflect_at =", cfg["memory"]["reflect_at"])
 '
-check_sh "the reflection suite: reads the day, asks once, keeps what is new, never re-learns a forgotten fact, says what it learned" \
-    'cd jarvis-core && python3 -m pytest tests/test_memory_reflection.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
-check_sh "the memory suite still passes" \
-    'cd jarvis-core && python3 -m pytest tests/test_memory.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'
+check_pytest "the reflection suite: reads the day, asks once, keeps what is new, never re-learns a forgotten fact, says what it learned" 'cd jarvis-core && python3 -m pytest tests/test_memory_reflection.py -q --timeout=120 --timeout-method=signal'
+check_pytest "the memory suite still passes" 'cd jarvis-core && python3 -m pytest tests/test_memory.py -q --timeout=120 --timeout-method=signal'
 check "the scenario asks the house what it learned after the rig calls memory.reflect" python3 -c '
 import yaml
 from pathlib import Path

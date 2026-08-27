@@ -173,10 +173,8 @@ print(f"{len(checks)} documents")
 
 # --- the suites --------------------------------------------------------------
 check "ruff" python3 -m ruff check jarvis-core/jarvis/llm/tools.py jarvis-core/jarvis/llm/agent.py jarvis-core/jarvis/settings.py jarvis-core/jarvis/api jarvis-core/tests/test_settings_tool.py jarvis-core/tests/test_tool_tiers_contract.py testing/e2e/test_harness_selftest.py
-check_sh "core: the settings tools, the contract, the settings API, the registry and ask_user" \
-    'cd jarvis-core && python3 -m pytest tests/test_settings_tool.py tests/test_tool_tiers_contract.py tests/test_settings_api.py tests/test_llm_tools.py tests/test_ask_user.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
-check_sh "the harness, against a real jarvis-core: the scripted model asks, a human approves, the setting changes, the audit says so; demo mode is refused with the nearest" \
-    'python3 -m pytest testing/e2e/test_harness_selftest.py -q -k "setting" 2>&1 | tail -2'
+check_pytest "core: the settings tools, the contract, the settings API, the registry and ask_user" 'cd jarvis-core && python3 -m pytest tests/test_settings_tool.py tests/test_tool_tiers_contract.py tests/test_settings_api.py tests/test_llm_tools.py tests/test_ask_user.py -q --timeout=120 --timeout-method=signal'
+check_pytest "the harness, against a real jarvis-core: the scripted model asks, a human approves, the setting changes, the audit says so; demo mode is refused with the nearest" 'python3 -m pytest testing/e2e/test_harness_selftest.py -q -k "setting"'
 check "token lint: no new hard-coded value" python3 scripts/verify/token_lint.py
 check "every screen is declared and uses ScreenState" python3 scripts/verify/web_states_check.py
 check "no dead controls" node scripts/verify/web_dead_controls.mjs

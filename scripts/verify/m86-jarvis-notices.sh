@@ -35,8 +35,7 @@ assert r.offer == {"service": "lock.lock", "question": "Shall I lock it?"}
 assert build_rule({"domains": ["lock"], "offer": {"service": "nope"}}, 0, {}).offer is None
 print("offer parsed")
 '
-check_sh "the narrate suite: rules, ceilings, quiet hours, the offer asked and done only on a yes" \
-    'cd jarvis-core && python3 -m pytest tests/test_sensors.py -q --timeout=120 --timeout-method=signal -k "narrat or offer or notice" 2>&1 | tail -1'
+check_pytest "the narrate suite: rules, ceilings, quiet hours, the offer asked and done only on a yes" 'cd jarvis-core && python3 -m pytest tests/test_sensors.py -q --timeout=120 --timeout-method=signal -k "narrat or offer or notice"'
 
 use_venv
 check "on the house, recent_events is a registered tool (the narrator is loaded)" python3 -c '
