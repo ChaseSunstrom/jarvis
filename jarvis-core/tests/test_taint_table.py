@@ -116,6 +116,13 @@ async def test_a_page_cannot_untaint_the_turn(jarvis):
     )
     assert registry.requires_approval(fetch, {"url": "https://handbook.example/meter"}, ctx) is False
     assert registry.requires_approval(fetch, {"url": "https://handbook.example/meter?r=SECRET-4471"}, ctx) is True
+    # A link the page carried RELATIVE — href="warranty.pdf" — and the model
+    # resolved: the same link, followed (the research briefing's PDF).
+    get_untrusted_turns(jarvis).note_seen(ctx, 'The warranty terms are in <a href="warranty.pdf">the warranty</a>.')
+    assert registry.requires_approval(fetch, {"url": "https://handbook.example/handbook/warranty.pdf"}, ctx) is False
+    # ...but a path the page never named, or a query carrying a token from nowhere, is composed.
+    assert registry.requires_approval(fetch, {"url": "https://handbook.example/SECRET-4471.pdf"}, ctx) is True
+    assert registry.requires_approval(fetch, {"url": "https://handbook.example/handbook/warranty.pdf?r=SECRET-4471"}, ctx) is True
     # A query made of words the turn has seen runs; one carrying a token from
     # nowhere — the secret — waits.
     assert registry.requires_approval(search, {"query": "meter readings handbook"}, ctx) is False

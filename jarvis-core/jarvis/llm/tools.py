@@ -1095,6 +1095,34 @@ def _weaker_than(new: Tool, old: Tool) -> str:
     return ""
 
 
+def _url_composed(url: str, shown: str) -> bool:
+    """Was this URL written by the model, or was the turn shown it?
+
+    Shown as it stands, or as a link the page carried: a page says
+    `href="warranty.pdf"` and the model fetches
+    `http://handbook/warranty.pdf` — the same link, resolved. So the path,
+    or its last segment, counts as shown (verify-all's research briefing on
+    27 Aug 2026 had the handbook's warranty PDF held as "composed"). The
+    query string never gets that latitude: `?r=<the reading>` is where a
+    secret goes out, and every token in it must have been shown.
+    """
+    from urllib.parse import urlparse
+
+    lowered = url.lower()
+    if lowered in shown:
+        return False
+    parsed = urlparse(lowered)
+    path = parsed.path or ""
+    segment = path.rsplit("/", 1)[-1]
+    known_path = (len(path) >= 6 and path in shown) or (len(segment) >= 6 and segment in shown)
+    if not known_path:
+        return True
+    for token in re.findall(r"[a-z0-9][a-z0-9_-]{5,}", parsed.query):
+        if token not in shown:
+            return True
+    return False
+
+
 def _refusal_takes_context(refuse: Any) -> bool:
     """A refusal may read the turn (its second parameter); most read the arguments alone."""
     try:
@@ -1408,7 +1436,7 @@ class ToolRegistry:
             shown = ""
         for value in _strings_in(args):
             for url in re.findall(r"https?://[^\s<>\"']+", value, flags=re.I):
-                if url.rstrip(".,;:!?)").lower() not in shown:
+                if _url_composed(url.rstrip(".,;:!?)"), shown):
                     return True
             rest = re.sub(r"https?://[^\s<>\"']+", " ", value, flags=re.I)
             for token in re.findall(r"[a-z0-9][a-z0-9_-]{5,}", rest.lower()):
