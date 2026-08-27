@@ -850,6 +850,11 @@ services:
       # can reach SearXNG at all; widen it only if another machine needs it,
       # and then let ufw say which machine.
       - SEARXNG_BIND_ADDRESS=${SEARXNG_BIND_ADDRESS:-127.0.0.1}
+      # The 2026.8 image serves through granian, which reads GRANIAN_HOST and
+      # ships with `::` — every interface — while SEARXNG_BIND_ADDRESS is only
+      # what the old uwsgi entrypoint read. Without this the engine answered
+      # on the LAN address (the services audit, 27 Aug 2026).
+      - GRANIAN_HOST=${SEARXNG_BIND_ADDRESS:-127.0.0.1}
       - SEARXNG_PORT=${SEARXNG_PORT:-8888}
       # Deliberately NOT derived from SEARXNG_URL: that variable says where
       # Jarvis looks for search, which is a different question from where this

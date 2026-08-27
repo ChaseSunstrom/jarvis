@@ -884,3 +884,7 @@ is quiet. Done since:
   texts across reloads) and what is already remembered, and says what it learned in a note and a card;
   nightly at 03:30 on the house; `jarvis/memory/reflect` for the console; the rig's `reflect: true` turn is
   the night on demand. Reflection suite 6, memory 20, rig 49; gate 4/6 offline, the live half waits.
+- 04:41 — M89 built: SearXNG's granian bind (GRANIAN_HOST from SEARXNG_BIND_ADDRESS — the image ships `::`),
+  the console image runs as `node`, the live sandbox pinned where it runs (network none, uid 10001, ro,
+  cap_drop ALL, one mount), RUNBOOK/DEVIATIONS/the isolation matrix true; packaging +3; gate 3/5, the two
+  stack checks wait for the recreate the fifteenth does after verify-all.

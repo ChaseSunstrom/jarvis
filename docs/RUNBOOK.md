@@ -107,8 +107,9 @@ docker run --rm -v mosquitto-data:/v -v "$PWD":/in busybox \
 The live suite uses exactly these two recipes around any scenario that wipes
 memory or clears task history, which is what makes it re-runnable against a
 stack somebody actually uses: snapshot, run the destructive scenario, restore.
-`testing/live/volumes.py` is the implementation and it shells out to the same
-commands.
+`testing/live/stack.py` (`VolumeGuard`, `Snapshot`) is the implementation and it shells out
+to the same commands; since 27 Aug 2026 a restore leaves the operator's own files —
+`configuration.yaml`, the included YAML, packages, agents, models — untouched (`OPERATOR_FILES`).
 
 ## Change code and see it run
 

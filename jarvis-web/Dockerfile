@@ -20,4 +20,9 @@ EXPOSE 8199
 # busybox wget ships with alpine
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
   CMD wget -qO- http://localhost:8199/healthz || exit 1
+# Not root. The image had no USER and the console ran as uid 0 with a bind
+# mount of its own .storage (the services audit, 27 Aug 2026); `node` is the
+# base image's unprivileged user, uid 1000, which is also what owns the
+# mount on the host. The matrix in docs/security.md says `node`; now it is.
+USER node
 CMD ["node", "build"]

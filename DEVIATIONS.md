@@ -159,8 +159,8 @@ will not.
 
 ## 7. The orchestrator and sandbox are opt-in, and start disabled
 
-They are commented out in `jarvis-core/docker-compose.yml` and their
-credentials default to empty. jarvis-core registers `delegate_to_agents`,
+They live in the root `docker-compose.yml` behind `--profile agents` (the core file keeps a
+commented sketch for a standalone install) and their credentials default to empty. jarvis-core registers `delegate_to_agents`,
 `code_task` and `execute_command` regardless, so the model is told the truth
 about its toolbox, and they return "not configured" until you set
 `ORCHESTRATOR_TOKEN` and `APPROVAL_SECRET` and start the services.

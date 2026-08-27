@@ -307,9 +307,9 @@ TTS through it, instead of needing to know which of two servers is which.
 
 | service | network | user | rootfs | mounts | caps |
 |---|---|---|---|---|---|
-| jarvis-core | host (:8080), LAN/WG via ufw | non-root | rw (image) | `./config` | default |
-| jarvis-web | host (:8199), LAN/WG via ufw | node | rw (image) | none | default |
-| jarvis-browser | host (:8210), loopback via ufw | non-root | rw (image) | none | default |
+| jarvis-core | host (:8080), LAN/WG via ufw | non-root | rw (image) | `./config` | drop ALL |
+| jarvis-web | host (:8199), LAN/WG via ufw | node | rw (image) | `./.storage/jarvis-web` | default |
+| jarvis-browser | host (:8210), loopback via ufw | non-root | rw (image) | none | drop ALL (`seccomp:unconfined` for Chromium) |
 | jarvis-orchestrator | host (:8188), core host only via ufw | 10002 | read-only | `./jarvis-workspace` | drop ALL |
 | jarvis-sandbox | **none** | 10001 | read-only | `./jarvis-workspace` | drop ALL |
 

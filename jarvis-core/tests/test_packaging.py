@@ -1474,6 +1474,50 @@ def test_the_orchestrator_is_told_the_same_model_server_as_the_core() -> None:
     assert "api_key=LLM_API_KEY" in main
 
 
+def test_the_live_sandbox_is_pinned_where_it_actually_runs() -> None:
+    """The root compose's `jarvis-sandbox` — the one that runs — holds every
+    isolation invariant, not only the commented sketch in the core file that
+    `test_sandbox_sketch_*` reads (the services audit, 27 Aug 2026).
+
+    Never host or LAN networking; an unprivileged user; a read-only root;
+    every capability dropped; no privilege escalation; bounded processes and
+    memory; exactly one mount, the shared workspace, and never the host root
+    or the docker socket.
+    """
+    import yaml
+
+    text = (ROOT.parent / "docker-compose.yml").read_text(encoding="utf-8")
+    compose = yaml.safe_load(text)
+    sandbox = compose["services"]["jarvis-sandbox"]
+    assert sandbox["network_mode"] == "none"
+    assert sandbox["user"] == "10001:10001"
+    assert sandbox["read_only"] is True
+    assert sandbox["cap_drop"] == ["ALL"] and not sandbox.get("cap_add")
+    assert "no-new-privileges:true" in sandbox["security_opt"]
+    assert int(sandbox["pids_limit"]) <= 256
+    assert str(sandbox["mem_limit"]).lower().rstrip("gb") in ("1", "2")
+    assert "agents" in sandbox["profiles"]
+    mounts = [str(v) for v in sandbox.get("volumes") or []]
+    assert len(mounts) == 1 and mounts[0].startswith("./jarvis-workspace:"), mounts
+    assert not any("docker.sock" in m or m.startswith("/:") for m in mounts)
+
+
+def test_searxng_binds_where_the_operator_said_under_the_granian_image(compose: dict[str, Any]) -> None:
+    """The 2026.8 SearXNG image serves through granian and reads GRANIAN_HOST
+    (shipping with `::`); SEARXNG_BIND_ADDRESS alone left it answering on the
+    LAN address (the services audit, 27 Aug 2026)."""
+    env = compose["services"]["searxng"]["environment"]
+    lines = env if isinstance(env, list) else [f"{k}={v}" for k, v in env.items()]
+    assert any(line.startswith("GRANIAN_HOST=${SEARXNG_BIND_ADDRESS:-127.0.0.1}") for line in lines), lines
+
+
+def test_the_console_image_does_not_run_as_root() -> None:
+    dockerfile = (ROOT.parent / "jarvis-web" / "Dockerfile").read_text(encoding="utf-8")
+    runtime = dockerfile.split("AS runtime", 1)[1]
+    assert "\nUSER node\n" in runtime, "the console's runtime stage has no USER"
+    assert runtime.index("USER node") < runtime.index('CMD ["node", "build"]')
+
+
 def test_compose_keeps_the_broker_behind_the_mqtt_profile(compose: dict[str, Any]) -> None:
     """Same argument as SearXNG: most houses already have a broker.
 
