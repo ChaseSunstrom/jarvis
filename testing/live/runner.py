@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -85,6 +86,9 @@ DEFAULT_WER = 0.25
 #: How long a `restart: true` turn waits for an earlier scenario's background
 #: task before pulling the core out from under it.
 RESTART_SETTLE_S = 180.0
+#: How long a socket the house closed unasked is given to come back before
+#: the run gives up on the group.
+RECONNECT_WAIT_S = 120.0
 
 #: Full-mode thresholds, from the brief. `--implemented-only` does not apply
 #: them: a suite that is deliberately partial cannot have a meaningful rate.
@@ -146,6 +150,12 @@ class Runner:
         #: knows both that there is a stack and when the run began.
         self.stack_ground: StackGround | None = None
         self.results: list[ScenarioResult] = []
+        #: Every time the house closed the rig's socket without a `restart:`
+        #: turn asking for it — {"at", "why", "after"} — for the containers row.
+        self.socket_closes: list[dict[str, Any]] = []
+        #: Restarts this run ordered (`restart: true` turns). The containers
+        #: row subtracts them from the boots it counts in the core's log.
+        self.ordered_restarts = 0
         #: Rebuilt whenever a scenario restarts the server.
         self.link: Link | None = None
         self.observer: Observer | None = None
@@ -242,12 +252,37 @@ class Runner:
             name="stack-logs-clean", capability="stack", variant="containers"
         )
         errors = ground.stack.errors_since(since)
+        findings: list[str] = []
         if errors:
-            result.ok = False
-            result.error = (
+            findings.append(
                 f"{len(errors)} ERROR-level record(s) in container logs during the run:\n"
                 + "\n".join(f"  · {line}" for line in errors[:8])
             )
+        # Boots the rig did not order. The recorder cannot say — the restore
+        # at the end of a protected run puts the database back as it was at
+        # the start, taking the run's own `jarvis_stop` rows with it — but the
+        # container's log survives a restart, and "API listening" is printed
+        # once per boot. One boot is the restore's own.
+        boots = ground.stack.boots_since(since)
+        allowed = self.ordered_restarts + (1 if getattr(ground, "protect", False) else 0)
+        if len(boots) > allowed:
+            findings.append(
+                f"jarvis-core booted {len(boots)} time(s) during the run (at {', '.join(boots)}) "
+                f"and the rig ordered {allowed}: {self.ordered_restarts} restart turn(s)"
+                + (" and the restore's" if getattr(ground, "protect", False) else "")
+                + ". Something outside the run restarted the house."
+            )
+        if self.socket_closes:
+            closes = "; ".join(
+                f"after {c['after'] or 'the first scenario'} ({c['why']})" for c in self.socket_closes
+            )
+            findings.append(
+                f"the house closed the rig's socket {len(self.socket_closes)} time(s) with no "
+                f"restart turn asking for it: {closes}"
+            )
+        if findings:
+            result.ok = False
+            result.error = "\n".join(findings)
         self._say_result(result)
         return [result]
 
@@ -291,6 +326,9 @@ class Runner:
                             # cannot be watched, so the page is not asserted on.
                             print(f"  skip {scenario.name} ({variant}): no console", flush=True)
                             continue
+                        dead = getattr(self.link.client, "closed_reason", None)
+                        if dead:
+                            await self._reconnect(ground, dead)
                         result = await self._run_scenario(
                             scenario, variant, transports, ground
                         )
@@ -302,6 +340,48 @@ class Runner:
         finally:
             if console is not None:
                 console.stop()
+
+    async def _reconnect(self, ground: Ground, why: str) -> None:
+        """A fresh socket and observer after the house closed ours unasked.
+
+        A `restart: true` turn rebuilds both itself. This is for the other
+        case: on 27 Aug 2026 the house closed the rig's sockets (1012, uvicorn
+        shutting down) a third of the way through a report run and the rig,
+        which only reconnected on its own restarts, failed the thirty
+        scenarios that followed on a dead socket. One close is now one
+        scenario's failure, named, and the close goes on the containers row.
+        Waits for the API to answer again, bounded — a house that does not
+        come back is the run's failure, said plainly, not a wall of timeouts.
+        """
+        self.socket_closes.append({
+            "at": time.time(),
+            "why": why,
+            "after": self.results[-1].name if self.results else "",
+        })
+        print(f"  live: the socket to Jarvis closed ({why}); reconnecting", flush=True)
+        with contextlib.suppress(Exception):
+            await self.observer.stop()
+        with contextlib.suppress(Exception):
+            await self.link.client.aclose()
+        from testing.harness import JarvisClient as _Client
+
+        deadline = time.monotonic() + RECONNECT_WAIT_S
+        while True:
+            fresh = _Client(ground.base_url, ground.token, timeout=TURN_TIMEOUT)
+            try:
+                await fresh.connect()
+                break
+            except Exception as err:  # noqa: BLE001 - the house is still down, or gone
+                with contextlib.suppress(Exception):
+                    await fresh.aclose()
+                if time.monotonic() > deadline:
+                    raise LiveError(
+                        f"the socket to Jarvis closed ({why}) and the API did not answer "
+                        f"again within {RECONNECT_WAIT_S:g}s: {err}"
+                    ) from err
+                await asyncio.sleep(2.0)
+        self.link.client = fresh
+        self.observer = await Observer(fresh).start()
 
     def _say_result(self, result: ScenarioResult) -> None:
         flag = "ok  " if result.ok else "FAIL"
@@ -441,6 +521,7 @@ class Runner:
                     await observer.stop()
                     await self.link.client.aclose()
                     ground.restart_core()
+                    self.ordered_restarts += 1
                     from testing.harness import JarvisClient as _Client
 
                     fresh = _Client(ground.base_url, ground.token, timeout=TURN_TIMEOUT)
@@ -714,8 +795,8 @@ class Runner:
     async def _enrol_own_voice(self, label: str) -> None:
         import httpx
 
-        base = self.link.base_url
-        headers = {"Authorization": f"Bearer {self.link.token}"}
+        base = self.link.client.base_url
+        headers = {"Authorization": f"Bearer {self.link.client.token}"}
         async with httpx.AsyncClient(timeout=60.0) as http:
             status = await http.get(f"{base}/api/voice/speaker", headers=headers, params={"label": label})
             if status.status_code != 200:
@@ -1152,7 +1233,7 @@ class Runner:
                 fail(f"routed to {out.routed!r}, expected {out.routed_expected!r}")
 
         if expect.get("within_seconds"):
-            limit = float(expect["within_seconds"])
+            limit = float(expect.get("within_seconds"))
             total = out.latency.get("total") or 0.0
             if total > limit:
                 fail(f"the turn took {total:.1f}s, over its {limit:.1f}s budget")

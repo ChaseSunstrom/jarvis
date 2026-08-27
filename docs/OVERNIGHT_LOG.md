@@ -1004,3 +1004,19 @@ is quiet. Done since:
   `setup: device:` — scenarios stop-means-stop, in-here-by-voice, notice-garage-door, and m86/m94/m96 have live slices.
 - 09:57 — M102 built (Jarvis learns from its own mistakes): the review integration, the guard and the stop on the trace, the self-review scenario; live half after the rebuild.
 - 10:12 — M103 ticked (7/7). M102 built; M104 (Jarvis proposes a routine) built with its suite — the miner over the recorder, a card and a question, a yes through create_automation.
+- 10:43 — the fifteenth's report run (09:47–10:20, 98 scenarios): 57/98, 103/128 turns, intent 80.5 %, routing 84.4 %,
+  WER 1.3 % over 31 (worst 28.6 %), median 2.51 s, p95 14.55 s — under every threshold but WER, and mostly one event: the
+  house closed the rig's sockets (uvicorn's 1012, "service restart") around `notes-append`, and the rig, which only
+  reconnects after its own `restart:` turns, failed the thirty stack scenarios after it on a dead socket — voice turns as
+  `ConnectionClosedError`, text ones as "tasks were []"/"had []" while the console beside them showed the tasks. The
+  recorder cannot say who restarted the house: the restore at the end of a protected run puts `jarvis.db` back as it was
+  at the start. Fixed in the rig, not the thresholds: a listing on a socket the house closed raises with the close code
+  instead of reading as an empty house; the runner reconnects between scenarios and puts every unasked close on the
+  containers row; the containers row counts the core's boots from its own log (which survives a restart) against the
+  ones the run ordered. Two rig crashes from the same run fixed (`Link.base_url`, `expect[...]`). The real misses that
+  remain from the half that ran: ask-which-light (names no lights / turns one on), house-cover and in-here-by-voice
+  (the model's routing), memory-reflection (the model's cheek), explain-yourself/sensors-compare/surface-by-voice (the
+  garage sensor, order-dependent — announced per scenario since), vision-look-fixture (M56, no served model). Also this
+  hour: CI's core leg names errored tests now (`-rfE`); the claims register re-measured; jarvis-desktop 853, jarvis-browser
+  349, orchestrator 24 green; Android lint clean; the console suite 325/347 under load and 23/23 of the four failed files
+  alone. The sixteenth's house (10:21 image) so far: m84 8/8, m74 8/8; m85/m87/m88/m42 red, being read.

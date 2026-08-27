@@ -343,6 +343,36 @@ class Stack:
             found.extend(_records(raw.splitlines()))
         return found
 
+    def boots_since(self, since: float | None = None, container: str = "jarvis-core") -> list[str]:
+        """When the core came up during the run, from its own log — one entry per boot.
+
+        `docker logs` survives `docker restart` (same container), which is the
+        case this exists for: a restart nobody ordered mid-run. It does not
+        survive a recreate, so a `compose up` that replaced the container
+        shows as zero boots — the run's own scenarios then fail on the socket
+        instead, which the runner names.
+        """
+        seconds = int(time.time() - (since if since is not None else self.started_at)) + 5
+        # Not `_run`: the core logs to stderr, and `docker logs` keeps the
+        # container's two streams apart — `_run` returns stdout, which for this
+        # container is empty. Merged here, on purpose.
+        try:
+            done = subprocess.run(
+                ["docker", "logs", "-t", f"--since={seconds}s", container],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=120,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return []
+        raw = done.stdout or ""
+        found: list[str] = []
+        for line in raw.splitlines():
+            if "API listening on" in line:
+                # `-t` prefixes RFC3339; the clock time is what a person
+                # matches against a gate's log.
+                stamp = line.split(" ", 1)[0]
+                found.append(stamp[11:19] if len(stamp) > 19 else stamp)
+        return found
+
     def recreate(self, service: str, env: dict[str, str] | None = None,
                  wait: float = 300.0) -> None:
         """Bring one service back up with an environment override.

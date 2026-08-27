@@ -362,6 +362,103 @@ def test_the_stack_ground_refuses_a_house_with_nothing_in_it():
         raise AssertionError("an empty house was accepted")
 
 
+# --- a socket the house closed (27 Aug 2026) ---------------------------------
+def test_a_listing_on_a_socket_the_house_closed_is_named_not_empty():
+    """"tasks were []" thirty times was one closed socket, unnamed.
+
+    A build without the command is the scenario's failed assertion and reads
+    as an empty list; a socket the house closed is the run's, and carries the
+    close code — 1012 is uvicorn shutting down — so the restart can be found.
+    """
+    import asyncio
+
+    from testing.live import LiveError
+    from testing.live.world import Observer
+
+    class _Dead:
+        closed_reason = "the websocket closed (received 1012 (service restart))"
+
+        async def command(self, name, **kwargs):
+            raise ConnectionError(self.closed_reason)
+
+    class _Lacks:
+        closed_reason = None
+
+        async def command(self, name, **kwargs):
+            raise RuntimeError("unknown command")
+
+    try:
+        asyncio.run(Observer(_Dead()).tasks())
+    except LiveError as err:
+        assert "1012" in str(err) and "jarvis/tasks/list" in str(err)
+    else:  # pragma: no cover - the point of the test
+        raise AssertionError("a dead socket read as an empty house")
+    assert asyncio.run(Observer(_Lacks()).notifications()) == []
+
+
+def _containers_row(boots, closes=(), ordered=0, protect=True):
+    """The containers row for a run that saw these boots and socket closes."""
+    from testing.live.runner import Runner
+
+    class _Stack:
+        def errors_since(self, since):
+            return []
+
+        def boots_since(self, since):
+            return list(boots)
+
+    class _Ground:
+        stack = _Stack()
+
+    _Ground.protect = protect
+    runner = Runner([])
+    runner.stack_ground = _Ground()
+    runner.ordered_restarts = ordered
+    runner.socket_closes = list(closes)
+    (row,) = runner._stack_logs_are_clean(0.0)
+    return row
+
+
+def test_the_containers_row_counts_boots_the_rig_did_not_order():
+    """The recorder is restored away at the end of a run; the core's log is not.
+
+    One boot is the restore's own, one per `restart: true` turn is ordered;
+    any more is somebody restarting the house under the run, and the row says
+    when.
+    """
+    assert _containers_row(["10:08:03"]).ok
+    assert _containers_row(["10:08:03", "10:20:11"], ordered=1).ok
+    row = _containers_row(["09:56:12", "10:08:03"])
+    assert not row.ok
+    assert "booted 2 time(s)" in row.error and "09:56:12" in row.error and "ordered 1" in row.error
+
+
+def test_a_socket_the_house_closed_is_on_the_containers_row():
+    row = _containers_row(
+        ["10:08:03"],
+        closes=[{"at": 0.0, "why": "received 1012 (service restart)", "after": "notes-append"}],
+    )
+    assert not row.ok
+    assert "after notes-append" in row.error and "1012" in row.error
+
+
+def test_the_runner_reads_expectations_and_the_link_the_way_they_are_shaped():
+    """Two crashes from the report run of 27 Aug 2026, pinned at the source.
+
+    `Expectation` is read with `.get`, never subscripted; the `Link` wraps a
+    client and has no `base_url` of its own — `stop-means-stop` and
+    `memory-per-person` each died on one of these before saying a word.
+    """
+    from testing.live.scenario import Expectation
+    from testing.live.transport import Link
+
+    source = (REPO_ROOT / "testing" / "live" / "runner.py").read_text()
+    assert 'expect["' not in source, "an Expectation is read with .get()"
+    assert "self.link.base_url" not in source and "self.link.token" not in source
+    assert not hasattr(Expectation, "__getitem__")
+    assert not hasattr(Link(object()), "base_url")
+
+
 # --- the one browser (M31) -------------------------------------------------
 def _borrower(monkeypatch, *, health="healthy", token="t0ken", docker=True):
     """A `SharedBrowser` whose container and docker are whatever the test says."""

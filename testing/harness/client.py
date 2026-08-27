@@ -297,6 +297,21 @@ class JarvisClient:
     async def __aexit__(self, *_exc: Any) -> None:
         await self.aclose()
 
+    @property
+    def closed_reason(self) -> str | None:
+        """Why this socket is no longer usable, or None while it is.
+
+        Set by our own `aclose()` and by the reader when the peer closed the
+        socket. The reader's reason carries the close code — "received 1012
+        (service restart)" is uvicorn shutting down — which is the one fact a
+        run needs when everything after a point fails.
+        """
+        if self._reader_error:
+            return self._reader_error
+        if self._closed:
+            return "closed by this client"
+        return None
+
     async def aclose(self) -> None:
         self._closed = True
         reader, self._reader = self._reader, None

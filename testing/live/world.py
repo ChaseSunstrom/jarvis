@@ -19,6 +19,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from testing.live import LiveError
+
 
 @dataclass
 class ServiceCall:
@@ -210,15 +212,37 @@ class Observer:
         except Exception:  # noqa: BLE001 - an already-resolved request is not news
             return False
 
+    # --- asking the house for a list ---------------------------------------
+    def closed_reason(self) -> str | None:
+        """Why the socket under this observer is unusable, or None while it works."""
+        return getattr(self.client, "closed_reason", None)
+
+    async def _list(self, command: str, key: str, **args: Any) -> list[Any]:
+        """One listing command, or [] when this build lacks it — never [] for a dead socket.
+
+        The distinction is the whole point. On 27 Aug 2026 the house closed the
+        rig's sockets (uvicorn's 1012, "service restart") a third of the way
+        through a report run, and every listing after that read as an empty
+        house — "tasks were []", "had []" — across thirty scenarios, while the
+        console beside them showed the tasks. A build without the command is
+        the scenario's failed assertion; a socket the house closed is the run's,
+        and it is named with the close code so whoever restarted the house can
+        be found.
+        """
+        try:
+            answer = await self.client.command(command, **args)
+        except Exception as err:  # noqa: BLE001 - which of the two it is decides below
+            dead = self.closed_reason()
+            if dead:
+                raise LiveError(
+                    f"the socket to Jarvis is closed ({dead}); `{command}` cannot be asked"
+                ) from err
+            return []
+        return list((answer or {}).get(key) or [])
+
     async def notes(self, query: str = "") -> list[dict[str, Any]]:
         """Every note the server holds, or the ones matching a query."""
-        try:
-            answer = await self.client.command(
-                "jarvis/notes/list", **({"query": query} if query else {})
-            )
-        except Exception:  # noqa: BLE001 - a build without notes fails the assertion
-            return []
-        return list((answer or {}).get("notes") or [])
+        return await self._list("jarvis/notes/list", "notes", **({"query": query} if query else {}))
 
     async def note_body(self, note_id: str) -> str:
         try:
@@ -229,11 +253,7 @@ class Observer:
 
     async def notifications(self) -> list[dict[str, Any]]:
         """Every proactive message the server has recorded."""
-        try:
-            answer = await self.client.command("jarvis/notifications/list")
-        except Exception:  # noqa: BLE001 - a build without them fails the assertion
-            return []
-        return list((answer or {}).get("notifications") or [])
+        return await self._list("jarvis/notifications/list", "notifications")
 
     async def wait_for_notification(self, title_contains: str = "", kind: str = "",
                                     timeout: float = 120.0, since: float = 0.0) -> dict[str, Any] | None:
@@ -262,11 +282,7 @@ class Observer:
 
     async def surface(self) -> list[dict[str, Any]]:
         """The voice screen's panels, as the console lists them (M83)."""
-        try:
-            answer = await self.client.command("jarvis/surface/list")
-        except Exception:  # noqa: BLE001 - a build without a surface fails the assertion
-            return []
-        return list((answer or {}).get("panels") or [])
+        return await self._list("jarvis/surface/list", "panels")
 
     async def wait_for_surface(self, entity: str = "", kind: str = "", count: int | None = None,
                                timeout: float = 20.0) -> list[dict[str, Any]] | None:
@@ -285,32 +301,19 @@ class Observer:
         return None
 
     async def memories(self, query: str = "") -> list[dict[str, Any]]:
-        try:
-            answer = await self.client.command(
-                "jarvis/memory/list", **({"query": query} if query else {})
-            )
-        except Exception:  # noqa: BLE001
-            return []
-        return list((answer or {}).get("entries") or [])
+        return await self._list("jarvis/memory/list", "entries", **({"query": query} if query else {}))
 
     async def extensions(self) -> list[dict[str, Any]]:
         """Everything installed, as the console's own page sees it."""
-        try:
-            answer = await self.client.command("jarvis/extensions/list")
-        except Exception:  # noqa: BLE001
-            return []
-        return list((answer or {}).get("extensions") or [])
+        return await self._list("jarvis/extensions/list", "extensions")
 
     async def set_extension(self, key: str, **patch: Any) -> dict[str, Any]:
         return await self.client.command("jarvis/extensions/set", key=key, **patch)
 
     async def offered_skills(self) -> list[str]:
         """The skills the MODEL is offered — the store, not the console's list."""
-        try:
-            answer = await self.client.command("jarvis/skills/list")
-        except Exception:  # noqa: BLE001
-            return []
-        return [str(row.get("name") or "") for row in (answer or {}).get("skills") or []]
+        rows = await self._list("jarvis/skills/list", "skills")
+        return [str(row.get("name") or "") for row in rows]
 
     async def offered_tools(self) -> list[str]:
         """What the MODEL is offered, not what the console lists.
@@ -318,11 +321,7 @@ class Observer:
         The two are different questions and the second one is the claim worth
         testing: a plugin hidden from a page is one the model can still call.
         """
-        try:
-            answer = await self.client.command("jarvis/tools/list")
-        except Exception:  # noqa: BLE001
-            return []
-        rows = (answer or {}).get("tools") or []
+        rows = await self._list("jarvis/tools/list", "tools")
         return [str(row.get("name") or "") for row in rows]
 
     async def wait_for_note(self, contains: str = "", title_contains: str = "",
@@ -343,19 +342,11 @@ class Observer:
         return None
 
     async def tasks(self) -> list[dict[str, Any]]:
-        try:
-            answer = await self.client.command("jarvis/tasks/list")
-        except Exception:  # noqa: BLE001 - a build without tasks fails the assertion
-            return []
-        return list((answer or {}).get("tasks") or [])
+        return await self._list("jarvis/tasks/list", "tasks")
 
     async def schedules(self) -> list[dict[str, Any]]:
         """What is scheduled and not yet fired — reminders, timed jobs."""
-        try:
-            answer = await self.client.command("jarvis/schedule/list")
-        except Exception:  # noqa: BLE001 - a build without a schedule fails the assertion
-            return []
-        return list((answer or {}).get("jobs") or [])
+        return await self._list("jarvis/schedule/list", "jobs")
 
     async def wait_for_schedule(
         self,
