@@ -1355,13 +1355,15 @@ web and of Tasker. Local only. Each row here is planned in that document.
     discard per fact; nothing the user asked to forget is re-learned; "what did you learn
     about me this week?" reads it back.
   - Verify: `bash scripts/verify/m87-overnight-reflection.sh`
-- [ ] **M88 — A plan on the screen** · size M · deps M83, M10 · parallel-ok M87, M89
+- [x] **M88 — A plan on the screen** · size M · deps M83, M10 · parallel-ok M87, M89
   - Scope: a background job with steps puts a `plan` panel on the voice screen's surface — the
     steps, the current one live, elapsed time, a stop — updated from the task's events, removed
     when the job ends (its result a `note` panel when there is one); Jarvis speaks checkpoints
     ("half way, Sir") only when the job asks. Verified by the rig's task scenarios and the
     surface's list.
   - Verify: `bash scripts/verify/m88-a-plan-on-the-screen.sh`
+  - 27 Aug 12:03: ticked — gate 9/9 on the seventeenth's house (the 11:45 image): a background job with steps put
+    its plan on the surface unasked, by voice and typed.
 - [x] **M89 — Stack hygiene** · size S · deps M28 · parallel-ok M84–M88
   - Scope: from the services audit — SearXNG bound to loopback under the 2026.8 granian image;
     `jarvis-web` runs as `node`; the live `jarvis-sandbox` definition (root compose) pinned by

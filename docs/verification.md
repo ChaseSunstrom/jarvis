@@ -2108,7 +2108,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M85 — Work survives a restart | **Built** (4/5) | `m85-work-survives-a-restart.sh`; `test_taskengine.py` (+1); scenario `task-survives-a-restart` (a real restart between turns) |
 | M86 — Jarvis notices | **Ticked** (6/6 on the house: rules ship and parse, the lock flipped and `recent_events` named it); the offer as a held question and its record are unit-tested (`test_sensors.py -k held`, `test_notifications.py -k narrator`) and wait for the seventeenth house's `notice-garage-door` | `m86-jarvis-notices.sh`; `test_sensors.py -k "narrat or offer"` (15) |
 | M87 — Overnight reflection | **Built** (4/6) | `m87-overnight-reflection.sh`; `test_memory_reflection.py` (6); scenario `memory-reflection` with `reflect: true` |
-| M88 — A plan on the screen | **Built** (6/7) | `m88-a-plan-on-the-screen.sh`; `test_surface.py` (7); `surface.spec.ts` 4/4 |
+| M88 — A plan on the screen | Automated + Containerised (9/9 on 27 Aug 2026, the 11:45 house) | `m88-a-plan-on-the-screen.sh`; `test_surface.py` (7); `surface.spec.ts` 4/4 |
 | M89 — Stack hygiene | **Ticked** (6/6 on the rebuilt stack: SearXNG on loopback, the console as node, the pins, the isolation matrix, the smoke slice 9/9) | `m89-stack-hygiene.sh`; `test_packaging.py` (+3) |
 | M90 — The claims register, re-measured | **Automated** (6/6, ticked) | `m90-claims-register.sh` reruns every count and fails on drift |
 | M91 — A gate cannot pass on a skip | **Ticked** (3/3; 76 gates read the pytest summary, a skip fails unless allowed by count, `results-<gate>.json` per gate) | `m91-no-pass-on-a-skip.sh` |
