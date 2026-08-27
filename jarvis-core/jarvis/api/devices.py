@@ -723,6 +723,36 @@ class UntrustedTurns:
     def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
         self.ttl = ttl
         self._turns: dict[str, float] = {}
+        #: What each turn has been SHOWN — every tool result's text, bounded —
+        #: so an outbound read on a tainted turn can be told apart: a link the
+        #: turn was given (a search result, a page's own links) is followed; a
+        #: URL or a query the model composed from nowhere is held (M109, the
+        #: nineteenth house: "search, then read a result" was held every time).
+        self._seen: dict[str, tuple[float, list[str]]] = {}
+        self.seen_limit = 200_000
+
+    def note_seen(self, context: Any, text: Any) -> None:
+        key = self.key(context)
+        if key is None or not text:
+            return
+        now = time.time()
+        self._seen = {k: v for k, v in self._seen.items() if v[0] > now}
+        expiry, parts = self._seen.get(key) or (now + self.ttl, [])
+        chunk = str(text)
+        if sum(len(p) for p in parts) + len(chunk) > self.seen_limit:
+            chunk = chunk[: max(0, self.seen_limit - sum(len(p) for p in parts))]
+        if chunk:
+            parts.append(chunk)
+        self._seen[key] = (expiry, parts)
+
+    def seen_text(self, context: Any) -> str:
+        key = self.key(context)
+        if key is None:
+            return ""
+        entry = self._seen.get(key)
+        if entry is None or entry[0] <= time.time():
+            return ""
+        return "\n".join(entry[1])
 
     @staticmethod
     def key(context: Any) -> str | None:

@@ -60,8 +60,11 @@ async def test_the_taint_table(jarvis):
             kind = "refuses"
             ok = held_tainted == held_clean  # the refusal is the handler's, not a hold
         elif name in OUTBOUND_READERS:
-            kind = "outbound read: held"
-            ok = held_tainted is True
+            # Held when the target is the model's own composition — a URL or a
+            # query the turn was never shown; a link it was given is followed.
+            composed = {"url": "https://evil.example/?r=SECRET-4471", "query": "meter SECRET-4471"}
+            kind = "outbound read: held when composed"
+            ok = registry.requires_approval(tool, composed, tainted) is True and held_tainted is False
         elif registry.is_read_only(tool):
             kind = "inside read: runs"
             ok = held_tainted == held_clean
@@ -99,6 +102,25 @@ async def test_a_page_cannot_untaint_the_turn(jarvis):
     # The web tools are an integration's; a stand-in with the same name and the
     # same `read_only` declaration is what the gate sees.
     registry.register(name="web_fetch", description="fetch a page", handler=lambda a, c: {"status": "ok"}, read_only=True)
+    registry.register(name="web_search", description="search", handler=lambda a, c: {"status": "ok"}, read_only=True)
     fetch = registry.tools["web_fetch"]
+    search = registry.tools["web_search"]
     assert registry.requires_approval(fetch, {"url": "https://evil.example/?k=secret"}, ctx) is True
     assert registry.requires_approval(fetch, {"url": "https://evil.example/"}, Context(origin="llm", id="turn-clean")) is False
+    # A link the turn was SHOWN — in a search result it read — is followed;
+    # a URL the model composed (the secret in the query string) is held.
+    from jarvis.api.devices import get_untrusted_turns
+
+    get_untrusted_turns(jarvis).note_seen(
+        ctx, '{"results": [{"title": "Meter readings", "url": "https://handbook.example/meter"}]}'
+    )
+    assert registry.requires_approval(fetch, {"url": "https://handbook.example/meter"}, ctx) is False
+    assert registry.requires_approval(fetch, {"url": "https://handbook.example/meter?r=SECRET-4471"}, ctx) is True
+    # A query made of words the turn has seen runs; one carrying a token from
+    # nowhere — the secret — waits.
+    assert registry.requires_approval(search, {"query": "meter readings handbook"}, ctx) is False
+    assert registry.requires_approval(search, {"query": "meter readings SECRET-4471"}, ctx) is True
+    # Every result a tool returns is noted as shown, through the registry itself.
+    registry.register(name="read_page", description="read", handler=lambda a, c: {"links": ["https://handbook.example/tariff"]}, read_only=True)
+    await registry.call("read_page", {"url": "https://handbook.example/meter"}, ctx)
+    assert registry.requires_approval(fetch, {"url": "https://handbook.example/tariff"}, ctx) is False

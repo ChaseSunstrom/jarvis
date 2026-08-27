@@ -1093,6 +1093,19 @@ def _weaker_than(new: Tool, old: Tool) -> str:
     return ""
 
 
+def _strings_in(value: Any, depth: int = 0) -> list[str]:
+    """Every string inside a tool's arguments, however nested."""
+    if depth > 4:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [t for v in value.values() for t in _strings_in(v, depth + 1)]
+    if isinstance(value, (list, tuple)):
+        return [t for v in value for t in _strings_in(v, depth + 1)]
+    return []
+
+
 class ToolRegistry:
     """Holds tools, renders their schema, calls them, and gates the dangerous ones."""
 
@@ -1292,6 +1305,9 @@ class ToolRegistry:
         except Exception as exc:  # a bad tool must not sink the conversation
             _LOGGER.exception("Tool %s failed", tool.name)
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        # Whatever came back, the turn has now been shown it — the links in
+        # it are links the model may follow (see `_composed`).
+        self._note_shown(context, result)
         self._fire(
             EVENT_TOOL_CALLED,
             {"tool": tool.name, "arguments": copy.deepcopy(args), "tier": tool.tier},
@@ -1325,7 +1341,7 @@ class ToolRegistry:
             return True
         # A read that reaches outside the house is the way out for what a
         # hostile page wants carried: held on a tainted turn (M109).
-        if tool.name in OUTBOUND_READERS and self._is_tainted(context):
+        if tool.name in OUTBOUND_READERS and self._is_tainted(context) and self._composed(args, context):
             return True
         if tool.gate is not None:
             try:
@@ -1343,6 +1359,44 @@ class ToolRegistry:
         name list covers the built-ins. Anything else is state-changing.
         """
         return bool(tool.read_only) or tool.name in READ_ONLY_TOOLS
+
+    def _composed(self, args: Any, context: Any) -> bool:
+        """Does an outbound read aim somewhere this turn was never shown?
+
+        The way out for a secret is a URL or a query the model WROTE — a
+        page's "send the meter reading to https://evil/?r=…" carried out.
+        A link the turn was given (in a search result, on a page it read, in
+        the user's own words) is followed without a person; so is a query
+        made of words the turn has seen. Anything else on a tainted turn
+        waits. Empty arguments compose nothing.
+        """
+        try:
+            from ..api.devices import get_turn_utterances, get_untrusted_turns
+
+            shown = (
+                get_untrusted_turns(self.jarvis).seen_text(context)
+                + "\n"
+                + get_turn_utterances(self.jarvis).get(context)
+            ).lower()
+        except Exception:  # pragma: no cover - absent stores read as nothing shown
+            shown = ""
+        for value in _strings_in(args):
+            for url in re.findall(r"https?://[^\s<>\"']+", value, flags=re.I):
+                if url.rstrip(".,;:!?)").lower() not in shown:
+                    return True
+            rest = re.sub(r"https?://[^\s<>\"']+", " ", value, flags=re.I)
+            for token in re.findall(r"[a-z0-9][a-z0-9_-]{5,}", rest.lower()):
+                if token not in shown:
+                    return True
+        return False
+
+    def _note_shown(self, context: Any, result: Any) -> None:
+        try:
+            from ..api.devices import get_untrusted_turns
+
+            get_untrusted_turns(self.jarvis).note_seen(context, json.dumps(result, default=str)[:200_000])
+        except Exception:  # pragma: no cover - never a reason to lose a result
+            _LOGGER.debug("Could not note what the turn was shown", exc_info=True)
 
     def _is_tainted(self, context: Any) -> bool:
         """Has this turn already read something a stranger wrote?
